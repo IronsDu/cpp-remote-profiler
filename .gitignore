@@ -1,0 +1,35 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# Compiled files
+*.o
+*.a
+*.so
+*.prof
+*.heap
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+logs/
+
+# Profiler output
+*.prof
+heap.prof*
+cpu.prof*
+
+# Temporary files
+*.tmp
+*.temp
