@@ -528,7 +528,37 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
-    // CPU flame graph data (层次化的火焰图数据)
+    // CPU collapsed stacks for flame graph (collapsed format: "func1;func2;func3 count")
+    app().registerHandler(
+        "/api/cpu/collapsed",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string collapsedData = profiler.getCollapsedStacks("cpu");
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(collapsedData);
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Heap collapsed stacks for flame graph
+    app().registerHandler(
+        "/api/heap/collapsed",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string collapsedData = profiler.getCollapsedStacks("heap");
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(collapsedData);
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // CPU flame graph data (层次化的火焰图数据) - 保持兼容
     app().registerHandler(
         "/api/cpu/flamegraph",
         [&profiler](const HttpRequestPtr& req,
@@ -543,7 +573,7 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
-    // Heap flame graph data
+    // Heap flame graph data - 保持兼容
     app().registerHandler(
         "/api/heap/flamegraph",
         [&profiler](const HttpRequestPtr& req,

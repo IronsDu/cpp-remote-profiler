@@ -8,11 +8,14 @@ echo ""
 # 检查是否已编译
 if [ ! -f "build/profiler_example" ]; then
     echo "错误: 项目未编译"
-    echo "请先运行: ./build-with-vcpkg.sh"
+    echo "请先运行: ./build.sh"
     exit 1
 fi
 
 cd build
+
+# 设置 PATH 包含 pprof
+export PATH=$PATH:/root/go/bin
 
 echo "启动服务器..."
 echo "访问地址: http://localhost:8080"

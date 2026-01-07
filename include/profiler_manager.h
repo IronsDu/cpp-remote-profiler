@@ -60,6 +60,9 @@ public:
     // Get raw profile samples (addresses) for frontend rendering
     std::string getProfileSamples(const std::string& profile_type);
 
+    // Get collapsed stack traces for flame graph (format: "func1;func2;func3 count")
+    std::string getCollapsedStacks(const std::string& profile_type);
+
     // List available profiles
     std::vector<std::string> listProfiles() const;
 
