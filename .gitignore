@@ -7,6 +7,9 @@ out/
 *.o
 *.a
 *.so
+*.exe
+
+# Profile data (not source code)
 *.prof
 *.heap
 
@@ -26,10 +29,17 @@ Thumbs.db
 logs/
 
 # Profiler output
-*.prof
 heap.prof*
 cpu.prof*
 
 # Temporary files
 *.tmp
 *.temp
+
+# vcpkg (commented out if you want to commit vcpkg for reproducibility)
+# vcpkg/
+
+# vcpkg installed packages
+vcpkg/buildtrees/
+vcpkg/installed/
+vcpkg/packages/

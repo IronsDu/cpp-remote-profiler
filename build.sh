@@ -1,54 +1,42 @@
 #!/bin/bash
 
-# C++ Remote Profiler 构建脚本
-
-set -e
-
 echo "======================================"
 echo "C++ Remote Profiler 构建脚本"
 echo "======================================"
-echo
+echo ""
 
-# 检查依赖
-echo "检查依赖..."
+VCPKG_ROOT="$(cd "$(dirname "$0")/vcpkg" && pwd)"
+export VCPKG_ROOT
 
-# 检查 gperftools
-if ! pkg-config --exists libprofiler; then
-    echo "错误: 未找到 libprofiler，请安装 gperftools"
-    echo "Ubuntu/Debian: sudo apt-get install libgoogle-perftools-dev"
-    exit 1
-fi
+echo "VCPKG_ROOT: $VCPKG_ROOT"
+echo ""
 
-# 检查 Drogon
-if ! pkg-config --exists drogon; then
-    echo "错误: 未找到 Drogon 框架"
-    echo "请参考 README.md 安装 Drogon"
-    exit 1
-fi
-
-echo "依赖检查完成"
-echo
-
-# 创建构建目录
-echo "创建构建目录..."
-mkdir -p build
+# 清理并创建build目录
+rm -rf build
+mkdir build
 cd build
 
-# 运行 CMake
-echo "运行 CMake..."
-cmake .. -DCMAKE_BUILD_TYPE=Release
+echo "配置CMake..."
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+    -DVCPKG_TARGET_TRIPLET=x64-linux-release
 
-# 编译
-echo "开始编译..."
+echo ""
+echo "编译项目..."
 make -j$(nproc)
 
-echo
-echo "======================================"
-echo "编译完成！"
-echo "======================================"
-echo
-echo "运行示例程序:"
-echo "  cd build"
-echo "  ./profiler_example"
-echo
-echo "然后访问: http://localhost:8080"
+echo ""
+if [ $? -eq 0 ]; then
+    echo "✅ 编译成功！"
+    echo ""
+    echo "运行服务："
+    echo "  ./start.sh"
+    echo ""
+    echo "或直接运行："
+    echo "  cd build"
+    echo "  ./profiler_example"
+else
+    echo "❌ 编译失败"
+    exit 1
+fi
