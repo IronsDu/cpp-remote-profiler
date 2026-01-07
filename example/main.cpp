@@ -59,7 +59,7 @@ void memoryIntensiveTask() {
 
 // HTML 网页
 std::string getWebPage() {
-    std::ifstream htmlFile("web/index.html");
+    std::ifstream htmlFile("../web/index.html");
     std::stringstream buffer;
     buffer << htmlFile.rdbuf();
     return buffer.str();
@@ -216,13 +216,66 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
+    // Flame graph viewer page
+    app().registerHandler(
+        "/flamegraph",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::ifstream htmlFile("../web/flamegraph.html");
+            std::stringstream buffer;
+            buffer << htmlFile.rdbuf();
+            std::string html = buffer.str();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(CT_TEXT_HTML);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Browser rendering test page
+    app().registerHandler(
+        "/test",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::ifstream htmlFile("../tests/test_browser_rendering.html");
+            std::stringstream buffer;
+            buffer << htmlFile.rdbuf();
+            std::string html = buffer.str();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(CT_TEXT_HTML);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Debug page
+    app().registerHandler(
+        "/debug",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::ifstream htmlFile("../web/debug.html");
+            std::stringstream buffer;
+            buffer << htmlFile.rdbuf();
+            std::string html = buffer.str();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(CT_TEXT_HTML);
+            callback(resp);
+        },
+        {Get}
+    );
+
     // CPU SVG 火焰图
     app().registerHandler(
         "/api/cpu/svg",
         [&profiler](const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto state = profiler.getProfilerState(profiler::ProfilerType::CPU);
-            std::string svg = profiler.getProfileSVG(state.output_path);
+            std::string svg = profiler.generateSVGFromProfile("cpu");
 
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(svg);
@@ -237,8 +290,7 @@ int main(int argc, char* argv[]) {
         "/api/heap/svg",
         [&profiler](const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto state = profiler.getProfilerState(profiler::ProfilerType::HEAP);
-            std::string svg = profiler.getProfileSVG(state.output_path);
+            std::string svg = profiler.generateSVGFromProfile("heap");
 
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(svg);
@@ -322,6 +374,112 @@ int main(int argc, char* argv[]) {
             callback(resp);
         },
         {Get}
+    );
+
+    // CPU profile JSON (用于前端火焰图渲染)
+    app().registerHandler(
+        "/api/cpu/json",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string jsonData = profiler.getProfileAsJSON("cpu");
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(jsonData);
+            resp->setContentTypeCode(CT_APPLICATION_JSON);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Heap profile JSON (用于前端火焰图渲染)
+    app().registerHandler(
+        "/api/heap/json",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string jsonData = profiler.getProfileAsJSON("heap");
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(jsonData);
+            resp->setContentTypeCode(CT_APPLICATION_JSON);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // CPU flame graph data (层次化的火焰图数据)
+    app().registerHandler(
+        "/api/cpu/flamegraph",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string jsonData = profiler.getFlameGraphData("cpu");
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(jsonData);
+            resp->setContentTypeCode(CT_APPLICATION_JSON);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Heap flame graph data
+    app().registerHandler(
+        "/api/heap/flamegraph",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string jsonData = profiler.getFlameGraphData("heap");
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(jsonData);
+            resp->setContentTypeCode(CT_APPLICATION_JSON);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Symbol resolution endpoint (类似 brpc pprof 的 /pprof/symbol)
+    app().registerHandler(
+        "/pprof/symbol",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            // 只支持 POST 请求
+            if (req->method() != Post) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k405MethodNotAllowed);
+                resp->setBody("Method not allowed. Use POST.");
+                callback(resp);
+                return;
+            }
+
+            // 从请求体获取地址列表
+            std::string bodyStr(req->body());
+            std::istringstream iss(bodyStr);
+            std::string address;
+            std::ostringstream result;
+
+            // 逐行读取地址并解析
+            while (std::getline(iss, address)) {
+                if (address.empty() || address[0] == '#') {
+                    continue;
+                }
+
+                // 移除 "0x" 前缀（如果有）
+                if (address.size() > 2 && address[0] == '0' && address[1] == 'x') {
+                    address = address.substr(2);
+                }
+
+                // 使用CPU profile路径解析符号
+                auto cpuState = profiler.getProfilerState(profiler::ProfilerType::CPU);
+                std::string symbol = profiler.resolveSymbol(cpuState.output_path, address);
+
+                result << address << " " << symbol << "\n";
+            }
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(result.str());
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            callback(resp);
+        },
+        {Post, Get}
     );
 
     std::cout << "Handlers registered. Starting Drogon framework...\n";

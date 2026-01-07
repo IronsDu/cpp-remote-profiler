@@ -54,6 +54,18 @@ public:
     // Convert prof to SVG (火焰图)
     std::string getProfileSVG(const std::string& profile_path);
 
+    // Generate SVG from profile type
+    std::string generateSVGFromProfile(const std::string& profile_type);
+
+    // Get profile data as JSON for flame graph rendering
+    std::string getProfileAsJSON(const std::string& profile_type);
+
+    // Get flame graph data with call stack hierarchy
+    std::string getFlameGraphData(const std::string& profile_type);
+
+    // Resolve address to symbol name (for /pprof/symbol endpoint)
+    std::string resolveSymbol(const std::string& profile_path, const std::string& address);
+
     // List available profiles
     std::vector<std::string> listProfiles() const;
 

@@ -42,5 +42,23 @@ target_link_libraries(profiler_lib
 add_executable(profiler_example example/main.cpp)
 target_link_libraries(profiler_example profiler_lib)
 
+# Tests
+enable_testing()
+find_package(GTest REQUIRED)
+
+# 创建GTest库
+include_directories(/usr/include)
+
+# 编译测试
+add_executable(profiler_test tests/profiler_test.cpp)
+target_link_libraries(profiler_test
+    profiler_lib
+    pthread
+    /usr/lib/x86_64-linux-gnu/libgtest.a
+    /usr/lib/x86_64-linux-gnu/libgtest_main.a
+)
+
+add_test(NAME ProfilerTest COMMAND profiler_test)
+
 # Copy web files to build directory
 file(COPY ${PROJECT_SOURCE_DIR}/web DESTINATION ${CMAKE_BINARY_DIR})

@@ -109,7 +109,7 @@
 <body>
     <div class="container">
         <h1>C++ Remote Profiler</h1>
-        <p>类似 Go pprof 的 C++ 性能分析工具 - 支持 CPU 和 Heap Profiling，可生成火焰图</p>
+        <p>类似 Go pprof 的 C++ 性能分析工具 - 支持 CPU 和 Heap Profiling，自动生成SVG火焰图</p>
 
         <div class="section">
             <h2>CPU Profiler</h2>
@@ -117,7 +117,8 @@
                 <span id="cpu-status" class="status stopped">已停止</span>
                 <button id="cpu-start" onclick="startCPU()">启动 CPU Profiler</button>
                 <button id="cpu-stop" class="stop-btn" onclick="stopCPU()" disabled>停止</button>
-                <button class="view-btn" onclick="viewCPUSVG()">🔥 查看火焰图</button>
+                <button class="view-btn" onclick="openFlameGraph('cpu')">🎨 交互式火焰图</button>
+                <button class="view-btn" onclick="viewCPUSVG()">🔥 查看SVG火焰图</button>
                 <button class="view-btn" onclick="viewCPUText()">查看文本分析</button>
                 <button class="view-btn" onclick="downloadCPUProfile()">下载 Profile</button>
             </div>
@@ -129,7 +130,8 @@
                 <span id="heap-status" class="status stopped">已停止</span>
                 <button id="heap-start" onclick="startHeap()">启动 Heap Profiler</button>
                 <button id="heap-stop" class="stop-btn" onclick="stopHeap()" disabled>停止</button>
-                <button class="view-btn" onclick="viewHeapSVG()">🔥 查看火焰图</button>
+                <button class="view-btn" onclick="openFlameGraph('heap')">🎨 交互式火焰图</button>
+                <button class="view-btn" onclick="viewHeapSVG()">🔥 查看SVG火焰图</button>
                 <button class="view-btn" onclick="viewHeapText()">查看文本分析</button>
                 <button class="view-btn" onclick="downloadHeapProfile()">下载 Profile</button>
             </div>
@@ -260,6 +262,12 @@
             log('正在获取 Heap 火焰图...');
             window.open('/api/heap/svg', '_blank');
             log('Heap 火焰图已在新标签页打开');
+        }
+
+        function openFlameGraph(type) {
+            log('正在打开交互式火焰图查看器...');
+            window.open('/flamegraph?type=' + type, '_blank');
+            log('交互式火焰图已在新标签页打开');
         }
 
         function log(message) {
