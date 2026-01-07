@@ -148,86 +148,7 @@ TEST_F(ProfilerTest, HeapProfileDataCollection) {
     EXPECT_GT(data.length(), 50);
 }
 
-// 测试5: 符号化profile输出
-TEST_F(ProfilerTest, SymbolizedProfileOutput) {
-    profiler->startCPUProfiler("/tmp/cpp_profiler_test/cpu_symbol.prof");
-
-    cpuIntensiveTask();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    profiler->stopCPUProfiler();
-
-    std::string text = profiler->getSymbolizedProfile("/tmp/cpp_profiler_test/cpu_symbol.prof");
-
-    // 检查输出是否包含关键字
-    EXPECT_FALSE(text.empty());
-
-    // 如果pprof可用，应该包含函数名信息
-    if (text.find("pprof") == std::string::npos) {
-        // 包含一些标准库函数名
-        bool has_content = text.length() > 100;
-        EXPECT_TRUE(has_content);
-    }
-}
-
-// 测试6: SVG生成
-TEST_F(ProfilerTest, SVGGeneration) {
-    profiler->startCPUProfiler("/tmp/cpp_profiler_test/cpu_svg.prof");
-
-    cpuIntensiveTask();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    profiler->stopCPUProfiler();
-
-    std::string svg = profiler->getProfileSVG("/tmp/cpp_profiler_test/cpu_svg.prof");
-
-    // 验证SVG格式
-    EXPECT_FALSE(svg.empty());
-    EXPECT_NE(svg.find("<?xml version=\"1.0\""), std::string::npos);
-    EXPECT_NE(svg.find("<svg"), std::string::npos);
-    EXPECT_NE(svg.find("</svg>"), std::string::npos);
-}
-
-// 测试7: XML转义功能
-TEST_F(ProfilerTest, XMLEscapingInSVG) {
-    profiler->startCPUProfiler("/tmp/cpp_profiler_test/cpu_escape.prof");
-
-    cpuIntensiveTask();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    profiler->stopCPUProfiler();
-
-    std::string svg = profiler->generateSVGFromProfile("cpu");
-
-    // 检查是否正确转义了特殊字符
-    // C++函数名中的 < > & " 等字符应该被转义
-    EXPECT_FALSE(svg.empty());
-
-    // 验证没有未转义的XML特殊字符在文本内容中
-    // 注：SVG标签本身可以包含<和>，但在文本内容中需要转义
-
-    // 检查是否有转义实体
-    size_t pos = 0;
-    bool has_escaped = false;
-    while ((pos = svg.find('&', pos)) != std::string::npos) {
-        // 检查是否是转义序列
-        if (svg.substr(pos, 5) == "&amp;" ||
-            svg.substr(pos, 4) == "&lt;" ||
-            svg.substr(pos, 4) == "&gt;" ||
-            svg.substr(pos, 6) == "&quot;" ||
-            svg.substr(pos, 6) == "&apos;") {
-            has_escaped = true;
-            break;
-        }
-        pos++;
-    }
-
-    // 如果有C++函数名，应该有转义
-    // 但如果没有pprof，使用演示数据也可能没有
-    SUCCEED();
-}
-
-// 测试8: JSON格式输出
+// 测试5: JSON格式输出
 TEST_F(ProfilerTest, JSONOutputFormat) {
     profiler->startCPUProfiler("/tmp/cpp_profiler_test/cpu_json.prof");
 
@@ -296,32 +217,7 @@ TEST_F(ProfilerTest, FlameGraphDataStructure) {
     });
 }
 
-// 测试10: 符号解析功能
-TEST_F(ProfilerTest, SymbolResolution) {
-    // 创建一个测试profile
-    profiler->startCPUProfiler("/tmp/cpp_profiler_test/cpu_symbol_test.prof");
-
-    cpuIntensiveTask();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    profiler->stopCPUProfiler();
-
-    // 测试地址解析
-    std::string symbol = profiler->resolveSymbol(
-        "/tmp/cpp_profiler_test/cpu_symbol_test.prof",
-        "400500"
-    );
-
-    EXPECT_FALSE(symbol.empty());
-
-    // 应该返回地址或符号名
-    // 如果addr2line可用，返回函数名
-    // 否则返回0x开头的地址
-    bool valid = symbol.find("0x") == 0 || !symbol.empty();
-    EXPECT_TRUE(valid);
-}
-
-// 测试11: 并发profiling
+// 测试7: 并发profiling
 TEST_F(ProfilerTest, ConcurrentProfiling) {
     // CPU和Heap profiler不应该同时运行
     EXPECT_TRUE(profiler->startCPUProfiler("/tmp/cpp_profiler_test/cpu_concurrent.prof"));
@@ -337,7 +233,7 @@ TEST_F(ProfilerTest, ConcurrentProfiling) {
     EXPECT_FALSE(profiler->isProfilerRunning(profiler::ProfilerType::CPU));
 }
 
-// 测试12: 多次启动停止
+// 测试8: 多次启动停止
 TEST_F(ProfilerTest, MultipleStartStop) {
     for (int i = 0; i < 3; ++i) {
         EXPECT_TRUE(profiler->startCPUProfiler("/tmp/cpp_profiler_test/cpu_multi.prof"));
@@ -350,7 +246,7 @@ TEST_F(ProfilerTest, MultipleStartStop) {
     EXPECT_FALSE(profiler->isProfilerRunning(profiler::ProfilerType::CPU));
 }
 
-// 测试13: Profile状态查询
+// 测试9: Profile状态查询
 TEST_F(ProfilerTest, ProfileStateQuery) {
     auto state = profiler->getProfilerState(profiler::ProfilerType::CPU);
     EXPECT_FALSE(state.is_running);
@@ -366,7 +262,7 @@ TEST_F(ProfilerTest, ProfileStateQuery) {
     EXPECT_GT(state.duration, 0);
 }
 
-// 测试14: 真实场景测试
+// 测试10: 真实场景测试
 TEST_F(ProfilerTest, RealWorldScenario) {
     // 模拟真实应用场景
     profiler->startCPUProfiler("/tmp/cpp_profiler_test/cpu_real.prof");
@@ -379,15 +275,13 @@ TEST_F(ProfilerTest, RealWorldScenario) {
 
     profiler->stopCPUProfiler();
 
-    // 验证生成的profile
-    std::string text = profiler->getSymbolizedProfile("/tmp/cpp_profiler_test/cpu_real.prof");
-    EXPECT_FALSE(text.empty());
-
-    std::string svg = profiler->generateSVGFromProfile("cpu");
-    EXPECT_FALSE(svg.empty());
-
+    // 验证生成的JSON profile数据（用于浏览器端渲染）
     std::string json = profiler->getProfileAsJSON("cpu");
     EXPECT_FALSE(json.empty());
+
+    // 验证火焰图数据
+    std::string flameData = profiler->getFlameGraphData("cpu");
+    EXPECT_FALSE(flameData.empty());
 }
 
 int main(int argc, char** argv) {

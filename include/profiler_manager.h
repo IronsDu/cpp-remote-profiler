@@ -48,15 +48,6 @@ public:
     // Get heap profile data
     std::string getHeapProfileData();
 
-    // Get symbolized profile data
-    std::string getSymbolizedProfile(const std::string& profile_path);
-
-    // Convert prof to SVG (火焰图)
-    std::string getProfileSVG(const std::string& profile_path);
-
-    // Generate SVG from profile type
-    std::string generateSVGFromProfile(const std::string& profile_type);
-
     // Get profile data as JSON for flame graph rendering
     std::string getProfileAsJSON(const std::string& profile_type);
 
@@ -65,6 +56,9 @@ public:
 
     // Resolve address to symbol name (for /pprof/symbol endpoint)
     std::string resolveSymbol(const std::string& profile_path, const std::string& address);
+
+    // Get raw profile samples (addresses) for frontend rendering
+    std::string getProfileSamples(const std::string& profile_type);
 
     // List available profiles
     std::vector<std::string> listProfiles() const;

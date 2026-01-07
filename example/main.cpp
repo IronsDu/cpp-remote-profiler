@@ -7,53 +7,237 @@
 #include <random>
 #include <sstream>
 #include <fstream>
+#include <list>
+#include <map>
+#include <algorithm>
 
 using namespace drogon;
 
-// 模拟一些CPU密集型任务
-void cpuIntensiveTask() {
-    std::vector<int> data(10000);
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dis(1, 100);
+// 更复杂的函数调用链，用于生成详细的火焰图
 
-    for (int i = 0; i < 1000; ++i) {
-        for (auto& val : data) {
-            val = dis(gen);
-        }
+class DataProcessor {
+public:
+    void sortData(std::vector<int>& data) {
         std::sort(data.begin(), data.end());
+    }
 
-        auto fib = [](int n) {
-            if (n <= 1) return n;
-            int a = 0, b = 1;
-            for (int i = 2; i <= n; ++i) {
-                int temp = a + b;
-                a = b;
-                b = temp;
+    void reverseData(std::vector<int>& data) {
+        std::reverse(data.begin(), data.end());
+    }
+
+    void shuffleData(std::vector<int>& data) {
+        std::shuffle(data.begin(), data.end(), std::mt19937(std::random_device()()));
+    }
+
+    void processData(std::vector<int>& data) {
+        sortData(data);
+        reverseData(data);
+        shuffleData(data);
+        sortData(data); // 再次排序
+    }
+};
+
+class FibonacciCalculator {
+public:
+    int recursive(int n) {
+        if (n <= 1) return n;
+        return recursive(n - 1) + recursive(n - 2);
+    }
+
+    int iterative(int n) {
+        if (n <= 1) return n;
+        int a = 0, b = 1;
+        for (int i = 2; i <= n; ++i) {
+            int temp = a + b;
+            a = b;
+            b = temp;
+        }
+        return b;
+    }
+
+    int memoized(int n, std::map<int, int>& cache) {
+        if (n <= 1) return n;
+        if (cache.find(n) != cache.end()) return cache[n];
+        cache[n] = memoized(n - 1, cache) + memoized(n - 2, cache);
+        return cache[n];
+    }
+};
+
+class MatrixOperations {
+public:
+    std::vector<std::vector<int>> createMatrix(int rows, int cols) {
+        std::vector<std::vector<int>> matrix;
+        for (int i = 0; i < rows; ++i) {
+            std::vector<int> row;
+            for (int j = 0; j < cols; ++j) {
+                row.push_back(rand() % 1000);
             }
-            return b;
-        };
+            matrix.push_back(row);
+        }
+        return matrix;
+    }
 
-        volatile int result = fib(50);
-        (void)result;
+    std::vector<std::vector<int>> transposeMatrix(const std::vector<std::vector<int>>& matrix) {
+        std::vector<std::vector<int>> result;
+        for (size_t j = 0; j < matrix[0].size(); ++j) {
+            std::vector<int> row;
+            for (size_t i = 0; i < matrix.size(); ++i) {
+                row.push_back(matrix[i][j]);
+            }
+            result.push_back(row);
+        }
+        return result;
+    }
+
+    std::vector<std::vector<int>> multiplyMatrices(const std::vector<std::vector<int>>& a,
+                                                   const std::vector<std::vector<int>>& b) {
+        std::vector<std::vector<int>> result(a.size(), std::vector<int>(b[0].size(), 0));
+        for (size_t i = 0; i < a.size(); ++i) {
+            for (size_t j = 0; j < b[0].size(); ++j) {
+                for (size_t k = 0; k < b.size(); ++k) {
+                    result[i][j] += a[i][k] * b[k][j];
+                }
+            }
+        }
+        return result;
+    }
+};
+
+class HashCalculator {
+public:
+    size_t simpleHash(const std::string& str) {
+        size_t hash = 0;
+        for (char c : str) {
+            hash = hash * 31 + c;
+        }
+        return hash;
+    }
+
+    std::map<std::string, size_t> batchHash(const std::vector<std::string>& strings) {
+        std::map<std::string, size_t> results;
+        for (const auto& str : strings) {
+            results[str] = simpleHash(str);
+        }
+        return results;
+    }
+
+    std::vector<size_t> parallelHash(const std::vector<std::string>& strings) {
+        std::vector<size_t> hashes;
+        for (const auto& str : strings) {
+            hashes.push_back(simpleHash(str));
+        }
+        return hashes;
+    }
+};
+
+// 模拟CPU密集型任务 - 复杂调用链
+void cpuIntensiveTask() {
+    DataProcessor processor;
+    FibonacciCalculator fib;
+    MatrixOperations matrixOps;
+    HashCalculator hashCalc;
+
+    for (int i = 0; i < 100; ++i) {
+        // 1. 数据处理分支
+        std::vector<int> data(1000);
+        for (auto& val : data) {
+            val = rand();
+        }
+
+        processor.processData(data);
+
+        // 2. Fibonacci计算分支
+        volatile int result1 = fib.recursive(25);
+        volatile int result2 = fib.iterative(30);
+        (void)result1; (void)result2;
+
+        // 3. 矩阵运算分支
+        auto matrix1 = matrixOps.createMatrix(10, 10);
+        auto matrix2 = matrixOps.createMatrix(10, 10);
+        auto transposed = matrixOps.transposeMatrix(matrix1);
+        auto multiplied = matrixOps.multiplyMatrices(matrix1, matrix2);
+
+        // 4. Hash计算分支
+        std::vector<std::string> strings = {"hello", "world", "test", "data"};
+        auto hashes = hashCalc.parallelHash(strings);
+        auto batchHashes = hashCalc.batchHash(strings);
+
+        // 5. 递归计算
+        std::map<int, int> cache;
+        volatile int result3 = fib.memoized(20, cache);
+        (void)result3;
+
+        // 防止编译器优化
+        volatile int sink = data[0] + result1 + result2 + result3 + hashes[0];
+        (void)sink;
+        (void)transposed;
+        (void)multiplied;
+        (void)batchHashes;
     }
 }
 
-// 模拟内存分配任务
+// 模拟内存密集型任务 - 复杂分配模式
 void memoryIntensiveTask() {
-    std::vector<std::vector<int>> matrix;
+    // 使用各种内存分配模式
+    std::vector<std::vector<int>> matrixData;
+    std::vector<std::string> stringData;
+    std::map<int, std::vector<int>> mapData;
+    std::vector<std::list<int>> listData;
 
-    for (int i = 0; i < 100; ++i) {
-        std::vector<int> row(1000);
-        for (auto& val : row) {
+    for (int i = 0; i < 50; ++i) {
+        // 1. 大数组分配
+        std::vector<int> largeArray(10000);
+        for (auto& val : largeArray) {
             val = rand();
         }
-        matrix.push_back(std::move(row));
+
+        // 2. 矩阵分配
+        for (int j = 0; j < 20; ++j) {
+            std::vector<int> row(1000);
+            for (auto& val : row) {
+                val = rand();
+            }
+            matrixData.push_back(row);
+        }
+
+        // 3. 字符串分配
+        std::vector<std::string> strings;
+        for (int j = 0; j < 100; ++j) {
+            strings.push_back("Test string data " + std::to_string(j));
+        }
+        stringData.insert(stringData.end(), strings.begin(), strings.end());
+
+        // 4. Map分配
+        for (int j = 0; j < 10; ++j) {
+            std::vector<int> values(100);
+            for (auto& val : values) {
+                val = j * 10 + rand() % 100;
+            }
+            mapData[j] = values;
+        }
+
+        // 5. 动态分配
+        int* dynamicArray = new int[1000];
+        for (int k = 0; k < 1000; ++k) {
+            dynamicArray[k] = rand();
+        }
+        delete[] dynamicArray;
+
+        // 6. 小对象频繁分配
+        std::list<int> smallList;
+        for (int k = 0; k < 200; ++k) {
+            smallList.push_back(rand());
+        }
+        listData.push_back(smallList);
     }
 
+    // 模拟内存泄漏（故意不释放）
     for (int i = 0; i < 10; ++i) {
-        auto* leak = new int[1000];
-        (void)leak;
+        auto* leak = new int[5000];
+        for (int j = 0; j < 5000; ++j) {
+            leak[j] = i;
+        }
+        (void)leak; // 故意泄漏
     }
 }
 
@@ -270,68 +454,6 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
-    // CPU SVG 火焰图
-    app().registerHandler(
-        "/api/cpu/svg",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string svg = profiler.generateSVGFromProfile("cpu");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(svg);
-            resp->setContentTypeCode(CT_IMAGE_SVG_XML);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Heap SVG 火焰图
-    app().registerHandler(
-        "/api/heap/svg",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string svg = profiler.generateSVGFromProfile("heap");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(svg);
-            resp->setContentTypeCode(CT_IMAGE_SVG_XML);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // CPU 文本格式
-    app().registerHandler(
-        "/api/cpu/text",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto state = profiler.getProfilerState(profiler::ProfilerType::CPU);
-            std::string text = profiler.getSymbolizedProfile(state.output_path);
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(text);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Heap 文本格式
-    app().registerHandler(
-        "/api/heap/text",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto state = profiler.getProfilerState(profiler::ProfilerType::HEAP);
-            std::string text = profiler.getSymbolizedProfile(state.output_path);
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(text);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
-
     // 下载 CPU profile (pprof 格式)
     app().registerHandler(
         "/api/cpu/pprof",
@@ -427,6 +549,84 @@ int main(int argc, char* argv[]) {
         [&profiler](const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string jsonData = profiler.getFlameGraphData("heap");
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(jsonData);
+            resp->setContentTypeCode(CT_APPLICATION_JSON);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // CPU text profile (for debugging)
+    app().registerHandler(
+        "/api/cpu/text",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string samplesJson = profiler.getProfileSamples("cpu");
+
+            // 简单格式化JSON为文本
+            std::ostringstream text;
+            text << "CPU Profile Analysis\n";
+            text << "====================\n\n";
+            text << "Use /api/cpu/samples for raw data\n";
+            text << "Use /pprof/symbol for symbol resolution\n\n";
+            text << "Samples Data (JSON):\n";
+            text << samplesJson;
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(text.str());
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Heap text profile (for debugging)
+    app().registerHandler(
+        "/api/heap/text",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string samplesJson = profiler.getProfileSamples("heap");
+
+            // 简单格式化JSON为文本
+            std::ostringstream text;
+            text << "Heap Profile Analysis\n";
+            text << "=====================\n\n";
+            text << "Use /api/heap/samples for raw data\n";
+            text << "Use /pprof/symbol for symbol resolution\n\n";
+            text << "Samples Data (JSON):\n";
+            text << samplesJson;
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(text.str());
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // CPU profile samples (addresses for frontend rendering)
+    app().registerHandler(
+        "/api/cpu/samples",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string jsonData = profiler.getProfileSamples("cpu");
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(jsonData);
+            resp->setContentTypeCode(CT_APPLICATION_JSON);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Heap profile samples
+    app().registerHandler(
+        "/api/heap/samples",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string jsonData = profiler.getProfileSamples("heap");
 
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(jsonData);
