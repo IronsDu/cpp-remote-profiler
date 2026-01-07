@@ -9,6 +9,7 @@ find_package(Drogon CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(Protobuf CONFIG REQUIRED)
 
 # Find gperftools via pkg-config
 find_package(PkgConfig REQUIRED)
@@ -16,37 +17,59 @@ pkg_check_modules(GPERFTOOLS REQUIRED libprofiler libtcmalloc)
 
 # Include directories
 include_directories(${PROJECT_SOURCE_DIR}/include)
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/third_party/profile)
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${GPERFTOOLS_INCLUDE_DIRS})
+include_directories(${Protobuf_INCLUDE_DIRS})
 
 # Source files
 set(PROFILER_SOURCES
     src/profiler_manager.cpp
+    src/stack_collector.cpp
+    src/profile_parser.cpp
 )
 
 set(PROFILER_HEADERS
     include/profiler_manager.h
+    include/stack_collector.h
+    include/profile_parser.h
 )
 
+# Generate protobuf files
+set(PROTO_PATH ${PROJECT_SOURCE_DIR}/third_party/profile)
+set(PROTO_SRC ${PROTO_PATH}/profile.proto)
+
+# 使用 protobuf_generate 生成代码，并关联到目标
+protobuf_generate(
+    TARGETS profiler_lib profiler_example profiler_test
+    LANGUAGE cpp
+    OUT_VAR PROTO_FILES
+    PROTOS ${PROTO_SRC}
+)
+
+message(STATUS "Generated protobuf files: ${PROTO_FILES}")
+message(STATUS "Protobuf include dirs: ${Protobuf_INCLUDE_DIRS}")
+message(STATUS "CMAKE_CURRENT_BINARY_DIR: ${CMAKE_CURRENT_BINARY_DIR}")
+
 # Create library
-add_library(profiler_lib ${PROFILER_SOURCES} ${PROFILER_HEADERS})
+add_library(profiler_lib ${PROFILER_SOURCES} ${PROFILER_HEADERS} ${PROTO_FILES})
 target_link_libraries(profiler_lib
     ${GPERFTOOLS_LIBRARIES}
-    Drogon::Drogon
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    ZLIB::ZLIB
-    pthread
+    protobuf::libprotobuf
 )
 
 # Example executable
-add_executable(profiler_example example/main.cpp)
-target_link_libraries(profiler_example profiler_lib)
+add_executable(profiler_example example/main.cpp ${PROTO_FILES})
+target_link_libraries(profiler_example
+    profiler_lib
+    Drogon::Drogon
+)
 
 # Tests
 enable_testing()
 
 # 编译测试
-add_executable(profiler_test tests/profiler_test.cpp)
+add_executable(profiler_test tests/profiler_test.cpp ${PROTO_FILES})
 target_link_libraries(profiler_test
     profiler_lib
     GTest::gtest

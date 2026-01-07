@@ -20,15 +20,20 @@ echo "配置CMake..."
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-    -DVCPKG_TARGET_TRIPLET=x64-linux-release
+    -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+    --trace-expand \
+    2>&1 | tee cmake_debug.log
 
 echo ""
 echo "编译项目..."
-make -j$(nproc)
+make -j$(nproc) VERBOSE=1 2>&1 | tee make_debug.log
 
 echo ""
 if [ $? -eq 0 ]; then
     echo "✅ 编译成功！"
+    echo ""
+    echo "运行测试..."
+    ./profiler_test 2>&1 | tee test_debug.log
     echo ""
     echo "运行服务："
     echo "  ./start.sh"

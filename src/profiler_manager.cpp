@@ -1,4 +1,5 @@
 #include "profiler_manager.h"
+#include "stack_collector.h"
 #include <gperftools/profiler.h>
 #include <gperftools/heap-profiler.h>
 #include <sys/stat.h>
@@ -64,6 +65,10 @@ bool ProfilerManager::startCPUProfiler(const std::string& output_path) {
         profiler_states_[ProfilerType::CPU] = ProfilerState{
             true, full_path, timestamp, 0
         };
+
+        // 启动 StackCollector 来收集调用栈
+        StackCollector::getInstance().start(100); // 100ms 采样间隔
+
         return true;
     }
     return false;
@@ -77,6 +82,10 @@ bool ProfilerManager::stopCPUProfiler() {
     }
 
     ProfilerStop();
+
+    // 停止 StackCollector
+    StackCollector::getInstance().stop();
+
     auto now = std::chrono::system_clock::now();
     auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()).count();
@@ -611,107 +620,14 @@ std::string ProfilerManager::getFlameGraphData(const std::string& profile_type) 
 std::string ProfilerManager::getCollapsedStacks(const std::string& profile_type) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // 确定profile路径
-    std::string profile_path;
     if (profile_type == "cpu") {
-        profile_path = profiler_states_[ProfilerType::CPU].output_path;
+        // 使用 ProfileParser 解析 profile 文件
+        std::string profile_path = profiler_states_[ProfilerType::CPU].output_path;
+        return ProfileParser::parseToCollapsed(profile_path);
     } else if (profile_type == "heap") {
-        profile_path = profiler_states_[ProfilerType::HEAP].output_path;
-    } else {
-        return R"({"error": "Invalid profile type"})";
-    }
+        // 对于 heap profile，仍然使用文件解析
+        std::string profile_path = profiler_states_[ProfilerType::HEAP].output_path;
 
-    // 检查profile文件是否存在
-    std::ifstream file(profile_path, std::ios::binary);
-    if (!file.is_open()) {
-        return R"({"error": "Profile file not found"})";
-    }
-    file.close();
-
-    // 首先尝试使用 pprof 工具生成 collapsed 格式
-    // 使用 -traces 选项获取调用栈，然后转换为 collapsed 格式
-    // 尝试多个可能的 pprof 路径
-    std::vector<std::string> pprof_paths = {
-        "/root/go/bin/pprof",
-        "pprof"
-    };
-
-    std::string output;
-    bool pprof_found = false;
-
-    for (const auto& pprof_path : pprof_paths) {
-        std::string cmd = pprof_path + " -traces " + profile_path + " 2>&1";
-        if (executeCommand(cmd, output)) {
-            // 检查输出是否有效（必须包含实际的profile数据）
-            // 有效的输出应该包含 "---"分隔线和函数名
-            if (!output.empty() &&
-                output.find("-----------") != std::string::npos &&
-                output.find("File:") != std::string::npos &&
-                output.find("Type:") != std::string::npos) {
-                pprof_found = true;
-                break;
-            }
-        }
-    }
-
-    if (pprof_found) {
-        // 转换 traces 格式为 collapsed 格式
-        // traces 格式示例：
-        // ---------+-------------------------------------------------
-        //          100 main
-        //                     50 func1
-        //                     50 func2
-        //
-        // collapsed 格式示例：
-        // main;func1 50
-        // main;func2 50
-
-        std::ostringstream collapsed;
-        std::istringstream iss(output);
-        std::string line;
-        std::vector<std::string> stack;
-
-        while (std::getline(iss, line)) {
-            // 跳过空行和分隔线
-            if (line.empty() || line.find("---------") == 0) continue;
-
-            // 检查是否是采样数行（以数字开头）
-            if (!line.empty() && std::isdigit(line[0])) {
-                std::istringstream line_ss(line);
-                int count;
-                std::string func;
-
-                // 读取采样数
-                line_ss >> count;
-
-                // 读取剩余的函数栈
-                std::vector<std::string> current_stack;
-                while (line_ss >> func) {
-                    if (!func.empty()) {
-                        current_stack.push_back(func);
-                    }
-                }
-
-                // 反转栈顺序（从叶子到根）
-                if (!current_stack.empty()) {
-                    collapsed << count;
-                    for (auto it = current_stack.rbegin(); it != current_stack.rend(); ++it) {
-                        collapsed << ";" << *it;
-                    }
-                    collapsed << "\n";
-                }
-            }
-        }
-
-        std::string result = collapsed.str();
-        if (!result.empty()) {
-            return result;
-        }
-    }
-
-    // 如果 pprof 不可用，尝试手动解析
-    // 对于 heap profile，直接解析文本格式
-    if (profile_type == "heap") {
         std::ifstream heap_file(profile_path);
         if (!heap_file.is_open()) {
             return R"({"error": "Cannot open heap profile"})";
@@ -771,8 +687,7 @@ std::string ProfilerManager::getCollapsedStacks(const std::string& profile_type)
         return collapsed.str();
     }
 
-    // 对于 CPU profile，如果没有 pprof，返回错误信息
-    return R"({"error": "pprof tool not available. Please install google-pprof: go install github.com/google/pprof@latest"})";
+    return R"({"error": "Invalid profile type"})";
 }
 
 } // namespace profiler

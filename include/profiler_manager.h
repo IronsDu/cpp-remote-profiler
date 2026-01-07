@@ -5,6 +5,8 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include "stack_collector.h"
+#include "profile_parser.h"
 
 namespace profiler {
 
