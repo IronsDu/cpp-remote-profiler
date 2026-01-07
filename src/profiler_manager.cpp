@@ -621,9 +621,8 @@ std::string ProfilerManager::getCollapsedStacks(const std::string& profile_type)
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (profile_type == "cpu") {
-        // 使用 ProfileParser 解析 profile 文件
-        std::string profile_path = profiler_states_[ProfilerType::CPU].output_path;
-        return ProfileParser::parseToCollapsed(profile_path);
+        // 使用 StackCollector 收集的 collapsed 格式数据
+        return StackCollector::getInstance().getCollapsedStacks();
     } else if (profile_type == "heap") {
         // 对于 heap profile，仍然使用文件解析
         std::string profile_path = profiler_states_[ProfilerType::HEAP].output_path;

@@ -1,6 +1,6 @@
 # TODO List
 
-## 已完成的改进 (2025-01-07)
+## 已完成的改进 (2025-01-08)
 
 ### 1. 修复硬编码假数据问题 ✅
 - 添加了 `getCollapsedStacks()` 方法，返回真实的 profile 数据
@@ -20,7 +20,7 @@
 ### 4. 改进构建脚本 ✅
 - 更新 `start.sh`，设置 PATH 包含 pprof 工具路径
 
-### 5. 移除 pprof 依赖，使用运行时栈收集 ✅ (2025-01-07 新增)
+### 5. 移除 pprof 依赖，使用运行时栈收集 ✅ (2025-01-07)
 - 创建了 `StackCollector` 类，使用 `backtrace()` 在运行时收集调用栈
 - 在 CPU profiler 启动时自动启动栈采样线程
 - 采样间隔可配置（默认 100ms）
@@ -37,11 +37,85 @@
 - `CMakeLists.txt` - 添加新的源文件
 - `tests/profiler_test.cpp` - 修复测试
 
-### 6. 前端火焰图使用真实 collapsed 数据 ✅ (2025-01-07 新增)
+### 6. 前端火焰图使用真实 collapsed 数据 ✅ (2025-01-07)
 - 修改 `web/flamegraph.html` 从 `/api/cpu/flamegraph` 改为使用 `/api/cpu/collapsed`
 - 添加 `parseCollapsedFormat()` 函数解析 collapsed 格式文本
 - 自动构建调用树结构用于渲染
 - 支持显示采样数统计
+
+### 7. 修复 CPU/Heap Profiler 自动停止功能 ✅ (2025-01-08)
+**问题**: `/api/cpu/start` 和 `/api/heap/start` 接口不支持 `duration` 参数，profiler 启动后不会自动停止
+
+**修复内容**:
+- 在 HTTP 处理器中添加 `duration` 参数解析
+- 使用独立线程在指定时间后自动调用 `stopCPUProfiler()` / `stopHeapProfiler()`
+- 支持 CPU 和 Heap 两种 profiler 类型
+- 返回 `duration_ms` 字段确认配置成功
+
+**修改文件**:
+- `example/main.cpp` - 修改 `/api/cpu/start` 和 `/api/heap/start` 处理器
+
+**测试结果**:
+```bash
+curl -X POST "http://localhost:8080/api/cpu/start?duration=5"
+# 5 秒后 profiler 自动停止
+```
+
+### 8. 修复 CPU Profiler 使用正确的数据源 ✅ (2025-01-08)
+**问题**: `getCollapsedStacks()` 尝试用 `ProfileParser::parseToCollapsed()` 解析 gperftools 二进制文件，但 gperftools 格式不是 protobuf 格式
+
+**修复内容**:
+- 修改 `ProfilerManager::getCollapsedStacks()` 对 CPU profile 直接使用 `StackCollector::getInstance().getCollapsedStacks()`
+- StackCollector 已经在运行时收集了调用栈数据并生成 collapsed 格式
+- Heap profile 继续使用文件解析（gperftools heap profile 是文本格式）
+
+**修改文件**:
+- `src/profiler_manager.cpp` - 修改 `getCollapsedStacks()` 方法
+
+**测试结果**:
+```bash
+curl http://localhost:8080/api/cpu/collapsed
+# 返回: # collapsed stack traces
+#       # Total samples: 101
+#       libc.so.6+0x129c6c;libc.so.6+0x9caa4;libstdc++.so.6+0xecdb4 101
+```
+
+---
+
+## 当前已知问题 (2025-01-08)
+
+### 高优先级 🔴
+
+#### 1. CPU Profiler 火焰图只显示地址，不显示函数名
+**现象**: 访问 `http://localhost:8080/flamegraph?type=cpu`，火焰图中显示的是 `libc.so.6+0x129c6c` 这样的地址，而不是函数名
+
+**原因**: StackCollector 使用 `dladdr()` 解析符号，对于共享库（libc、libstdc++ 等）中的地址无法解析出函数名，只能返回库名+偏移量
+
+**影响**: 用户无法直观地看到哪个函数占用了 CPU 时间
+
+**解决方案**:
+- 方案 A: 使用 `addr2line` 工具解析共享库中的地址（需要知道共享库路径）
+- 方案 B: 使用 libdw (DWARF) 库进行符号解析
+- 方案 C: 实现 `/pprof/symbol` 接口，前端批量请求符号解析
+
+**相关文件**:
+- `src/stack_collector.cpp` - `resolveSymbol()` 方法（第 79-128 行）
+
+#### 2. Heap Profiler 火焰图显示空白
+**现象**: 访问 `http://localhost:8080/flamegraph?type=heap`，火焰图区域是空白的
+
+**原因**: 需要调查 Heap Profiler 的 collapsed 数据格式是否正确，以及前端是否正确解析
+
+**影响**: 无法可视化 Heap Profiler 数据
+
+**调查步骤**:
+1. 检查 `/api/heap/collapsed` 返回的数据格式
+2. 检查前端 `parseCollapsedFormat()` 是否正确处理 heap 数据
+3. 验证 Heap Profiler 是否正确收集数据
+
+**相关文件**:
+- `src/profiler_manager.cpp` - `getCollapsedStacks()` 方法
+- `web/flamegraph.html` - `parseCollapsedFormat()` 函数
 
 ---
 
@@ -49,49 +123,26 @@
 
 ### 高优先级 🔴
 
-#### 1. 改进共享库符号解析
-**当前问题**: StackCollector 使用 `dladdr()` 解析符号，但对于共享库（libc、libpthread 等）中的地址无法解析，返回十六进制地址
+#### 1. 修复 Heap Profiler 火焰图显示空白问题
+**调查步骤**:
+1. 检查 `/api/heap/collapsed` 返回的数据格式
+2. 检查前端 `parseCollapsedFormat()` 是否正确处理 heap 数据
+3. 验证 Heap Profiler 是否正确收集数据
+
+**相关文件**:
+- `src/profiler_manager.cpp` - `getCollapsedStacks()` 方法
+- `web/flamegraph.html` - `parseCollapsedFormat()` 函数
+
+#### 2. 改进 CPU Profiler 符号解析（显示函数名而非地址）
+**当前问题**: 火焰图显示 `libc.so.6+0x129c6c` 而不是函数名
 
 **可能的解决方案**:
-- 方案 A: 使用 `addr2line` 工具解析共享库中的地址
+- 方案 A: 在 StackCollector::resolveSymbol() 中使用 `addr2line` 工具解析共享库地址
 - 方案 B: 使用 libdw (DWARF) 库进行符号解析
-- 方案 C: 读取 `/proc/self/maps` 和共享库的符号表
+- 方案 C: 实现 `/pprof/symbol` 批量解析接口，前端调用
 
 **相关文件**:
 - `src/stack_collector.cpp` - `resolveSymbol()` 方法
-
-**实现思路**:
-```cpp
-// 1. 获取地址所属的共享库
-// 2. 使用 addr2line 解析符号
-std::string cmd = "addr2line -e " + lib_path + " -f -C " + address;
-executeCommand(cmd, output);
-```
-
-#### 2. 实现 `/pprof/symbol` 接口的批量解析
-**当前状态**: `/pprof/symbol` 接口已经实现，但前端没有使用
-
-**正确的 brpc 方式**:
-1. 前端从 profile 数据中提取所有地址
-2. 批量 POST 地址到 `/pprof/symbol` 接口
-3. 后端使用 `addr2line` 解析符号并返回
-4. 前端用符号化的数据生成火焰图
-
-**需要修改**:
-- 前端: 提取地址、批量请求 symbol 接口
-- 后端: `/pprof/symbol` 接口需要改进，支持批量解析
-- 当前 `/pprof/symbol` 只支持单个地址解析
-
-**批量解析示例**:
-```javascript
-// 前端代码
-const addresses = extractAddressesFromProfile(profileData);
-const response = await fetch('/pprof/symbol', {
-    method: 'POST',
-    body: addresses.join('\n')
-});
-const symbols = await response.text();
-```
 
 ---
 
@@ -184,6 +235,8 @@ func1;func4 50
 ## Git 提交记录
 
 ```
+5c6f360 feat: 实现基于protobuf的profile解析，移除pprof依赖
+3d77691 docs: 添加详细的 TODO 列表记录后续工作
 7fbbc6e feat: 添加真实的 collapsed 格式火焰图数据API
 0d81f0d refactor: 清理构建脚本，统一使用vcpkg管理依赖
 bfc8245 refactor: 清理pprof依赖，使用vcpkg管理依赖，增强火焰图功能
@@ -191,52 +244,5 @@ bfc8245 refactor: 清理pprof依赖，使用vcpkg管理依赖，增强火焰图�
 
 ---
 
-## 下次工作重点
-
-1. **生成 Protobuf 代码** 🔴 (当前阻塞)
-   ```bash
-   cd /home/dodo/cpp-remote-profiler
-   ./generate_proto.sh
-   cd build && make
-   ```
-   详细步骤见: `README_BUILD.md`
-
-2. **启用 ProfileParser 解析代码**
-   - 编辑 `src/profile_parser.cpp`
-   - 取消注释 protobuf 解析代码
-   - 重新编译测试
-
-3. **改进火焰图显示**
-   - 测试 collapsed API
-   - 验证符号解析正确性
-
----
-
-## 最近更新 (2025-01-07 晚)
-
-### 添加 Protobuf 支持
-- ✅ 更新 vcpkg.json 添加 protobuf 依赖（含 tool 特性）
-- ✅ 创建 `third_party/profile/profile.proto`
-- ✅ 配置 CMakeLists.txt 使用 protobuf_generate_cpp
-- ✅ 创建 `include/profile_parser.h` 和 `src/profile_parser.cpp`
-- ⏸️ 等待生成 profile.pb.cc 和 profile.pb.h
-
-### 创建的辅助文件
-- `generate_proto.sh` - 生成 protobuf 代码的脚本
-- `PROTO_BUILD.md` - 详细的构建步骤
-- `README_BUILD.md` - 完整的构建指南
-
-### 下一步操作
-由于 Bash 工具暂时无法使用，需要手动执行：
-```bash
-cd /home/dodo/cpp-remote-profiler
-./generate_proto.sh
-cd build && make
-```
-
-成功后，在 `src/profile_parser.cpp` 中启用 protobuf 解析代码。
-
----
-
 创建时间: 2025-01-07
-最后更新: 2025-01-07
+最后更新: 2025-01-08

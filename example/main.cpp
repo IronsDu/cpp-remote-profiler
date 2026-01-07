@@ -309,6 +309,24 @@ int main(int argc, char* argv[]) {
                 root["message"] = "CPU profiler started successfully";
                 auto state = profiler.getProfilerState(profiler::ProfilerType::CPU);
                 root["output_path"] = state.output_path;
+
+                // 检查是否有 duration 参数
+                auto duration_param = req->getParameter("duration");
+                if (!duration_param.empty()) {
+                    try {
+                        int duration_sec = std::stoi(duration_param);
+                        int duration_ms = duration_sec * 1000;
+                        root["duration_ms"] = duration_ms;
+
+                        // 在新线程中定时停止 profiler
+                        std::thread([duration_ms]() {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
+                            profiler::ProfilerManager::getInstance().stopCPUProfiler();
+                        }).detach();
+                    } catch (const std::exception& e) {
+                        root["warning"] = "Invalid duration parameter, profiler will run until manually stopped";
+                    }
+                }
             } else {
                 root["message"] = "Failed to start CPU profiler (may already be running)";
             }
@@ -354,6 +372,23 @@ int main(int argc, char* argv[]) {
                 root["message"] = "Heap profiler started successfully";
                 auto state = profiler.getProfilerState(profiler::ProfilerType::HEAP);
                 root["output_path"] = state.output_path;
+
+                // 检查是否有 duration 参数
+                auto duration_param = req->getParameter("duration");
+                if (!duration_param.empty()) {
+                    try {
+                        int duration_ms = std::stoi(duration_param) * 1000;
+                        root["duration_ms"] = duration_ms;
+
+                        // 在新线程中定时停止 profiler
+                        std::thread([duration_ms, &profiler]() {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
+                            profiler.stopHeapProfiler();
+                        }).detach();
+                    } catch (const std::exception& e) {
+                        root["warning"] = "Invalid duration parameter, profiler will run until manually stopped";
+                    }
+                }
             } else {
                 root["message"] = "Failed to start Heap profiler (may already be running)";
             }
