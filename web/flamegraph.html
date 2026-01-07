@@ -334,17 +334,21 @@
             stats.style.display = 'none';
 
             try {
-                const response = await fetch(`/api/${profileType}/flamegraph`);
-                const data = await response.json();
+                // 使用 collapsed API 获取真实数据
+                const response = await fetch(`/api/${profileType}/collapsed`);
+                const collapsedText = await response.text();
 
-                if (data.error) {
-                    throw new Error(data.error);
+                if (collapsedText.startsWith('{"error"')) {
+                    const errorData = JSON.parse(collapsedText);
+                    throw new Error(errorData.error);
                 }
 
-                flameData = data;
+                // 解析 collapsed 格式为火焰图数据
+                flameData = parseCollapsedFormat(collapsedText);
+
                 resetZoom();
                 renderFlameGraph();
-                updateStats(data);
+                updateStats(flameData);
 
                 loading.style.display = 'none';
                 stats.style.display = 'flex';
@@ -352,6 +356,64 @@
                 loading.textContent = `❌ 加载失败: ${error.message}`;
                 console.error('Error loading flame graph:', error);
             }
+        }
+
+        // 解析 collapsed 格式为火焰图数据结构
+        function parseCollapsedFormat(collapsedText) {
+            const lines = collapsedText.split('\n');
+            const root = { name: 'root', value: 0, children: {} };
+            let totalSamples = 0;
+
+            for (const line of lines) {
+                // 跳过注释和空行
+                if (!line || line.startsWith('#')) continue;
+
+                // 解析行: "func1;func2;func3 count"
+                const lastSpaceIndex = line.lastIndexOf(' ');
+                if (lastSpaceIndex === -1) continue;
+
+                const stackStr = line.substring(0, lastSpaceIndex);
+                const count = parseInt(line.substring(lastSpaceIndex + 1));
+
+                if (isNaN(count)) continue;
+
+                totalSamples += count;
+
+                // 分割调用栈
+                const functions = stackStr.split(';');
+                if (functions.length === 0) continue;
+
+                // 构建树结构
+                let current = root;
+                for (const func of functions) {
+                    if (!func) continue;
+
+                    if (!current.children[func]) {
+                        current.children[func] = {
+                            name: func,
+                            value: 0,
+                            children: {}
+                        };
+                    }
+                    current = current.children[func];
+                }
+
+                // 叶子节点增加采样数
+                current.value += count;
+            }
+
+            // 转换 children 对象为数组
+            const convertChildren = (node) => {
+                if (node.children) {
+                    node.children = Object.values(node.children).map(convertChildren);
+                }
+                return node;
+            };
+
+            const tree = convertChildren(root);
+            tree.total = totalSamples;
+
+            return tree;
         }
 
         function renderFlameGraph() {

@@ -1,0 +1,156 @@
+// Copyright 2017 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Profile protobuf for perftools/chrome
+
+syntax = "proto2";
+
+package perftools.profiles;
+
+option java_package = "com.google.perftools.profiles";
+option java_outer_classname = "ProfileProto";
+
+message Profile {
+  // A sequence of calls.  Each sample may have multiple call stacks.
+  // All samples have the same number of call stacks.
+  repeated Sample sample = 1;
+
+  // Each mapping represents a mapping from a contiguous block of
+  // memory (region) to a file path.  The mapping indicates that the
+  // bytes from offset 'offset' to 'offset+length' in the file are
+  // mapped to the memory region from 'start' to 'start+limit'.
+  // The filename can be empty if the file path is not known.
+  // The limit is the offset of the first byte past the end of the
+  // region.  It is not required to be a multiple of the page size.
+  repeated Mapping mapping = 2;
+
+  // Mappings from address ranges to function names.  Functions can
+  // have multiple locations if they are inlined into multiple
+  // callers.  A location can have multiple functions if they are
+  // part of a chain of inlines.
+  repeated Location location = 3;
+
+  // Function table.  It contains all functions that appear in the
+  // locations.
+  repeated Function function = 4;
+
+  // String table.  All indices in the tables refer to strings from
+  // this table.  Index 0 is reserved for the empty string.
+  repeated string string_table = 5;
+
+  // Index into the string table that points to the time the profile
+  // was collected, in seconds since the UNIX epoch.
+  optional int64 drop_frames = 6;  // Index in string_table
+  optional int64 keep_frames = 7;  // Index in string_table
+
+  // The following fields are informational, and not required for
+  // correctness of the profile.
+
+  // Duration of the profile, if appropriate.
+  optional int64 duration_nanos = 8;
+
+  // The type of events in the samples.  Values:
+  //   "cpu": CPU cycles
+  //   "wallclock": Wall clock time
+  //   "heap": Bytes allocated
+  //   "inuse": Bytes in use
+  //   "objects": Number of objects allocated
+  //   "count": Number of events
+  //   "trace": Trace
+  optional int64 sample_type = 9;  // Index in string_table
+
+  // Number of samples in the profile.
+  optional int64 default_sample_type = 10;  // Index in sample_type
+
+  // Comments associated with the profile.
+  repeated string comment = 11;
+
+  // Index into the string table of the time the profile was collected.
+  optional int64 time_nanos = 12;
+
+  // Number of periods in the profile.
+  optional int64 period = 13;
+  optional int64 period_type = 14;  // Index in string_table
+
+  // Index into the string table of a comment.
+  repeated int64 comment_index = 15;
+
+  // The following fields are not standard and are not used by
+  // pprof.  They are kept for backwards compatibility.
+
+  optional int64 x_comment = 16;
+  optional int64 x_drop_frames = 17;
+  optional int64 x_keep_frames = 18;
+}
+
+// Each Sample records the values of one or more measurements.
+// Each sample has a call stack that indicates where the
+// measurements were taken.
+message Sample {
+  // The location ids refer to the location table.  Each location id
+  // represents a frame in the call stack.
+  repeated uint64 location_id = 1;
+
+  // The value of each measurement.
+  repeated int64 value = 2;
+
+  // Label indices refer to the string table.
+  repeated Label label = 3;
+}
+
+// A mapping from a region of memory to a file path.
+message Mapping {
+  optional uint64 id = 1;
+  optional uint64 memory_start = 2;  // Start of region in memory
+  optional uint64 memory_limit = 3;  // End of region in memory
+  optional uint64 file_offset = 4;   // Offset in file
+
+  optional uint64 filename = 5;     // Index in string table
+  optional uint64 build_id = 6;     // Index in string table
+  optional bool has_functions = 7;
+  optional bool has_filenames = 8;
+  optional bool has_line_numbers = 9;
+}
+
+// A location is a place in the program that can be identified by an
+// address and/or a line number.  Each location has a unique id.
+message Location {
+  optional uint64 id = 1;
+  optional uint64 address = 2;
+  repeated Line line = 3;
+  optional uint64 mapping_id = 4;  // Index in mapping table
+}
+
+// Each line record identifies a line in a source file.
+message Line {
+  optional uint64 function_id = 1;  // Index in function table
+  optional int64 line = 2;
+}
+
+// Each function has a name and a filename.
+message Function {
+  optional uint64 id = 1;
+  optional uint64 name = 2;       // Index in string table
+  optional uint64 system_name = 3;  // Index in string table
+  optional uint64 filename = 4;     // Index in string table
+  optional uint64 start_line = 5;
+}
+
+// Each Label is a key-value pair.
+message Label {
+  optional uint64 key = 1;    // Index in string table
+  optional uint64 str = 2;    // Index in string table
+  optional int64 num = 3;
+  optional uint64 num_unit = 4;  // Index in string table
+}

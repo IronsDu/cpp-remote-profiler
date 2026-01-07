@@ -256,6 +256,9 @@ TEST_F(ProfilerTest, ProfileStateQuery) {
     EXPECT_TRUE(state.is_running);
     EXPECT_FALSE(state.output_path.empty());
 
+    // 添加一个小的延迟以确保 duration > 0
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
     profiler->stopCPUProfiler();
     state = profiler->getProfilerState(profiler::ProfilerType::CPU);
     EXPECT_FALSE(state.is_running);
