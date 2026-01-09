@@ -401,15 +401,8 @@
                 showProgress(true, '下载 profile 文件...', 10);
 
                 if (profileType === 'cpu') {
-                    // CPU profile: 使用 addresses 接口获取地址栈
-                    const response = await fetch('/api/cpu/addresses');
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    }
-
-                    showProgress(true, '解析 CPU profile...', 30);
-                    const text = await response.text();
-                    await processCPUProfileText(text);
+                    // CPU profile: 下载二进制prof文件并解析
+                    await processCPUProfileText();
                 } else {
                     // Heap profile: 使用 profile 接口获取原始文件
                     const response = await fetch('/api/heap/profile');
@@ -431,44 +424,28 @@
             }
         }
 
-        async function processCPUProfileText(text) {
-            showProgress(true, '解析 CPU profile 地址栈...', 40);
+        async function processCPUProfileText() {
+            showProgress(true, '下载 CPU profile 文件...', 20);
 
             try {
-                // 解析地址栈文本格式: "count @ addr1 addr2 addr3"
-                const lines = text.split('\n');
-                const samples = [];
-                const addresses = new Set();
-
-                for (const line of lines) {
-                    if (!line || line.startsWith('#')) continue;
-
-                    // 解析格式: "count @ addr1 addr2 addr3"
-                    const parts = line.split('@');
-                    if (parts.length < 2) continue;
-
-                    const count = parseInt(parts[0].trim());
-                    if (isNaN(count) || count <= 0) continue;
-
-                    const addrStr = parts[1].trim();
-                    if (!addrStr) continue;
-
-                    const stack = addrStr.split(/\s+/).reverse();
-                    for (const addr of stack) {
-                        if (addr) {
-                            addresses.add(addr);
-                        }
-                    }
-
-                    samples.push({
-                        stack: stack,
-                        value: count
-                    });
+                // 下载二进制prof文件
+                const response = await fetch('/api/cpu/profile');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
+
+                showProgress(true, '解析 CPU profile 二进制数据...', 40);
+
+                const buffer = await response.arrayBuffer();
+
+                // 解析gperftools二进制格式
+                const { samples, addresses } = parseGperftoolsProfile(buffer);
 
                 if (samples.length === 0) {
                     throw new Error('没有找到有效的采样数据');
                 }
+
+                console.log(`解析到 ${samples.length} 个采样，${addresses.size} 个唯一地址`);
 
                 showProgress(true, `批量符号化 ${addresses.size} 个地址...`, 60);
 
@@ -547,6 +524,70 @@
                 console.error('Error processing heap profile:', e);
                 throw new Error('解析 heap profile 失败: ' + e.message);
             }
+        }
+
+        // 解析gperftools CPU profile二进制格式
+        function parseGperftoolsProfile(buffer) {
+            const samples = [];
+            const addresses = new Set();
+
+            // 创建DataView来读取二进制数据
+            const view = new DataView(buffer);
+            const byteLength = buffer.byteLength;
+
+            // gperftools profile格式：
+            // Header: 24 bytes (magic, version, sampling period, padding)
+            // 然后是一系列采样记录：
+            // - count (8 bytes, uint64)
+            // - pc_count (8 bytes, uint64)
+            // - pcs[pc_count] (每个8 bytes, uint64)
+
+            let offset = 24; // 跳过24字节header
+
+            function readUint64(offset) {
+                // 读取小端序的64位整数
+                const low = view.getUint32(offset, true);
+                const high = view.getUint32(offset + 4, true);
+                return high * 0x100000000 + low;
+            }
+
+            while (offset + 16 <= byteLength) {
+                const count = readUint64(offset);
+                const pcCount = readUint64(offset + 8);
+
+                if (pcCount === 0 || pcCount > 100) {
+                    // 异常数据，跳过
+                    offset += 16;
+                    continue;
+                }
+
+                if (offset + 16 + pcCount * 8 > byteLength) {
+                    // 数据不完整
+                    break;
+                }
+
+                // 读取PC列表
+                const stack = [];
+                for (let i = 0; i < pcCount; i++) {
+                    // 反向遍历（从底层到顶层）
+                    const addrOffset = offset + 16 + (pcCount - 1 - i) * 8;
+                    const addr = readUint64(addrOffset);
+                    const addrStr = '0x' + addr.toString(16);
+                    stack.push(addrStr);
+                    addresses.add(addrStr);
+                }
+
+                if (stack.length > 0 && count > 0) {
+                    samples.push({
+                        stack: stack,
+                        value: Number(count)
+                    });
+                }
+
+                offset += 16 + pcCount * 8;
+            }
+
+            return { samples, addresses };
         }
 
         async function batchSymbolize(addresses) {

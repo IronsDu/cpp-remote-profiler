@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <iostream>
 #include <vector>
+#include <dlfcn.h>
+#include <cstdint>
 
 namespace profiler {
 
@@ -509,22 +511,50 @@ std::string ProfilerManager::resolveSymbolWithBackward(void* address) {
         // 使用 backward-cpp 符号化地址
         std::vector<SymbolizedFrame> frames = symbolizer_->symbolize(address);
 
-        if (frames.empty()) {
-            std::ostringstream oss;
-            oss << "0x" << std::hex << reinterpret_cast<unsigned long long>(address);
-            return oss.str();
-        }
-
-        // 使用 -- 连接内联调用链（gperftools pprof 格式）
-        std::ostringstream result;
-        for (size_t i = 0; i < frames.size(); ++i) {
-            if (i > 0) {
-                result << "--";
+        if (!frames.empty() && frames[0].function_name.find("0x") != 0) {
+            // 符号化成功，使用 -- 连接内联调用链
+            std::ostringstream result;
+            for (size_t i = 0; i < frames.size(); ++i) {
+                if (i > 0) {
+                    result << "--";
+                }
+                result << frames[i].function_name;
             }
-            result << frames[i].function_name;
+            return result.str();
         }
 
-        return result.str();
+        // backward-cpp失败，尝试使用 addr2line
+        // 需要计算相对地址（对于PIE可执行文件）
+        Dl_info info;
+        uintptr_t addr = reinterpret_cast<uintptr_t>(address);
+        uintptr_t relative_addr = addr;
+
+        if (dladdr(address, &info) && info.dli_fbase) {
+            // 计算相对地址
+            relative_addr = addr - reinterpret_cast<uintptr_t>(info.dli_fbase);
+        }
+
+        std::ostringstream cmd;
+        cmd << "addr2line -e /proc/self/exe -f -C 0x"
+            << std::hex << relative_addr;
+
+        std::string output;
+        if (executeCommand(cmd.str(), output) && !output.empty()) {
+            // addr2line 输出格式: "function_name\nsource_file:line\n"
+            size_t newline_pos = output.find('\n');
+            if (newline_pos != std::string::npos) {
+                std::string symbol = output.substr(0, newline_pos);
+                if (symbol != "??" && !symbol.empty()) {
+                    return symbol;
+                }
+            }
+        }
+
+        // 都失败了，返回地址
+        std::ostringstream oss;
+        oss << "0x" << std::hex << reinterpret_cast<unsigned long long>(address);
+        return oss.str();
+
     } catch (const std::exception& e) {
         std::cerr << "Error in resolveSymbolWithBackward: " << e.what() << std::endl;
         std::ostringstream oss;
@@ -546,58 +576,21 @@ std::string ProfilerManager::getProfileSamples(const std::string& profile_type) 
         return R"({"error": "Invalid profile type"})";
     }
 
+    // 检查profiler是否在运行
+    if (profile_path.empty()) {
+        return R"({"error": "No profile data available. Please start profiler first."})";
+    }
+
     // 检查profile文件是否存在
     std::ifstream file(profile_path, std::ios::binary);
     if (!file.is_open()) {
-        return R"({"error": "Cannot open profile file"})";
+        return R"({"error": "Cannot open profile file: )" + profile_path + R"("})";
     }
 
     file.close();
 
-    // 根据profile类型返回不同的演示数据
-    if (profile_type == "cpu") {
-        // CPU采样数据（基于example程序的实际调用栈）
-        std::ostringstream json;
-        json << R"({
-            "type": "cpu",
-            "samples": [
-                {"addr": "0x401000", "count": 200, "name": "cpuIntensiveTask"},
-                {"addr": "0x401100", "count": 180, "name": "cpuIntensiveTask::sortData"},
-                {"addr": "0x401200", "count": 150, "name": "std::__introsort_loop"},
-                {"addr": "0x401300", "count": 120, "name": "std::sort"},
-                {"addr": "0x401400", "count": 100, "name": "cpuIntensiveTask::calculateFibonacci"},
-                {"addr": "0x401500", "count": 80, "name": "fibonacci_recursive"},
-                {"addr": "0x401600", "count": 60, "name": "std::vector::push_back"},
-                {"addr": "0x401700", "count": 50, "name": "operator new"},
-                {"addr": "0x401800", "count": 40, "name": "memoryIntensiveTask"},
-                {"addr": "0x401900", "count": 30, "name": "std::mersenne_twister_engine::_M_gen_rand"}
-            ],
-            "total": 1010,
-            "note": "前端使用 /pprof/symbol 接口解析地址为实际函数名"
-        })";
-        return json.str();
-    } else {
-        // Heap采样数据（基于example程序的内存分配）
-        std::ostringstream json;
-        json << R"({
-            "type": "heap",
-            "samples": [
-                {"addr": "0x402000", "count": 500, "name": "memoryIntensiveTask"},
-                {"addr": "0x402100", "count": 300, "name": "memoryIntensiveTask::allocateMatrix"},
-                {"addr": "0x402200", "count": 200, "name": "std::vector<int>::vector"},
-                {"addr": "0x402300", "count": 150, "name": "operator new"},
-                {"addr": "0x402400", "count": 120, "name": "std::allocator::allocate"},
-                {"addr": "0x402500", "count": 100, "name": "memoryIntensiveTask::allocateArrays"},
-                {"addr": "0x402600", "count": 80, "name": "std::vector<std::vector<int>>::push_back"},
-                {"addr": "0x402700", "count": 60, "name": "cpuIntensiveTask"},
-                {"addr": "0x402800", "count": 40, "name": "std::vector<int>::resize"},
-                {"addr": "0x402900", "count": 30, "name": "malloc"}
-            ],
-            "total": 1580,
-            "note": "前端使用 /pprof/symbol 接口解析地址为实际函数名"
-        })";
-        return json.str();
-    }
+    // 返回collapsed格式数据（已符号化）
+    return getCollapsedStacks(profile_type);
 }
 
 std::string ProfilerManager::getFlameGraphData(const std::string& profile_type) {
@@ -774,27 +767,100 @@ std::string ProfilerManager::getCollapsedStacks(const std::string& profile_type)
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (profile_type == "cpu") {
-        // CPU profile: 返回一个简单的提示，告知使用新接口
-        return R"(# CPU profile 不再支持 collapsed 格式
-# 请使用以下新架构接口：
-# 1. GET /api/cpu/profile - 下载原始 profile 文件（gperftools 二进制格式）
-# 2. POST /pprof/symbol - 批量符号化地址（支持内联函数）
-# 前端应下载原始文件，解析地址，然后批量请求符号化接口
-)";
-
-        /* 新架构: 不再使用 collapsed 格式
+        // CPU profile: 服务器端解析并符号化
         std::string profile_path = profiler_states_[ProfilerType::CPU].output_path;
 
         // 检查文件是否存在
-        std::ifstream test_file(profile_path);
-        if (!test_file.good()) {
-            return "# Error: CPU profile file not found: " + profile_path + "\n";
+        std::ifstream file(profile_path, std::ios::binary);
+        if (!file.is_open()) {
+            return "# Error: Cannot open CPU profile file: " + profile_path + "\n";
         }
-        test_file.close();
 
-        // 使用 ProfileParser 解析为 collapsed 格式
-        return ProfileParser::parseToCollapsed(profile_path);
-        */
+        // 读取整个文件
+        std::vector<char> buffer((std::istreambuf_iterator<char>(file)),
+                                 std::istreambuf_iterator<char>());
+        file.close();
+
+        if (buffer.size() < 16) {
+            return "# Error: Profile file too small\n";
+        }
+
+        // 解析gperftools二进制格式并服务器端符号化
+        std::ostringstream result;
+        uint64_t* words = reinterpret_cast<uint64_t*>(buffer.data());
+        size_t word_count = buffer.size() / sizeof(uint64_t);
+
+        // 跳过header (前3个words)
+        size_t pos = 3;
+        int sample_count = 0;
+        int64_t total_samples = 0;
+
+        // 使用map聚合相同的调用栈
+        std::map<std::string, int64_t> stack_counts;
+
+        while (pos < word_count) {
+            // 每个采样记录包含：
+            // - count (1 word)
+            // - PC数量 (1 word)
+            // - PC列表 (N words)
+
+            if (pos + 1 >= word_count) break;
+
+            uint64_t count = words[pos++];
+            uint64_t pc_count = words[pos++];
+
+            if (pc_count == 0 || pc_count > 100) {
+                // 异常数据，跳过
+                continue;
+            }
+
+            if (pos + pc_count > word_count) {
+                // 数据不完整
+                break;
+            }
+
+            // 构建符号化的调用栈
+            std::vector<std::string> stack_symbols;
+
+            for (uint64_t i = 0; i < pc_count; i++) {
+                // 反向遍历（从底层到顶层）
+                uint64_t addr = words[pos + pc_count - 1 - i];
+                void* ptr = reinterpret_cast<void*>(addr);
+
+                // 服务器端符号化（使用backward-cpp）
+                std::string symbol = resolveSymbolWithBackward(ptr);
+                stack_symbols.push_back(symbol);
+            }
+
+            // 构建collapsed格式的栈字符串
+            std::ostringstream stack_str;
+            for (size_t i = 0; i < stack_symbols.size(); i++) {
+                if (i > 0) stack_str << ";";
+                stack_str << stack_symbols[i];
+            }
+
+            // 累加采样数
+            stack_counts[stack_str.str()] += count;
+            total_samples += count;
+
+            pos += pc_count;
+            sample_count++;
+        }
+
+        if (sample_count == 0) {
+            return "# Error: No valid samples found in profile\n";
+        }
+
+        // 生成collapsed格式输出
+        result << "# collapsed stack traces\n";
+        result << "# Total samples: " << total_samples << "\n";
+        result << "# Unique stacks: " << stack_counts.size() << "\n";
+
+        for (const auto& entry : stack_counts) {
+            result << entry.first << " " << entry.second << "\n";
+        }
+
+        return result.str();
     } else if (profile_type == "heap") {
         // 对于 heap profile，仍然使用文件解析
         std::string profile_path = profiler_states_[ProfilerType::HEAP].output_path;

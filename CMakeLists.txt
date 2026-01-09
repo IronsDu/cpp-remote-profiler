@@ -4,6 +4,20 @@ project(cpp-remote-profiler VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Set build type to RelWithDebInfo to include debug symbols
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
+# Add debug symbols for better profiling support
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g -O2")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g -O2")
+
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "CXX flags: ${CMAKE_CXX_FLAGS}")
+
 # Find dependencies via vcpkg
 find_package(Drogon CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
@@ -11,6 +25,7 @@ find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
 find_package(Backward CONFIG REQUIRED)
+find_package(absl REQUIRED)
 
 # Find gperftools via pkg-config
 find_package(PkgConfig REQUIRED)
@@ -60,6 +75,7 @@ target_link_libraries(profiler_lib
     ${GPERFTOOLS_LIBRARIES}
     protobuf::libprotobuf
     Backward::Backward
+    absl::symbolize
     ${CMAKE_DL_LIBS}
 )
 

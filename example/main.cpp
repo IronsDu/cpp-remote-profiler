@@ -716,19 +716,10 @@ int main(int argc, char* argv[]) {
         "/api/cpu/text",
         [&profiler](const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string samplesJson = profiler.getProfileSamples("cpu");
-
-            // 简单格式化JSON为文本
-            std::ostringstream text;
-            text << "CPU Profile Analysis\n";
-            text << "====================\n\n";
-            text << "Use /api/cpu/samples for raw data\n";
-            text << "Use /pprof/symbol for symbol resolution\n\n";
-            text << "Samples Data (JSON):\n";
-            text << samplesJson;
+            std::string collapsedData = profiler.getProfileSamples("cpu");
 
             auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(text.str());
+            resp->setBody(collapsedData);
             resp->setContentTypeCode(CT_TEXT_PLAIN);
             callback(resp);
         },
@@ -740,19 +731,10 @@ int main(int argc, char* argv[]) {
         "/api/heap/text",
         [&profiler](const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string samplesJson = profiler.getProfileSamples("heap");
-
-            // 简单格式化JSON为文本
-            std::ostringstream text;
-            text << "Heap Profile Analysis\n";
-            text << "=====================\n\n";
-            text << "Use /api/heap/samples for raw data\n";
-            text << "Use /pprof/symbol for symbol resolution\n\n";
-            text << "Samples Data (JSON):\n";
-            text << samplesJson;
+            std::string collapsedData = profiler.getProfileSamples("heap");
 
             auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(text.str());
+            resp->setBody(collapsedData);
             resp->setContentTypeCode(CT_TEXT_PLAIN);
             callback(resp);
         },
