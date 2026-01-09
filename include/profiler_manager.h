@@ -7,6 +7,7 @@
 #include <vector>
 #include "stack_collector.h"
 #include "profile_parser.h"
+#include "symbolize.h"
 
 namespace profiler {
 
@@ -59,11 +60,17 @@ public:
     // Resolve address to symbol name (for /pprof/symbol endpoint)
     std::string resolveSymbol(const std::string& profile_path, const std::string& address);
 
+    // Resolve address to symbol with inline frames using backward-cpp
+    std::string resolveSymbolWithBackward(void* address);
+
     // Get raw profile samples (addresses) for frontend rendering
     std::string getProfileSamples(const std::string& profile_type);
 
     // Get collapsed stack traces for flame graph (format: "func1;func2;func3 count")
     std::string getCollapsedStacks(const std::string& profile_type);
+
+    // Get CPU profile address stacks (format: "addr1 addr2 addr3 count")
+    std::string getCPUProfileAddresses();
 
     // List available profiles
     std::vector<std::string> listProfiles() const;
@@ -84,6 +91,9 @@ private:
     std::string profile_dir_;
     std::map<ProfilerType, ProfilerState> profiler_states_;
     mutable std::mutex mutex_;
+
+    // Symbolizer (backward-cpp)
+    std::unique_ptr<Symbolizer> symbolizer_;
 };
 
 } // namespace profiler

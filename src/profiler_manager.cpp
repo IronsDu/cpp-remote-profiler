@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <iostream>
+#include <vector>
 
 namespace profiler {
 
@@ -23,6 +24,14 @@ ProfilerManager::ProfilerManager() {
     // Initialize profiler states
     profiler_states_[ProfilerType::CPU] = ProfilerState{false, "", 0, 0};
     profiler_states_[ProfilerType::HEAP] = ProfilerState{false, "", 0, 0};
+
+    // Initialize symbolizer
+    try {
+        symbolizer_ = createSymbolizer();
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to initialize symbolizer: " << e.what() << std::endl;
+        // Continue without symbolizer (will fall back to addr2line)
+    }
 }
 
 ProfilerManager::~ProfilerManager() {
@@ -66,9 +75,7 @@ bool ProfilerManager::startCPUProfiler(const std::string& output_path) {
             true, full_path, timestamp, 0
         };
 
-        // 启动 StackCollector 来收集调用栈
-        StackCollector::getInstance().start(100); // 100ms 采样间隔
-
+        // 不再使用 StackCollector，gperftools 会直接写入文件
         return true;
     }
     return false;
@@ -83,8 +90,7 @@ bool ProfilerManager::stopCPUProfiler() {
 
     ProfilerStop();
 
-    // 停止 StackCollector
-    StackCollector::getInstance().stop();
+    // 不再使用 StackCollector
 
     auto now = std::chrono::system_clock::now();
     auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -430,25 +436,101 @@ bool ProfilerManager::executeCommand(const std::string& cmd, std::string& output
 }
 
 std::string ProfilerManager::resolveSymbol(const std::string& profile_path, const std::string& address) {
-    // 使用 addr2line 解析符号
-    std::string cmd = "addr2line -e /proc/self/exe -f -C " + address + " 2>&1";
+    // 使用 addr2line -i 解析符号和内联函数
+    // -i: 显示内联函数
+    // -f: 显示函数名
+    // -C: 解码 C++ 符号名
+    std::string cmd = "addr2line -e /proc/self/exe -i -f -C " + address + " 2>&1";
     std::string output;
     if (executeCommand(cmd, output)) {
-        // addr2line 输出格式: "function_name\nsource_file:line\n"
-        size_t newline_pos = output.find('\n');
-        if (newline_pos != std::string::npos) {
-            std::string symbol = output.substr(0, newline_pos);
-            // 如果addr2line返回的是??，说明解析失败，返回原始地址
-            if (symbol == "??" || symbol.empty()) {
-                return "0x" + address;
+        // addr2line -i 输出格式（每个地址可能有多行，代表内联调用链）:
+        // func1
+        // file1:line1
+        // func2 (inlined by)
+        // file2:line2
+        // func3 (inlined by)
+        // file3:line3
+
+        std::vector<std::string> inline_chain;
+        std::istringstream iss(output);
+        std::string line;
+
+        while (std::getline(iss, line)) {
+            // 跳过空行
+            if (line.empty()) continue;
+
+            // 函数名行（不包含冒号）
+            if (line.find(':') == std::string::npos) {
+                // 移除可能的 "(inlined by)" 标记
+                size_t inline_pos = line.find(" (inlined by)");
+                if (inline_pos != std::string::npos) {
+                    line = line.substr(0, inline_pos);
+                }
+
+                // 忽略 "??"
+                if (line != "??" && !line.empty()) {
+                    inline_chain.push_back(line);
+                }
             }
-            return symbol;
+            // 文件:行号行（包含冒号），跳过
         }
-        return output;
+
+        // 如果没有找到任何符号，返回原始地址
+        if (inline_chain.empty()) {
+            return "0x" + address;
+        }
+
+        // 使用 -- 连接内联调用链（gperftools pprof 格式）
+        // 例如：main_func--inline_func1--inline_func2
+        std::ostringstream result;
+        for (size_t i = 0; i < inline_chain.size(); ++i) {
+            if (i > 0) {
+                result << "--";
+            }
+            result << inline_chain[i];
+        }
+
+        return result.str();
     }
 
     // 回退：返回原始地址
     return "0x" + address;
+}
+
+std::string ProfilerManager::resolveSymbolWithBackward(void* address) {
+    // 如果 symbolizer 不可用，返回地址
+    if (!symbolizer_) {
+        std::ostringstream oss;
+        oss << "0x" << std::hex << reinterpret_cast<unsigned long long>(address);
+        return oss.str();
+    }
+
+    try {
+        // 使用 backward-cpp 符号化地址
+        std::vector<SymbolizedFrame> frames = symbolizer_->symbolize(address);
+
+        if (frames.empty()) {
+            std::ostringstream oss;
+            oss << "0x" << std::hex << reinterpret_cast<unsigned long long>(address);
+            return oss.str();
+        }
+
+        // 使用 -- 连接内联调用链（gperftools pprof 格式）
+        std::ostringstream result;
+        for (size_t i = 0; i < frames.size(); ++i) {
+            if (i > 0) {
+                result << "--";
+            }
+            result << frames[i].function_name;
+        }
+
+        return result.str();
+    } catch (const std::exception& e) {
+        std::cerr << "Error in resolveSymbolWithBackward: " << e.what() << std::endl;
+        std::ostringstream oss;
+        oss << "0x" << std::hex << reinterpret_cast<unsigned long long>(address);
+        return oss.str();
+    }
 }
 
 std::string ProfilerManager::getProfileSamples(const std::string& profile_type) {
@@ -617,24 +699,119 @@ std::string ProfilerManager::getFlameGraphData(const std::string& profile_type) 
     }
 }
 
+std::string ProfilerManager::getCPUProfileAddresses() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::string profile_path = profiler_states_[ProfilerType::CPU].output_path;
+
+    // 检查文件是否存在
+    std::ifstream file(profile_path, std::ios::binary);
+    if (!file.is_open()) {
+        return "# Error: Cannot open CPU profile file: " + profile_path + "\n";
+    }
+
+    // 读取整个文件
+    std::vector<char> buffer((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+    file.close();
+
+    if (buffer.size() < 16) {
+        return "# Error: Profile file too small\n";
+    }
+
+    // gperftools profile 格式:
+    // header (16 bytes): magic, version, sampling_period, etc.
+    // 然后是一系列采样记录
+
+    std::ostringstream result;
+    uint64_t* words = reinterpret_cast<uint64_t*>(buffer.data());
+    size_t word_count = buffer.size() / sizeof(uint64_t);
+
+    // 跳过header (前3个words)
+    size_t pos = 3;
+    int sample_count = 0;
+
+    while (pos < word_count) {
+        // 每个采样记录包含：
+        // - count (1 word)
+        // - PC数量 (1 word)
+        // - PC列表 (N words)
+
+        if (pos + 1 >= word_count) break;
+
+        uint64_t count = words[pos++];
+        uint64_t pc_count = words[pos++];
+
+        if (pc_count == 0 || pc_count > 100) {
+            // 异常数据，跳过
+            continue;
+        }
+
+        if (pos + pc_count > word_count) {
+            // 数据不完整
+            break;
+        }
+
+        // 输出地址栈（反向，从底层到顶层）
+        result << count << " @";
+        for (uint64_t i = 0; i < pc_count; i++) {
+            result << " 0x" << std::hex << words[pos + pc_count - 1 - i] << std::dec;
+        }
+        result << "\n";
+
+        pos += pc_count;
+        sample_count++;
+    }
+
+    if (sample_count == 0) {
+        return "# Error: No valid samples found in profile\n";
+    }
+
+    return result.str();
+}
+
 std::string ProfilerManager::getCollapsedStacks(const std::string& profile_type) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (profile_type == "cpu") {
-        // 使用 StackCollector 收集的 collapsed 格式数据
-        return StackCollector::getInstance().getCollapsedStacks();
+        // CPU profile: 返回一个简单的提示，告知使用新接口
+        return R"(# CPU profile 不再支持 collapsed 格式
+# 请使用以下新架构接口：
+# 1. GET /api/cpu/profile - 下载原始 profile 文件（gperftools 二进制格式）
+# 2. POST /pprof/symbol - 批量符号化地址（支持内联函数）
+# 前端应下载原始文件，解析地址，然后批量请求符号化接口
+)";
+
+        /* 新架构: 不再使用 collapsed 格式
+        std::string profile_path = profiler_states_[ProfilerType::CPU].output_path;
+
+        // 检查文件是否存在
+        std::ifstream test_file(profile_path);
+        if (!test_file.good()) {
+            return "# Error: CPU profile file not found: " + profile_path + "\n";
+        }
+        test_file.close();
+
+        // 使用 ProfileParser 解析为 collapsed 格式
+        return ProfileParser::parseToCollapsed(profile_path);
+        */
     } else if (profile_type == "heap") {
         // 对于 heap profile，仍然使用文件解析
         std::string profile_path = profiler_states_[ProfilerType::HEAP].output_path;
 
         std::ifstream heap_file(profile_path);
         if (!heap_file.is_open()) {
-            return R"({"error": "Cannot open heap profile"})";
+            return "# Error: Cannot open heap profile: " + profile_path + "\n";
         }
 
         std::ostringstream collapsed;
         std::string line;
+        int line_count = 0;
+        int processed_count = 0;
+
         while (std::getline(heap_file, line)) {
+            line_count++;
+
             // 跳过空行和注释
             if (line.empty() || line[0] == '#') continue;
 
@@ -651,39 +828,70 @@ std::string ProfilerManager::getCollapsedStacks(const std::string& profile_type)
                 size_t colon_pos = line.find(':');
                 if (colon_pos != std::string::npos && colon_pos < at_pos) {
                     std::string count_str = line.substr(colon_pos + 1);
+
+                    // Trim left whitespace
+                    size_t start = count_str.find_first_not_of(" ");
+                    if (start == std::string::npos) {
+                        continue; // 纯空格
+                    }
+                    count_str = count_str.substr(start);
+
+                    // 找到第一个空格（数字之后）
                     size_t space_pos = count_str.find(' ');
                     if (space_pos != std::string::npos) {
                         count_str = count_str.substr(0, space_pos);
-                        try {
-                            int count = std::stoi(count_str);
+                    }
 
-                            // 提取函数栈
-                            std::string stack_part = line.substr(at_pos + 1);
-                            std::vector<std::string> stack;
-                            std::stringstream ss(stack_part);
-                            std::string func;
-                            while (ss >> func) {
-                                if (!func.empty() && func[0] != '0') {  // 跳过地址
-                                    stack.push_back(func);
-                                }
-                            }
+                    // 跳过空字符串
+                    if (count_str.empty()) {
+                        continue;
+                    }
 
-                            if (!stack.empty()) {
-                                // 反转栈顺序（从根到叶子）
-                                collapsed << count;
-                                for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
-                                    collapsed << ";" << *it;
-                                }
-                                collapsed << "\n";
-                            }
-                        } catch (...) {
-                            // 解析失败，跳过此行
+                    try {
+                        int count = std::stoi(count_str);
+                        // 跳过count为0的行
+                        if (count <= 0) {
+                            continue;
                         }
+
+                        // 提取函数栈
+                        std::string stack_part = line.substr(at_pos + 1);
+                        std::vector<std::string> stack;
+                        std::stringstream ss(stack_part);
+                        std::string addr_str;
+
+                        while (ss >> addr_str) {
+                            if (!addr_str.empty()) {
+                                // 暂时不符号化，直接使用地址
+                                stack.push_back(addr_str);
+                            }
+                        }
+
+                        if (!stack.empty()) {
+                            // 反转栈顺序（从根到叶子）
+                            collapsed << count;
+                            for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
+                                collapsed << ";" << *it;
+                            }
+                            collapsed << "\n";
+                            processed_count++;
+                        }
+                    } catch (const std::exception& e) {
+                        // 解析失败，跳过此行
+                        std::cerr << "Failed to parse line " << line_count << ": " << e.what() << std::endl;
                     }
                 }
             }
         }
-        return collapsed.str();
+
+        // 添加header
+        std::ostringstream result;
+        result << "# collapsed stack traces\n";
+        result << "# Total lines: " << line_count << "\n";
+        result << "# Processed: " << processed_count << "\n";
+        result << collapsed.str();
+
+        return result.str();
     }
 
     return R"({"error": "Invalid profile type"})";

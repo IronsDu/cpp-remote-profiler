@@ -10,6 +10,7 @@ find_package(GTest CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
+find_package(Backward CONFIG REQUIRED)
 
 # Find gperftools via pkg-config
 find_package(PkgConfig REQUIRED)
@@ -27,12 +28,14 @@ set(PROFILER_SOURCES
     src/profiler_manager.cpp
     src/stack_collector.cpp
     src/profile_parser.cpp
+    src/symbolize.cpp
 )
 
 set(PROFILER_HEADERS
     include/profiler_manager.h
     include/stack_collector.h
     include/profile_parser.h
+    include/symbolize.h
 )
 
 # Generate protobuf files
@@ -56,6 +59,8 @@ add_library(profiler_lib ${PROFILER_SOURCES} ${PROFILER_HEADERS} ${PROTO_FILES})
 target_link_libraries(profiler_lib
     ${GPERFTOOLS_LIBRARIES}
     protobuf::libprotobuf
+    Backward::Backward
+    ${CMAKE_DL_LIBS}
 )
 
 # Example executable
@@ -78,6 +83,29 @@ target_link_libraries(profiler_test
 )
 
 add_test(NAME ProfilerTest COMMAND profiler_test)
+
+# CPU profile 解析测试
+add_executable(cpu_profile_test tests/test_cpu_profile.cpp ${PROTO_FILES})
+target_link_libraries(cpu_profile_test
+    profiler_lib
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+
+add_test(NAME CPUProfileTest COMMAND cpu_profile_test)
+
+# Full flow 测试
+add_executable(test_full_flow tests/test_full_flow.cpp ${PROTO_FILES})
+target_link_libraries(test_full_flow
+    profiler_lib
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+)
+
+add_test(NAME FullFlowTest COMMAND test_full_flow)
+
 
 # Copy web files to build directory
 file(COPY ${PROJECT_SOURCE_DIR}/web DESTINATION ${CMAKE_BINARY_DIR})
