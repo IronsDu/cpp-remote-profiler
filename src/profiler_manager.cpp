@@ -1,5 +1,6 @@
 #include "profiler_manager.h"
 #include "stack_collector.h"
+#include "embed_pprof.h"
 #include <gperftools/profiler.h>
 #include <gperftools/heap-profiler.h>
 #include <gperftools/malloc_extension.h>
@@ -23,6 +24,9 @@
 namespace profiler {
 
 ProfilerManager::ProfilerManager() {
+    // Write embedded pprof script to current directory
+    writePprofScript("./pprof");
+
     // Create profile directory if not exists
     profile_dir_ = "/tmp/cpp_profiler";
     mkdir(profile_dir_.c_str(), 0755);
@@ -242,29 +246,10 @@ std::string ProfilerManager::getProfileAsJSON(const std::string& profile_type) {
         return R"({"error": "Invalid profile type"})";
     }
 
-    // 对于CPU profile，使用pprof工具转换为文本
+    // 对于CPU profile，使用嵌入的 pprof 工具转换为文本
     if (profile_type == "cpu") {
-        // 检查pprof是否可用
-        std::string test_cmd = "which pprof";
-        std::string test_output;
-        executeCommand(test_cmd, test_output);
-
-        if (test_output.find("pprof") == std::string::npos || test_output.find("not found") != std::string::npos) {
-            // pprof不可用，返回示例数据用于演示前端功能
-            return R"({
-                "name": "root",
-                "value": 0,
-                "children": [
-                    {"name": "cpuIntensiveTask", "value": 450},
-                    {"name": "std::sort", "value": 300},
-                    {"name": "fib", "value": 150}
-                ],
-                "total": 900,
-                "note": "演示数据 - 安装pprof后可查看实际profile数据"
-            })";
-        }
-
-        std::string cmd = "pprof --text " + profile_path + " 2>&1";
+        // 使用 brpc 的 pprof，需要 <program> 参数
+        std::string cmd = "./pprof --text /bin/true " + profile_path + " 2>&1";
         std::string output;
         if (!executeCommand(cmd, output)) {
             return R"({"error": "Failed to execute pprof"})";
@@ -1017,9 +1002,10 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     // Step 5: Generate SVG using pprof
     std::string svg_output;
 
-    // Build pprof command (不添加可执行文件路径，让 pprof 自动从 prof 文件中提取)
+    // Build pprof command (使用 brpc 的 pprof，需要 <program> 参数)
+    // 使用 /bin/true 作为占位符，因为 gperftools profile 已包含符号信息
     std::ostringstream cmd;
-    cmd << "pprof -svg " << profile_path << " 2>&1";
+    cmd << "./pprof --svg /bin/true " << profile_path << " 2>&1";
 
     std::cout << "Generating flame graph..." << std::endl;
     if (!executeCommand(cmd.str(), svg_output)) {
@@ -1178,8 +1164,9 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     // Step 9: Generate SVG using pprof
     std::string svg_output;
 
+    // Build pprof command (使用 brpc 的 pprof，需要 <program> 参数)
     std::ostringstream cmd;
-    cmd << "pprof -svg " << latest_heap_file << " 2>&1";
+    cmd << "./pprof --svg /bin/true " << latest_heap_file << " 2>&1";
 
     std::cout << "Generating heap flame graph..." << std::endl;
     std::cout << "Command: " << cmd.str() << std::endl;

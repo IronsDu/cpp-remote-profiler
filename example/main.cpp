@@ -243,10 +243,16 @@ void memoryIntensiveTask() {
 
 // HTML 网页
 std::string getWebPage() {
-    std::ifstream htmlFile("../web/index.html");
+    std::ifstream htmlFile("web/index.html");
+    if (!htmlFile.is_open()) {
+        std::cerr << "Error: Cannot open web/index.html" << std::endl;
+        return "<html><body><h1>Error: Cannot load index.html</h1></body></html>";
+    }
     std::stringstream buffer;
     buffer << htmlFile.rdbuf();
-    return buffer.str();
+    std::string content = buffer.str();
+    std::cout << "Loaded web page: " << content.length() << " bytes" << std::endl;
+    return content;
 }
 
 int main(int argc, char* argv[]) {

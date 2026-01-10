@@ -44,3 +44,4 @@ vcpkg/buildtrees/
 vcpkg/installed/
 vcpkg/packages/
 .vs/
+pprof
