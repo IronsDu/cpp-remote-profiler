@@ -248,8 +248,9 @@ std::string ProfilerManager::getProfileAsJSON(const std::string& profile_type) {
 
     // 对于CPU profile，使用嵌入的 pprof 工具转换为文本
     if (profile_type == "cpu") {
-        // 使用 /proc/self/exe 指向当前可执行文件进行符号化
-        std::string cmd = "./pprof --text /proc/self/exe " + profile_path + " 2>&1";
+        // 使用可执行文件的绝对路径进行符号化
+        std::string exe_path = getExecutablePath();
+        std::string cmd = "./pprof --text " + exe_path + " " + profile_path + " 2>/dev/null";
         std::string output;
         if (!executeCommand(cmd, output)) {
             return R"({"error": "Failed to execute pprof"})";
@@ -405,6 +406,18 @@ std::string ProfilerManager::getProfileAsJSON(const std::string& profile_type) {
 
     json << R"(], "total": )" << total_value << "}";
     return json.str();
+}
+
+// 获取当前可执行文件的绝对路径
+std::string ProfilerManager::getExecutablePath() {
+    char exe_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len == -1) {
+        // 如果读取失败，回退到 /proc/self/exe
+        return "/proc/self/exe";
+    }
+    exe_path[len] = '\0';
+    return std::string(exe_path);
 }
 
 bool ProfilerManager::executeCommand(const std::string& cmd, std::string& output) {
@@ -1002,9 +1015,10 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     // Step 5: Generate SVG using pprof
     std::string svg_output;
 
-    // Build pprof command (使用 /proc/self/exe 进行符号化)
+    // Build pprof command (使用可执行文件的绝对路径进行符号化)
+    std::string exe_path = getExecutablePath();
     std::ostringstream cmd;
-    cmd << "./pprof --svg /proc/self/exe " << profile_path << " 2>&1";
+    cmd << "./pprof --svg " << exe_path << " " << profile_path << " 2>/dev/null";
 
     std::cout << "Generating flame graph..." << std::endl;
     if (!executeCommand(cmd.str(), svg_output)) {
@@ -1163,9 +1177,10 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     // Step 9: Generate SVG using pprof
     std::string svg_output;
 
-    // Build pprof command (使用 /proc/self/exe 进行符号化)
+    // Build pprof command (使用可执行文件的绝对路径进行符号化)
+    std::string exe_path = getExecutablePath();
     std::ostringstream cmd;
-    cmd << "./pprof --svg /proc/self/exe " << latest_heap_file << " 2>&1";
+    cmd << "./pprof --svg " << exe_path << " " << latest_heap_file << " 2>/dev/null";
 
     std::cout << "Generating heap flame graph..." << std::endl;
     std::cout << "Command: " << cmd.str() << std::endl;

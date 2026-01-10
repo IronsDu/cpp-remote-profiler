@@ -97,6 +97,7 @@ private:
     ProfilerManager& operator=(const ProfilerManager&) = delete;
 
     bool executeCommand(const std::string& cmd, std::string& output);
+    std::string getExecutablePath();
     std::string findLatestHeapProfile(const std::string& dir);
 
     std::string profile_dir_;
