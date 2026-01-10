@@ -446,7 +446,14 @@ int main(int argc, char* argv[]) {
         "/flamegraph",
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::ifstream htmlFile("../web/flamegraph.html");
+            std::ifstream htmlFile("web/flamegraph.html");
+            if (!htmlFile.is_open()) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setBody("<html><body><h1>Error: Cannot load flamegraph.html</h1></body></html>");
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
             std::stringstream buffer;
             buffer << htmlFile.rdbuf();
             std::string html = buffer.str();
@@ -482,7 +489,14 @@ int main(int argc, char* argv[]) {
         "/debug",
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::ifstream htmlFile("../web/debug.html");
+            std::ifstream htmlFile("web/debug.html");
+            if (!htmlFile.is_open()) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setBody("<html><body><h1>Error: Cannot load debug.html</h1></body></html>");
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
             std::stringstream buffer;
             buffer << htmlFile.rdbuf();
             std::string html = buffer.str();
@@ -500,7 +514,14 @@ int main(int argc, char* argv[]) {
         "/show_svg.html",
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::ifstream htmlFile("../web/show_svg.html");
+            std::ifstream htmlFile("web/show_svg.html");
+            if (!htmlFile.is_open()) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setBody("<html><body><h1>Error: Cannot load show_svg.html</h1></body></html>");
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
             std::stringstream buffer;
             buffer << htmlFile.rdbuf();
             std::string html = buffer.str();
@@ -518,7 +539,14 @@ int main(int argc, char* argv[]) {
         "/show_heap_svg.html",
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::ifstream htmlFile("../web/show_heap_svg.html");
+            std::ifstream htmlFile("web/show_heap_svg.html");
+            if (!htmlFile.is_open()) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setBody("<html><body><h1>Error: Cannot load show_heap_svg.html</h1></body></html>");
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
             std::stringstream buffer;
             buffer << htmlFile.rdbuf();
             std::string html = buffer.str();
