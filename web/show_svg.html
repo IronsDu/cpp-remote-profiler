@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CPU Flame Graph Viewer</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; background: #f5f5f5; }
+        h1 { color: #333; margin-bottom: 10px; }
+        .info { background: #e3f2fd; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .info ul { margin: 10px 0; padding-left: 20px; }
+        .info li { margin: 5px 0; }
+        .toolbar { margin-bottom: 20px; }
+        button { padding: 10px 20px; margin-right: 10px; cursor: pointer; font-size: 14px; }
+        button:hover { background: #f0f0f0; }
+        #svg-container {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            overflow: auto;
+            max-width: 100%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            min-height: 600px;
+            max-height: 80vh;
+        }
+        svg {
+            display: block;
+            margin: 0 auto;
+            min-width: 100%;
+            min-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔥 CPU 火焰图</h1>
+    <div class="info">
+        <strong>💡 查看提示：</strong>
+        <ul>
+            <li><strong>滚动：</strong> 图表可能很大，请滚动查看所有函数</li>
+            <li><strong>缩放：</strong> 使用鼠标滚轮可以缩放视图</li>
+            <li><strong>拖拽：</strong> 按住鼠标左键可以拖动图表</li>
+            <li><strong>搜索：</strong> 使用 Ctrl+F 搜索特定函数（如 cpuIntensiveTask、FibonacciCalculator）</li>
+            <li><strong>点击：</strong> 点击节点可以高亮显示相关调用</li>
+        </ul>
+    </div>
+    <div class="toolbar">
+        <button onclick="loadSVG()">🔄 重新加载</button>
+        <button onclick="zoomIn()">🔍+ 放大</button>
+        <button onclick="zoomOut()">🔍- 缩小</button>
+        <button onclick="resetZoom()">1:1 原始大小</button>
+        <button onclick="fitToWidth()">↔️ 适应宽度</button>
+        <button onclick="window.print()">🖨️ 打印</button>
+        <button onclick="downloadSVG()">⬇️ 下载 SVG</button>
+    </div>
+    <div id="svg-container">加载中...</div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const duration = urlParams.get('duration') || '10';
+
+        let currentZoom = 1.0;
+        let svgElement = null;
+        let viewportElement = null;
+
+        function loadSVG() {
+            document.getElementById('svg-container').innerHTML = '正在加载火焰图...';
+
+            fetch(`/api/cpu/analyze?duration=${duration}`)
+                .then(response => {
+                    const contentType = response.headers.get('Content-Type');
+                    if (contentType && contentType.includes('json')) {
+                        return response.json().then(data => {
+                            throw new Error(data.error || '未知错误');
+                        });
+                    }
+                    return response.text();
+                })
+                .then(svgText => {
+                    const container = document.getElementById('svg-container');
+                    container.innerHTML = svgText;
+
+                    // 调整 SVG 的显示，确保完整渲染
+                    setTimeout(() => {
+                        const svg = container.querySelector('svg');
+                        svgElement = svg;
+                        if (svg) {
+                            // 移除固定的宽高，让SVG自适应
+                            svg.removeAttribute('width');
+                            svg.removeAttribute('height');
+
+                            // 设置一个合理的最小尺寸
+                            svg.style.minWidth = '100%';
+                            svg.style.minHeight = '600px';
+
+                            // 查找并调整 viewport transform
+                            const viewport = svg.querySelector('#viewport');
+                            viewportElement = viewport;
+                            if (viewport) {
+                                // 获取当前的 transform
+                                const transform = viewport.getAttribute('transform');
+                                console.log('Original transform:', transform);
+
+                                // 不修改 transform，保持 pprof 的原始布局
+                                // 但添加一些样式让显示更好
+                                viewport.style.transformBox = 'fill-box';
+                                viewport.style.transformOrigin = 'top left';
+                            }
+
+                            // 自动滚动到包含我们函数的区域
+                            const titles = svg.querySelectorAll('title');
+                            let found = false;
+                            for (let title of titles) {
+                                const text = title.textContent;
+                                if (text.includes('cpuIntensiveTask') ||
+                                    text.includes('FibonacciCalculator') ||
+                                    text.includes('memoryIntensiveTask') ||
+                                    text.includes('DataProcessor') ||
+                                    text.includes('MatrixOperations')) {
+                                    const node = title.closest('g');
+                                    if (node && !found) {
+                                        node.scrollIntoView({behavior: 'smooth', block: 'center'});
+                                        found = true;
+
+                                        // 高亮显示找到的节点
+                                        node.style.outline = '3px solid red';
+                                        node.style.outlineOffset = '2px';
+                                    }
+                                }
+                            }
+
+                            if (found) {
+                                console.log('Found and scrolled to target function');
+                            } else {
+                                console.log('Target function not found, showing all nodes');
+                                // 如果没找到目标函数，滚动到中间
+                                const viewport = svg.querySelector('#viewport');
+                                if (viewport) {
+                                    viewport.scrollIntoView({behavior: 'smooth', block: 'center'});
+                                }
+                            }
+                        }
+                    }, 300);
+                })
+                .catch(error => {
+                    document.getElementById('svg-container').innerHTML =
+                        `<div style="color: red; padding: 20px;">❌ 加载失败: ${error.message}</div>`;
+                });
+        }
+
+        function zoomIn() {
+            if (!svgElement) return;
+            currentZoom *= 1.2;
+            applyZoom();
+        }
+
+        function zoomOut() {
+            if (!svgElement) return;
+            currentZoom /= 1.2;
+            applyZoom();
+        }
+
+        function resetZoom() {
+            if (!svgElement) return;
+            currentZoom = 1.0;
+            applyZoom();
+        }
+
+        function fitToWidth() {
+            if (!svgElement || !viewportElement) return;
+            const container = document.getElementById('svg-container');
+            const containerWidth = container.clientWidth - 40; // padding
+
+            // 获取 SVG 的实际宽度
+            const bbox = viewportElement.getBBox();
+            const svgWidth = bbox.width;
+
+            currentZoom = containerWidth / svgWidth;
+            applyZoom();
+        }
+
+        function applyZoom() {
+            if (!viewportElement) return;
+
+            // 获取原始的 transform
+            const originalTransform = viewportElement.getAttribute('transform') || '';
+
+            // 解析原始的 scale
+            const scaleMatch = originalTransform.match(/scale\(([^)]+)\)/);
+            const baseScale = scaleMatch ? parseFloat(scaleMatch[1]) : 1.0;
+
+            // 解析原始的 translate
+            const translateMatch = originalTransform.match(/translate\(([^)]+)\)/);
+            const baseTranslate = translateMatch ? translateMatch[1] : '0,0';
+
+            // 应用新的缩放
+            const newScale = baseScale * currentZoom;
+            viewportElement.setAttribute('transform',
+                `scale(${newScale},${newScale}) translate(${baseTranslate})`);
+
+            console.log(`Applied zoom: ${currentZoom}x (${newScale})`);
+        }
+
+        function downloadSVG() {
+            const svg = document.querySelector('svg');
+            if (!svg) {
+                alert('没有找到 SVG 图表');
+                return;
+            }
+            const serializer = new XMLSerializer();
+            const svgStr = serializer.serializeToString(svg);
+            const blob = new Blob([svgStr], {type: 'image/svg+xml'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `cpu_flamegraph_${duration}s.svg`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // 页面加载时自动加载 SVG
+        window.addEventListener('load', loadSVG);
+    </script>
+</body>
+</html>

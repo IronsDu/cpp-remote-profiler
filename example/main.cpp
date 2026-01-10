@@ -489,6 +489,42 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
+    // SVG flame graph viewer page
+    app().registerHandler(
+        "/show_svg.html",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::ifstream htmlFile("../web/show_svg.html");
+            std::stringstream buffer;
+            buffer << htmlFile.rdbuf();
+            std::string html = buffer.str();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(CT_TEXT_HTML);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Heap SVG flame graph viewer page
+    app().registerHandler(
+        "/show_heap_svg.html",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::ifstream htmlFile("../web/show_heap_svg.html");
+            std::stringstream buffer;
+            buffer << htmlFile.rdbuf();
+            std::string html = buffer.str();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(CT_TEXT_HTML);
+            callback(resp);
+        },
+        {Get}
+    );
+
     // 下载 CPU profile (pprof 格式)
     app().registerHandler(
         "/api/cpu/pprof",
@@ -533,6 +569,61 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
+    // CPU profile (raw protobuf prof file for frontend)
+    app().registerHandler(
+        "/api/cpu/profile",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            auto state = profiler.getProfilerState(profiler::ProfilerType::CPU);
+
+            std::ifstream file(state.output_path, std::ios::binary);
+            if (!file.is_open()) {
+                Json::Value root;
+                root["error"] = "Cannot open CPU profile file: " + state.output_path;
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            std::ostringstream oss;
+            oss << file.rdbuf();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(oss.str());
+            resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Heap profile (raw prof file for frontend)
+    app().registerHandler(
+        "/api/heap/profile",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            auto heapState = profiler.getProfilerState(profiler::ProfilerType::HEAP);
+            std::ifstream file(heapState.output_path);
+            if (!file.is_open()) {
+                Json::Value root;
+                root["error"] = "Cannot open heap profile file: " + heapState.output_path;
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(buffer.str());
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            callback(resp);
+        },
+        {Get}
+    );
+
     // CPU profile JSON (用于前端火焰图渲染)
     app().registerHandler(
         "/api/cpu/json",
@@ -563,7 +654,7 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
-    // CPU collapsed stacks for flame graph (collapsed format: "func1;func2;func3 count")
+    // CPU collapsed stacks for flame graph (deprecated)
     app().registerHandler(
         "/api/cpu/collapsed",
         [&profiler](const HttpRequestPtr& req,
@@ -572,6 +663,21 @@ int main(int argc, char* argv[]) {
 
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(collapsedData);
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // CPU profile address stacks (for new architecture)
+    app().registerHandler(
+        "/api/cpu/addresses",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string addressData = profiler.getCPUProfileAddresses();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(addressData);
             resp->setContentTypeCode(CT_TEXT_PLAIN);
             callback(resp);
         },
@@ -587,6 +693,24 @@ int main(int argc, char* argv[]) {
 
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(collapsedData);
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Debug endpoint - 直接返回heap.prof文件内容
+    app().registerHandler(
+        "/debug/heap/raw",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            auto heapState = profiler.getProfilerState(profiler::ProfilerType::HEAP);
+            std::ifstream file(heapState.output_path);
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(buffer.str());
             resp->setContentTypeCode(CT_TEXT_PLAIN);
             callback(resp);
         },
@@ -628,19 +752,10 @@ int main(int argc, char* argv[]) {
         "/api/cpu/text",
         [&profiler](const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string samplesJson = profiler.getProfileSamples("cpu");
-
-            // 简单格式化JSON为文本
-            std::ostringstream text;
-            text << "CPU Profile Analysis\n";
-            text << "====================\n\n";
-            text << "Use /api/cpu/samples for raw data\n";
-            text << "Use /pprof/symbol for symbol resolution\n\n";
-            text << "Samples Data (JSON):\n";
-            text << samplesJson;
+            std::string collapsedData = profiler.getProfileSamples("cpu");
 
             auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(text.str());
+            resp->setBody(collapsedData);
             resp->setContentTypeCode(CT_TEXT_PLAIN);
             callback(resp);
         },
@@ -652,19 +767,10 @@ int main(int argc, char* argv[]) {
         "/api/heap/text",
         [&profiler](const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string samplesJson = profiler.getProfileSamples("heap");
-
-            // 简单格式化JSON为文本
-            std::ostringstream text;
-            text << "Heap Profile Analysis\n";
-            text << "=====================\n\n";
-            text << "Use /api/heap/samples for raw data\n";
-            text << "Use /pprof/symbol for symbol resolution\n\n";
-            text << "Samples Data (JSON):\n";
-            text << samplesJson;
+            std::string collapsedData = profiler.getProfileSamples("heap");
 
             auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(text.str());
+            resp->setBody(collapsedData);
             resp->setContentTypeCode(CT_TEXT_PLAIN);
             callback(resp);
         },
@@ -701,7 +807,118 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
+    // CPU analyze endpoint - 一键式CPU分析（使用pprof生成SVG火焰图）
+    app().registerHandler(
+        "/api/cpu/analyze",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            // 获取参数
+            auto duration_param = req->getParameter("duration");
+            auto output_type_param = req->getParameter("output_type");
+
+            // 默认值
+            int duration = 10;  // 默认10秒
+            if (!duration_param.empty()) {
+                try {
+                    duration = std::stoi(duration_param);
+                    if (duration < 1) duration = 1;
+                    if (duration > 300) duration = 300;  // 最多5分钟
+                } catch (const std::exception& e) {
+                    Json::Value root;
+                    root["error"] = "Invalid duration parameter";
+                    auto resp = HttpResponse::newHttpJsonResponse(root);
+                    resp->setStatusCode(k400BadRequest);
+                    callback(resp);
+                    return;
+                }
+            }
+
+            std::string output_type = "flamegraph";
+            if (!output_type_param.empty()) {
+                output_type = output_type_param;
+            }
+
+            std::cout << "Starting CPU analysis: duration=" << duration
+                      << "s, output_type=" << output_type << std::endl;
+
+            // 调用 analyzeCPUProfile（这是阻塞调用，会等待整个profiling过程完成）
+            std::string svg_content = profiler.analyzeCPUProfile(duration, output_type);
+
+            // 检查是否是错误响应（JSON格式的错误，更精确的检查）
+            if (svg_content.size() > 10 && svg_content[0] == '{' && svg_content[1] == '"') {
+                auto resp = HttpResponse::newHttpJsonResponse(Json::Value(svg_content));
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 返回SVG内容
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(svg_content);
+            resp->setContentTypeCode(CT_TEXT_XML);
+            resp->addHeader("Content-Type", "image/svg+xml");
+            callback(resp);
+        },
+        {Get, Post}
+    );
+
+    // Heap analyze endpoint - 一键式Heap分析（使用pprof生成SVG火焰图）
+    app().registerHandler(
+        "/api/heap/analyze",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            // 获取参数
+            auto duration_param = req->getParameter("duration");
+            auto output_type_param = req->getParameter("output_type");
+
+            // 默认值
+            int duration = 10;  // 默认10秒
+            if (!duration_param.empty()) {
+                try {
+                    duration = std::stoi(duration_param);
+                    if (duration < 1) duration = 1;
+                    if (duration > 300) duration = 300;  // 最多5分钟
+                } catch (const std::exception& e) {
+                    Json::Value root;
+                    root["error"] = "Invalid duration parameter";
+                    auto resp = HttpResponse::newHttpJsonResponse(root);
+                    resp->setStatusCode(k400BadRequest);
+                    callback(resp);
+                    return;
+                }
+            }
+
+            std::string output_type = "flamegraph";
+            if (!output_type_param.empty()) {
+                output_type = output_type_param;
+            }
+
+            std::cout << "Starting Heap analysis: duration=" << duration
+                      << "s, output_type=" << output_type << std::endl;
+
+            // 调用 analyzeHeapProfile（这是阻塞调用，会等待整个profiling过程完成）
+            std::string svg_content = profiler.analyzeHeapProfile(duration, output_type);
+
+            // 检查是否是错误响应（JSON格式的错误，更精确的检查）
+            if (svg_content.size() > 10 && svg_content[0] == '{' && svg_content[1] == '"') {
+                auto resp = HttpResponse::newHttpJsonResponse(Json::Value(svg_content));
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 返回SVG内容
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(svg_content);
+            resp->setContentTypeCode(CT_TEXT_XML);
+            resp->addHeader("Content-Type", "image/svg+xml");
+            callback(resp);
+        },
+        {Get, Post}
+    );
+
     // Symbol resolution endpoint (类似 brpc pprof 的 /pprof/symbol)
+    // 使用 backward-cpp 进行符号化，支持内联函数
     app().registerHandler(
         "/pprof/symbol",
         [&profiler](const HttpRequestPtr& req,
@@ -721,22 +938,32 @@ int main(int argc, char* argv[]) {
             std::string address;
             std::ostringstream result;
 
-            // 逐行读取地址并解析
+            // 逐行读取地址并使用 backward-cpp 符号化
             while (std::getline(iss, address)) {
                 if (address.empty() || address[0] == '#') {
                     continue;
                 }
 
                 // 移除 "0x" 前缀（如果有）
+                std::string original_addr = address;
                 if (address.size() > 2 && address[0] == '0' && address[1] == 'x') {
                     address = address.substr(2);
                 }
 
-                // 使用CPU profile路径解析符号
-                auto cpuState = profiler.getProfilerState(profiler::ProfilerType::CPU);
-                std::string symbol = profiler.resolveSymbol(cpuState.output_path, address);
+                // 将十六进制地址转换为指针
+                try {
+                    uintptr_t addr = std::stoull(address, nullptr, 16);
+                    void* ptr = reinterpret_cast<void*>(addr);
 
-                result << address << " " << symbol << "\n";
+                    // 使用 backward-cpp 符号化（支持内联函数）
+                    std::string symbol = profiler.resolveSymbolWithBackward(ptr);
+
+                    // 返回格式: "原始地址 符号化结果"
+                    result << original_addr << " " << symbol << "\n";
+                } catch (const std::exception& e) {
+                    // 转换失败，返回原始地址
+                    result << original_addr << " " << original_addr << "\n";
+                }
             }
 
             auto resp = HttpResponse::newHttpResponse();
@@ -744,7 +971,7 @@ int main(int argc, char* argv[]) {
             resp->setContentTypeCode(CT_TEXT_PLAIN);
             callback(resp);
         },
-        {Post, Get}
+        {Post}
     );
 
     std::cout << "Handlers registered. Starting Drogon framework...\n";

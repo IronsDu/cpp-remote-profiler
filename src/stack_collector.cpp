@@ -1,4 +1,5 @@
 #include "stack_collector.h"
+#include "symbolize.h"
 #include <execinfo.h>
 #include <dlfcn.h>
 #include <cxxabi.h>
@@ -77,6 +78,29 @@ void StackCollector::clear() {
 }
 
 std::string StackCollector::resolveSymbol(void* addr) {
+    // 首先尝试使用 backward-cpp 符号化器（支持内联函数）
+    try {
+        static auto symbolizer = createSymbolizer();
+        if (symbolizer) {
+            auto frames = symbolizer->symbolize(addr);
+
+            if (!frames.empty() && frames[0].function_name.find("0x") != 0) {
+                // 成功符号化，使用 "--" 连接内联函数链
+                std::ostringstream result;
+                for (size_t i = 0; i < frames.size(); ++i) {
+                    if (i > 0) {
+                        result << "--";
+                    }
+                    result << frames[i].function_name;
+                }
+                return result.str();
+            }
+        }
+    } catch (...) {
+        // backward-cpp 符号化失败，回退到 dladdr
+    }
+
+    // 回退到 dladdr 方法（不获取内联函数）
     Dl_info info;
     if (dladdr(addr, &info) && info.dli_sname) {
         // 如果有 C++ 符号，尝试 demangle

@@ -71,6 +71,11 @@
         .controls button:active {
             transform: translateY(0);
         }
+        .controls button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
         .search-box {
             flex: 1;
             min-width: 200px;
@@ -85,6 +90,27 @@
         }
         .stats strong {
             color: #856404;
+        }
+        .progress {
+            display: flex;
+            gap: 20px;
+            padding: 15px 20px;
+            background: #e7f3ff;
+            border-bottom: 1px solid #b3d9ff;
+            font-size: 14px;
+            align-items: center;
+        }
+        .progress-bar {
+            flex: 1;
+            height: 8px;
+            background: #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s;
         }
         .canvas-container {
             position: relative;
@@ -122,6 +148,13 @@
         }
         .tooltip .percentage {
             color: #81c784;
+        }
+        .tooltip .stack {
+            margin-top: 5px;
+            padding-top: 5px;
+            border-top: 1px solid rgba(255,255,255,0.2);
+            font-size: 11px;
+            color: #aaa;
         }
         .info-panel {
             padding: 20px;
@@ -207,11 +240,15 @@
             <input type="text" id="searchInput" class="search-box" placeholder="🔍 搜索函数名...">
             <button onclick="searchFunction()">搜索</button>
             <button onclick="resetZoom()">重置缩放</button>
-            <button onclick="refreshData()">刷新数据</button>
+            <button onclick="refreshData()" id="refreshBtn">刷新数据</button>
             <button onclick="downloadSVG()">下载SVG</button>
         </div>
 
         <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background: rgb(147, 112, 219);"></div>
+                <span>内联函数</span>
+            </div>
             <div class="legend-item">
                 <div class="legend-color" style="background: rgb(255, 200, 150);"></div>
                 <span>低热度</span>
@@ -223,6 +260,13 @@
             <div class="legend-item">
                 <div class="legend-color" style="background: rgb(255, 0, 0);"></div>
                 <span>高热度</span>
+            </div>
+        </div>
+
+        <div class="progress" id="progress" style="display: none;">
+            <span id="progressText">准备中...</span>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%"></div>
             </div>
         </div>
 
@@ -245,11 +289,11 @@
         <div class="info-panel">
             <h3>💡 使用说明</h3>
             <ul>
-                <li><strong>鼠标悬停:</strong> 查看函数详细信息（名称、耗时、百分比）</li>
+                <li><strong>鼠标悬停:</strong> 查看函数详细信息（名称、耗时、百分比、内联函数）</li>
                 <li><strong>点击:</strong> 点击函数块可聚焦到该函数，再次点击重置</li>
                 <li><strong>滚轮:</strong> 以鼠标位置为中心进行缩放</li>
                 <li><strong>搜索:</strong> 高亮显示匹配的函数（输入函数名或正则表达式）</li>
-                <li><strong>颜色:</strong> 颜色越红表示占用资源越多，橙色表示中等，黄色表示较少</li>
+                <li><strong>内联函数:</strong> 紫色显示，使用 "--" 连接调用链</li>
             </ul>
         </div>
     </div>
@@ -287,11 +331,11 @@
                 document.getElementById('profileType').value = profileType;
             }
 
+            // 直接加载数据
             refreshData();
         });
 
         function setupCanvas() {
-            // 设置高DPI显示
             const dpr = window.devicePixelRatio || 1;
             const rect = canvas.getBoundingClientRect();
 
@@ -325,87 +369,348 @@
             });
         }
 
+        function showProgress(show, text = '', percent = 0) {
+            const progress = document.getElementById('progress');
+            const progressText = document.getElementById('progressText');
+            const progressFill = document.getElementById('progressFill');
+            const loading = document.getElementById('loading');
+            const refreshBtn = document.getElementById('refreshBtn');
+
+            if (show) {
+                progress.style.display = 'flex';
+                progressText.textContent = text;
+                progressFill.style.width = percent + '%';
+                loading.style.display = 'none';
+                refreshBtn.disabled = true;
+            } else {
+                progress.style.display = 'none';
+                refreshBtn.disabled = false;
+            }
+        }
+
+        function showError(message) {
+            const loading = document.getElementById('loading');
+            loading.textContent = `❌ 错误: ${message}`;
+        }
+
         async function refreshData() {
             const profileType = document.getElementById('profileType').value;
-            const loading = document.getElementById('loading');
             const stats = document.getElementById('stats');
 
-            loading.style.display = 'block';
-            stats.style.display = 'none';
-
             try {
-                // 使用 collapsed API 获取真实数据
-                const response = await fetch(`/api/${profileType}/collapsed`);
-                const collapsedText = await response.text();
+                showProgress(true, '下载 profile 文件...', 10);
 
-                if (collapsedText.startsWith('{"error"')) {
-                    const errorData = JSON.parse(collapsedText);
-                    throw new Error(errorData.error);
+                if (profileType === 'cpu') {
+                    // CPU profile: 下载二进制prof文件并解析
+                    await processCPUProfileText();
+                } else {
+                    // Heap profile: 使用 profile 接口获取原始文件
+                    const response = await fetch('/api/heap/profile');
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    showProgress(true, '解析 heap profile...', 30);
+                    const text = await response.text();
+                    await processHeapProfile(text);
                 }
 
-                // 解析 collapsed 格式为火焰图数据
-                flameData = parseCollapsedFormat(collapsedText);
+                stats.style.display = 'flex';
+                showProgress(false);
+            } catch (error) {
+                showProgress(false);
+                showError(error.message);
+                console.error('Error loading profile:', error);
+            }
+        }
+
+        async function processCPUProfileText() {
+            showProgress(true, '下载 CPU profile 文件...', 20);
+
+            try {
+                // 下载二进制prof文件
+                const response = await fetch('/api/cpu/profile');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                showProgress(true, '解析 CPU profile 二进制数据...', 40);
+
+                const buffer = await response.arrayBuffer();
+
+                // 解析gperftools二进制格式
+                const { samples, addresses } = parseGperftoolsProfile(buffer);
+
+                if (samples.length === 0) {
+                    throw new Error('没有找到有效的采样数据');
+                }
+
+                console.log(`解析到 ${samples.length} 个采样，${addresses.size} 个唯一地址`);
+
+                showProgress(true, `批量符号化 ${addresses.size} 个地址...`, 60);
+
+                // 批量符号化
+                const symbolMap = await batchSymbolize(Array.from(addresses));
+
+                showProgress(true, '构建火焰图数据...', 80);
+
+                // 构建火焰图数据
+                flameData = buildFlameGraph(samples, symbolMap);
 
                 resetZoom();
                 renderFlameGraph();
                 updateStats(flameData);
 
-                loading.style.display = 'none';
-                stats.style.display = 'flex';
-            } catch (error) {
-                loading.textContent = `❌ 加载失败: ${error.message}`;
-                console.error('Error loading flame graph:', error);
+                showProgress(true, '完成!', 100);
+                setTimeout(() => showProgress(false), 500);
+            } catch (e) {
+                console.error('Error processing CPU profile:', e);
+                throw new Error('解析 CPU profile 失败: ' + e.message);
             }
         }
 
-        // 解析 collapsed 格式为火焰图数据结构
-        function parseCollapsedFormat(collapsedText) {
-            const lines = collapsedText.split('\n');
-            const root = { name: 'root', value: 0, children: {} };
-            let totalSamples = 0;
+        async function processHeapProfile(text) {
+            showProgress(true, '解析 heap profile...', 40);
 
-            for (const line of lines) {
-                // 跳过注释和空行
-                if (!line || line.startsWith('#')) continue;
+            try {
+                // 解析 heap profile 文本格式
+                const lines = text.split('\n');
+                const samples = [];
+                const addresses = new Set();
 
-                // 解析行: "func1;func2;func3 count"
-                const lastSpaceIndex = line.lastIndexOf(' ');
-                if (lastSpaceIndex === -1) continue;
-
-                const stackStr = line.substring(0, lastSpaceIndex);
-                const count = parseInt(line.substring(lastSpaceIndex + 1));
-
-                if (isNaN(count)) continue;
-
-                totalSamples += count;
-
-                // 分割调用栈
-                const functions = stackStr.split(';');
-                if (functions.length === 0) continue;
-
-                // 构建树结构
-                let current = root;
-                for (const func of functions) {
-                    if (!func) continue;
-
-                    if (!current.children[func]) {
-                        current.children[func] = {
-                            name: func,
-                            value: 0,
-                            children: {}
-                        };
+                for (const line of lines) {
+                    if (!line || line.startsWith('#') || line.startsWith('heap profile:')) {
+                        continue;
                     }
-                    current = current.children[func];
+
+                    // heap profile 格式: "count: bytes [self: bytes] @ addr1 addr2 addr3 ..."
+                    // 简化匹配
+                    const match = line.match(/(\d+):\s+(\d+)\s+\[\d+:\s+\d+\]\s+@(.+)/);
+                    if (match) {
+                        const count = parseInt(match[1]);
+                        const bytes = parseInt(match[2]);
+                        const addrStr = match[3].trim();
+
+                        if (addrStr) {
+                            const stack = addrStr.split(/\s+/).reverse();
+                            for (const addr of stack) {
+                                addresses.add(addr);
+                            }
+                            samples.push({
+                                stack: stack,
+                                value: bytes
+                            });
+                        }
+                    }
                 }
 
-                // 叶子节点增加采样数
-                current.value += count;
+                showProgress(true, `批量符号化 ${addresses.size} 个地址...`, 60);
+
+                // 批量符号化
+                const symbolMap = await batchSymbolize(Array.from(addresses));
+
+                showProgress(true, '构建火焰图数据...', 80);
+
+                // 构建火焰图数据
+                flameData = buildFlameGraph(samples, symbolMap);
+
+                resetZoom();
+                renderFlameGraph();
+                updateStats(flameData);
+
+                showProgress(true, '完成!', 100);
+                setTimeout(() => showProgress(false), 500);
+            } catch (e) {
+                console.error('Error processing heap profile:', e);
+                throw new Error('解析 heap profile 失败: ' + e.message);
+            }
+        }
+
+        // 解析gperftools CPU profile二进制格式
+        function parseGperftoolsProfile(buffer) {
+            const samples = [];
+            const addresses = new Set();
+
+            // 创建DataView来读取二进制数据
+            const view = new DataView(buffer);
+            const byteLength = buffer.byteLength;
+
+            // gperftools profile格式：
+            // Header: 24 bytes (magic, version, sampling period, padding)
+            // 然后是一系列采样记录：
+            // - count (8 bytes, uint64)
+            // - pc_count (8 bytes, uint64)
+            // - pcs[pc_count] (每个8 bytes, uint64)
+
+            let offset = 24; // 跳过24字节header
+
+            function readUint64(offset) {
+                // 读取小端序的64位整数
+                const low = view.getUint32(offset, true);
+                const high = view.getUint32(offset + 4, true);
+                return high * 0x100000000 + low;
+            }
+
+            while (offset + 16 <= byteLength) {
+                const count = readUint64(offset);
+                const pcCount = readUint64(offset + 8);
+
+                if (pcCount === 0 || pcCount > 100) {
+                    // 异常数据，跳过
+                    offset += 16;
+                    continue;
+                }
+
+                if (offset + 16 + pcCount * 8 > byteLength) {
+                    // 数据不完整
+                    break;
+                }
+
+                // 读取PC列表
+                const stack = [];
+                for (let i = 0; i < pcCount; i++) {
+                    // 反向遍历（从底层到顶层）
+                    const addrOffset = offset + 16 + (pcCount - 1 - i) * 8;
+                    const addr = readUint64(addrOffset);
+                    const addrStr = '0x' + addr.toString(16);
+                    stack.push(addrStr);
+                    addresses.add(addrStr);
+                }
+
+                if (stack.length > 0 && count > 0) {
+                    samples.push({
+                        stack: stack,
+                        value: Number(count)
+                    });
+                }
+
+                offset += 16 + pcCount * 8;
+            }
+
+            return { samples, addresses };
+        }
+
+        async function batchSymbolize(addresses) {
+            const symbolMap = new Map();
+
+            // 分批处理，每批 100 个地址
+            const batchSize = 100;
+            for (let i = 0; i < addresses.length; i += batchSize) {
+                const batch = addresses.slice(i, i + batchSize);
+                const addressStr = batch.join('\n');
+
+                try {
+                    const response = await fetch('/pprof/symbol', {
+                        method: 'POST',
+                        body: addressStr,
+                        headers: {
+                            'Content-Type': 'text/plain'
+                        }
+                    });
+
+                    if (response.ok) {
+                        const resultText = await response.text();
+                        const lines = resultText.split('\n');
+
+                        for (const line of lines) {
+                            if (!line) continue;
+                            const parts = line.split(' ');
+                            if (parts.length >= 2) {
+                                const addr = parts[0];
+                                const symbol = parts.slice(1).join(' ');
+                                symbolMap.set(addr, symbol);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Symbolization failed for batch:', e);
+                    // 失败时使用原始地址
+                    for (const addr of batch) {
+                        if (!symbolMap.has(addr)) {
+                            symbolMap.set(addr, addr);
+                        }
+                    }
+                }
+            }
+
+            return symbolMap;
+        }
+
+        function buildFlameGraph(samples, symbolMap) {
+            const root = { name: 'root', value: 0, children: {}, hasInline: false };
+            let totalSamples = 0;
+
+            for (const sample of samples) {
+                const stack = sample.stack;
+                const value = sample.value;
+                totalSamples += value;
+
+                let current = root;
+                for (const addr of stack) {
+                    // 获取符号化结果
+                    const symbol = symbolMap.get(addr.toString()) || addr.toString();
+
+                    // 检查是否有内联函数（使用 -- 分隔）
+                    if (symbol.includes('--')) {
+                        const inlineFunctions = symbol.split('--');
+                        const mainFunc = inlineFunctions[0];
+                        const inlinedFuncs = inlineFunctions.slice(1);
+
+                        if (!current.children[mainFunc]) {
+                            current.children[mainFunc] = {
+                                name: mainFunc,
+                                value: 0,
+                                hasInline: true,
+                                inlineChildren: {},
+                                children: {}
+                            };
+                        }
+
+                        let inlineParent = current.children[mainFunc];
+
+                        for (const inlineFunc of inlinedFuncs) {
+                            if (!inlineFunc) continue;
+
+                            const inlineKey = `[inline] ${inlineFunc}`;
+                            if (!inlineParent.inlineChildren[inlineKey]) {
+                                inlineParent.inlineChildren[inlineKey] = {
+                                    name: inlineFunc,
+                                    value: 0,
+                                    isInlined: true,
+                                    inlineChildren: {},  // ✅ 添加 inlineChildren 属性
+                                    children: {}
+                                };
+                            }
+                            inlineParent = inlineParent.inlineChildren[inlineKey];
+                        }
+
+                        current = inlineParent;
+                    } else {
+                        if (!current.children[symbol]) {
+                            current.children[symbol] = {
+                                name: symbol,
+                                value: 0,
+                                hasInline: false,
+                                inlineChildren: {},
+                                children: {}
+                            };
+                        }
+                        current = current.children[symbol];
+                    }
+                }
+
+                current.value += value;
             }
 
             // 转换 children 对象为数组
             const convertChildren = (node) => {
                 if (node.children) {
                     node.children = Object.values(node.children).map(convertChildren);
+
+                    if (node.inlineChildren && Object.keys(node.inlineChildren).length > 0) {
+                        const inlineNodes = Object.values(node.inlineChildren).map(convertChildren);
+                        node.children = [...inlineNodes, ...node.children];
+                    }
                 }
                 return node;
             };
@@ -422,13 +727,9 @@
             const width = canvas.getBoundingClientRect().width;
             const height = canvas.getBoundingClientRect().height;
 
-            // 清空画布
             ctx.clearRect(0, 0, width, height);
 
-            // 计算总值
             const total = flameData.total || calculateTotal(flameData);
-
-            // 绘制火焰图
             const barHeight = 30;
             const margin = { top: 20, right: 20, bottom: 20, left: 20 };
 
@@ -439,40 +740,35 @@
             if (!node || !node.children) return;
 
             const renderWidth = width * zoomState.scale;
-
-            // 绘制子节点
             let currentX = x + zoomState.offsetX;
             const totalValue = node.value || calculateNodeTotal(node);
 
-            // 如果总值为0，跳过渲染
             if (totalValue <= 0) return;
 
             for (const child of node.children) {
-                // 跳过没有值的叶子节点
                 if (!child.value && child.children && child.children.length === 0) continue;
 
-                // 如果子节点没有值但有子节点，使用子节点的总值
                 const childValue = child.value || calculateNodeTotal(child);
-
                 const childWidth = (childValue / totalValue) * renderWidth;
 
-                if (childWidth < 1) continue; // 太小不绘制
+                if (childWidth < 1) continue;
 
-                // 检查是否在视图范围内
                 if (currentX + childWidth > 0 && currentX < canvas.getBoundingClientRect().width) {
-                    const color = getColor(child.name, childValue, total);
+                    const color = getColor(child.name, childValue, total, child.isInlined);
                     const isHighlighted = searchResults.includes(child);
 
-                    // 绘制矩形
                     ctx.fillStyle = isHighlighted ? '#00ff00' : color;
                     ctx.fillRect(currentX, y + depth * (barHeight + 2), childWidth, barHeight);
 
-                    // 绘制边框
-                    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-                    ctx.lineWidth = 1;
+                    if (child.isInlined) {
+                        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                        ctx.lineWidth = 2;
+                    } else {
+                        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                        ctx.lineWidth = 1;
+                    }
                     ctx.strokeRect(currentX, y + depth * (barHeight + 2), childWidth, barHeight);
 
-                    // 绘制函数名（如果宽度足够）
                     if (childWidth > 50) {
                         ctx.fillStyle = 'white';
                         ctx.font = '11px Arial';
@@ -482,7 +778,6 @@
                         let displayName = child.name;
                         const maxWidth = childWidth - 10;
 
-                        // 截断过长的名称
                         while (ctx.measureText(displayName).width > maxWidth && displayName.length > 3) {
                             displayName = displayName.substr(0, displayName.length - 4) + '...';
                         }
@@ -493,27 +788,32 @@
                     }
                 }
 
-                // 递归绘制子节点（传递子节点的位置和宽度）
                 renderNode(child, currentX, y, childWidth, depth + 1, barHeight, total);
-
                 currentX += childWidth;
             }
         }
 
-        function getColor(name, value, total) {
-            // 基于函数名的哈希值生成基础颜色
-            let hash = 0;
-            for (let i = 0; i < name.length; i++) {
-                hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        function getColor(name, value, total, isInlined = false) {
+            if (isInlined) {
+                let hash = 0;
+                for (let i = 0; i < name.length; i++) {
+                    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+                }
+                const hue = 270 + (hash % 30);
+                const saturation = 60 + (hash % 20);
+                const lightness = 70;
+                return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+            } else {
+                let hash = 0;
+                for (let i = 0; i < name.length; i++) {
+                    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+                }
+                const intensity = value / total;
+                const hue = 30 + (hash % 30);
+                const saturation = 70 + (intensity * 30);
+                const lightness = 60 - (intensity * 20);
+                return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
             }
-
-            // 基于热度（value/total）调整颜色
-            const intensity = value / total;
-            const hue = 30 + (hash % 30); // 橙色到黄色范围
-            const saturation = 70 + (intensity * 30); // 热度越高越饱和
-            const lightness = 60 - (intensity * 20); // 热度越高越亮
-
-            return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
         }
 
         function handleMouseMove(e) {
@@ -529,12 +829,17 @@
                 const total = flameData.total || calculateTotal(flameData);
                 const percentage = ((node.value / total) * 100).toFixed(2);
 
-                tooltip.innerHTML = `
+                let tooltipContent = `
                     <div class="name">${escapeHtml(node.name)}</div>
                     <div class="value">耗时: ${formatValue(node.value)}</div>
                     <div class="percentage">占比: ${percentage}%</div>
                 `;
 
+                if (node.isInlined) {
+                    tooltipContent += `<div class="stack">⚡ 内联函数</div>`;
+                }
+
+                tooltip.innerHTML = tooltipContent;
                 tooltip.style.display = 'block';
                 tooltip.style.left = (e.clientX + 15) + 'px';
                 tooltip.style.top = (e.clientY + 15) + 'px';
@@ -554,10 +859,8 @@
 
             if (node) {
                 if (zoomState.focusedNode === node) {
-                    // 双击重置
                     resetZoom();
                 } else {
-                    // 聚焦到该节点
                     zoomState.focusedNode = node;
                     updateZoomInfo(`聚焦: ${node.name}`);
                 }
@@ -575,7 +878,6 @@
             const delta = e.deltaY > 0 ? 0.9 : 1.1;
             const newScale = Math.max(0.1, Math.min(10, zoomState.scale * delta));
 
-            // 以鼠标位置为中心进行缩放
             zoomState.offsetX = x - (x - zoomState.offsetX) * (newScale / zoomState.scale);
             zoomState.scale = newScale;
 
@@ -590,7 +892,6 @@
             const margin = { top: 20, right: 20, bottom: 20, left: 20 };
             const nodeY = margin.top + depth * (barHeight + 2);
 
-            // 检查Y坐标
             if (y < nodeY || y > nodeY + barHeight) {
                 return null;
             }
@@ -623,7 +924,6 @@
                 return;
             }
 
-            // 搜索所有匹配的节点
             searchResults = [];
             searchInNode(flameData, query);
 
@@ -685,21 +985,19 @@
 
             let total = 0;
             for (const child of node.children) {
-                total += child.value || 0;
+                // 递归计算子节点的 total（包括自身 value 和所有子孙节点的 value）
+                total += calculateNodeTotal(child);
             }
             return total;
         }
 
         function calculateNodeTotal(node) {
-            // 如果有显式的value且大于0，直接返回
             if (node.value && node.value > 0) return node.value;
 
-            // 如果没有children，返回0
             if (!node.children || node.children.length === 0) {
                 return node.value || 0;
             }
 
-            // 递归计算所有children的总值
             let sum = 0;
             for (const child of node.children) {
                 sum += calculateNodeTotal(child);
@@ -753,22 +1051,16 @@
                 return;
             }
 
-            // 简单的SVG导出
             const width = canvas.getBoundingClientRect().width;
             const height = canvas.getBoundingClientRect().height;
 
             let svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
   <rect width="${width}" height="${height}" fill="#f8f9fa"/>
-`;
-
-            // 这里简化处理，实际应该遍历所有节点生成SVG
-            svg += `  <text x="20" y="30" font-family="Arial" font-size="16" fill="#333">
+  <text x="20" y="30" font-family="Arial" font-size="16" fill="#333">
     火焰图 - ${flameData.total} total
   </text>
-`;
-
-            svg += '</svg>';
+</svg>`;
 
             const blob = new Blob([svg], { type: 'image/svg+xml' });
             const url = URL.createObjectURL(blob);

@@ -104,6 +104,25 @@
             border-radius: 3px;
             font-family: monospace;
         }
+        .analyze-btn {
+            background-color: #9C27B0;
+        }
+        .analyze-btn:hover {
+            background-color: #7B1FA2;
+        }
+        .input-group {
+            display: inline-block;
+            margin: 5px;
+        }
+        .input-group label {
+            margin-right: 5px;
+        }
+        .input-group input {
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 60px;
+        }
     </style>
 </head>
 <body>
@@ -122,6 +141,14 @@
                 <button class="view-btn" onclick="viewCPUText()">查看文本分析</button>
                 <button class="view-btn" onclick="downloadCPUProfile()">下载 Profile</button>
             </div>
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                <strong>🚀 一键式分析（简单方案）</strong><br>
+                <div class="input-group">
+                    <label for="cpu-duration">采样时长(秒):</label>
+                    <input type="number" id="cpu-duration" value="10" min="1" max="300">
+                </div>
+                <button class="analyze-btn" onclick="analyzeCPU()">⚡ 一键分析并生成SVG火焰图</button>
+            </div>
         </div>
 
         <div class="section">
@@ -134,6 +161,14 @@
                 <button class="view-btn" onclick="viewHeapSVG()">🔥 查看SVG火焰图</button>
                 <button class="view-btn" onclick="viewHeapText()">查看文本分析</button>
                 <button class="view-btn" onclick="downloadHeapProfile()">下载 Profile</button>
+            </div>
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                <strong>🚀 一键式分析（简单方案）</strong><br>
+                <div class="input-group">
+                    <label for="heap-duration">采样时长(秒):</label>
+                    <input type="number" id="heap-duration" value="10" min="1" max="300">
+                </div>
+                <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成SVG火焰图</button>
             </div>
         </div>
 
@@ -268,6 +303,34 @@
             log('正在打开交互式火焰图查看器...');
             window.open('/flamegraph?type=' + type, '_blank');
             log('交互式火焰图已在新标签页打开');
+        }
+
+        function analyzeCPU() {
+            const duration = document.getElementById('cpu-duration').value;
+            log(`🚀 正在进行CPU分析，采样时长: ${duration}秒...\n(这可能需要一些时间，请耐心等待)`);
+            document.getElementById('cpu-duration').disabled = true;
+
+            // 打开独立的SVG查看器页面
+            window.open(`/show_svg.html?duration=${duration}`, '_blank');
+
+            log('✅ 火焰图查看器已在新标签页打开');
+            log('💡 提示：图表中包含 cpuIntensiveTask、FibonacciCalculator、memoryIntensiveTask 等函数');
+
+            document.getElementById('cpu-duration').disabled = false;
+        }
+
+        function analyzeHeap() {
+            const duration = document.getElementById('heap-duration').value;
+            log(`🚀 正在进行Heap分析，采样时长: ${duration}秒...\n(这可能需要一些时间，请耐心等待)`);
+            document.getElementById('heap-duration').disabled = true;
+
+            // 打开独立的SVG查看器页面
+            window.open(`/show_heap_svg.html?duration=${duration}`, '_blank');
+
+            log('✅ Heap火焰图查看器已在新标签页打开');
+            log('💡 提示：图表中显示内存分配情况');
+
+            document.getElementById('heap-duration').disabled = false;
         }
 
         function log(message) {

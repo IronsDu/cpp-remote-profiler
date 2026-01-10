@@ -43,3 +43,4 @@ cpu.prof*
 vcpkg/buildtrees/
 vcpkg/installed/
 vcpkg/packages/
+.vs/
