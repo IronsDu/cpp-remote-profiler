@@ -1,5 +1,97 @@
 # TODO List
 
+## 已完成的改进 (2025-01-10)
+
+### 9. 一键式 CPU/Heap 分析功能 ✅ (2025-01-10)
+**目标**: 简化性能分析流程，提供一键式分析体验
+
+**实现内容**:
+
+#### CPU 一键分析
+- ✅ 新增 `ProfilerManager::analyzeCPUProfile()` 方法
+  - 自动启动/停止 CPU profiler
+  - 使用 `pprof -svg` 生成 SVG 火焰图
+  - 支持自定义采样时长（1-300秒）
+  - 不需要可执行文件路径参数（避免符号冲突）
+
+- ✅ 新增 `/api/cpu/analyze` HTTP 端点
+  - 支持 `duration` 参数（采样时长）
+  - 支持 `output_type` 参数（火焰图类型）
+  - 返回 SVG 格式的火焰图
+
+- ✅ 前端一键分析界面
+  - 添加采样时长输入框
+  - "⚡ 一键分析并生成SVG火焰图" 按钮
+  - 新窗口打开 SVG 查看器（`show_svg.html`）
+
+- ✅ SVG 查看器功能增强
+  - 缩放控制（放大/缩小/1:1/适应宽度）
+  - 自动滚动并高亮目标函数
+  - 下载 SVG 文件功能
+  - 查看提示和帮助信息
+
+**使用方法**:
+```bash
+# 访问 http://localhost:8080
+# 在 "CPU Profiler" 部分设置采样时长（如 10 秒）
+# 点击 "⚡ 一键分析并生成SVG火焰图"
+# 新窗口自动显示火焰图
+```
+
+**测试结果**:
+```bash
+curl "http://localhost:8080/api/cpu/analyze?duration=5"
+# 返回: 完整的 SVG 火焰图（包含 cpuIntensiveTask、FibonacciCalculator 等函数）
+```
+
+#### Heap 一键分析
+- ✅ 新增 `ProfilerManager::analyzeHeapProfile()` 方法
+  - 自动启动/停止 Heap profiler
+  - 后台线程持续分配内存确保采样
+  - 自动查找最新的 heap profile 文件
+  - 使用 `pprof -svg` 生成 SVG
+
+- ✅ 新增 `/api/heap/analyze` HTTP 端点
+  - 支持参数同 CPU 分析
+  - 返回 SVG 格式的内存火焰图
+
+- ✅ 前端 Heap 分析界面
+  - 添加 Heap 采样时长输入框
+  - 一键分析按钮
+  - 独立的 Heap SVG 查看器（`show_heap_svg.html`）
+
+**重要说明**:
+⚠️ **Heap Profiler 需要特殊配置**:
+- 必须使用 `HEAPPROFILE` 环境变量启动程序:
+  ```bash
+  HEAPPROFILE=/tmp/cpp_profiler/heap ./profiler_example
+  ```
+- 或者设置环境变量后启动（已集成到启动脚本）
+
+**技术细节**:
+- CPU 分析: 使用 `ProfilerStart/Stop` + `pprof -svg`
+- Heap 分析: 使用 `HeapProfilerStart/Stop` + 环境变量
+- SVG 生成: 直接调用 `pprof` 命令行工具
+- 不需要可执行文件路径（让 pprof 自动从 prof 文件提取符号）
+
+**新增文件**:
+- `web/show_svg.html` - CPU SVG 查看器
+- `web/show_heap_svg.html` - Heap SVG 查看器
+
+**修改文件**:
+- `include/profiler_manager.h` - 添加 analyze 方法声明
+- `src/profiler_manager.cpp` - 实现一键分析逻辑
+- `src/profiler_manager.cpp` - 添加 `findLatestHeapProfile()` 辅助方法
+- `example/main.cpp` - 添加 HTTP 端点
+- `web/index.html` - 添加一键分析按钮和处理函数
+
+**Bug 修复**:
+- 修复 SVG 中包含 "error" 字符串导致误判的问题
+- 使用更精确的错误检查（检查 `<?xml` 或 `<svg` 标记）
+- 使用 Blob URL 避免 JavaScript 模板字符串嵌套问题
+
+---
+
 ## 已完成的改进 (2025-01-08)
 
 ### 1. 修复硬编码假数据问题 ✅

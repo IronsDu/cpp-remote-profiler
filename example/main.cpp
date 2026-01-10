@@ -489,6 +489,42 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
+    // SVG flame graph viewer page
+    app().registerHandler(
+        "/show_svg.html",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::ifstream htmlFile("../web/show_svg.html");
+            std::stringstream buffer;
+            buffer << htmlFile.rdbuf();
+            std::string html = buffer.str();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(CT_TEXT_HTML);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Heap SVG flame graph viewer page
+    app().registerHandler(
+        "/show_heap_svg.html",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::ifstream htmlFile("../web/show_heap_svg.html");
+            std::stringstream buffer;
+            buffer << htmlFile.rdbuf();
+            std::string html = buffer.str();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(CT_TEXT_HTML);
+            callback(resp);
+        },
+        {Get}
+    );
+
     // 下载 CPU profile (pprof 格式)
     app().registerHandler(
         "/api/cpu/pprof",
@@ -769,6 +805,116 @@ int main(int argc, char* argv[]) {
             callback(resp);
         },
         {Get}
+    );
+
+    // CPU analyze endpoint - 一键式CPU分析（使用pprof生成SVG火焰图）
+    app().registerHandler(
+        "/api/cpu/analyze",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            // 获取参数
+            auto duration_param = req->getParameter("duration");
+            auto output_type_param = req->getParameter("output_type");
+
+            // 默认值
+            int duration = 10;  // 默认10秒
+            if (!duration_param.empty()) {
+                try {
+                    duration = std::stoi(duration_param);
+                    if (duration < 1) duration = 1;
+                    if (duration > 300) duration = 300;  // 最多5分钟
+                } catch (const std::exception& e) {
+                    Json::Value root;
+                    root["error"] = "Invalid duration parameter";
+                    auto resp = HttpResponse::newHttpJsonResponse(root);
+                    resp->setStatusCode(k400BadRequest);
+                    callback(resp);
+                    return;
+                }
+            }
+
+            std::string output_type = "flamegraph";
+            if (!output_type_param.empty()) {
+                output_type = output_type_param;
+            }
+
+            std::cout << "Starting CPU analysis: duration=" << duration
+                      << "s, output_type=" << output_type << std::endl;
+
+            // 调用 analyzeCPUProfile（这是阻塞调用，会等待整个profiling过程完成）
+            std::string svg_content = profiler.analyzeCPUProfile(duration, output_type);
+
+            // 检查是否是错误响应（JSON格式的错误，更精确的检查）
+            if (svg_content.size() > 10 && svg_content[0] == '{' && svg_content[1] == '"') {
+                auto resp = HttpResponse::newHttpJsonResponse(Json::Value(svg_content));
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 返回SVG内容
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(svg_content);
+            resp->setContentTypeCode(CT_TEXT_XML);
+            resp->addHeader("Content-Type", "image/svg+xml");
+            callback(resp);
+        },
+        {Get, Post}
+    );
+
+    // Heap analyze endpoint - 一键式Heap分析（使用pprof生成SVG火焰图）
+    app().registerHandler(
+        "/api/heap/analyze",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            // 获取参数
+            auto duration_param = req->getParameter("duration");
+            auto output_type_param = req->getParameter("output_type");
+
+            // 默认值
+            int duration = 10;  // 默认10秒
+            if (!duration_param.empty()) {
+                try {
+                    duration = std::stoi(duration_param);
+                    if (duration < 1) duration = 1;
+                    if (duration > 300) duration = 300;  // 最多5分钟
+                } catch (const std::exception& e) {
+                    Json::Value root;
+                    root["error"] = "Invalid duration parameter";
+                    auto resp = HttpResponse::newHttpJsonResponse(root);
+                    resp->setStatusCode(k400BadRequest);
+                    callback(resp);
+                    return;
+                }
+            }
+
+            std::string output_type = "flamegraph";
+            if (!output_type_param.empty()) {
+                output_type = output_type_param;
+            }
+
+            std::cout << "Starting Heap analysis: duration=" << duration
+                      << "s, output_type=" << output_type << std::endl;
+
+            // 调用 analyzeHeapProfile（这是阻塞调用，会等待整个profiling过程完成）
+            std::string svg_content = profiler.analyzeHeapProfile(duration, output_type);
+
+            // 检查是否是错误响应（JSON格式的错误，更精确的检查）
+            if (svg_content.size() > 10 && svg_content[0] == '{' && svg_content[1] == '"') {
+                auto resp = HttpResponse::newHttpJsonResponse(Json::Value(svg_content));
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 返回SVG内容
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(svg_content);
+            resp->setContentTypeCode(CT_TEXT_XML);
+            resp->addHeader("Content-Type", "image/svg+xml");
+            callback(resp);
+        },
+        {Get, Post}
     );
 
     // Symbol resolution endpoint (类似 brpc pprof 的 /pprof/symbol)

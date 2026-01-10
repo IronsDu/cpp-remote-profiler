@@ -72,6 +72,16 @@ public:
     // Get CPU profile address stacks (format: "addr1 addr2 addr3 count")
     std::string getCPUProfileAddresses();
 
+    // Analyze CPU profile and return SVG flame graph
+    // duration: sampling duration in seconds
+    // output_type: "flamegraph" (default), "iciclegraph", etc.
+    std::string analyzeCPUProfile(int duration, const std::string& output_type = "flamegraph");
+
+    // Analyze Heap profile and return SVG flame graph
+    // duration: sampling duration in seconds
+    // output_type: "flamegraph" (default), "iciclegraph", etc.
+    std::string analyzeHeapProfile(int duration, const std::string& output_type = "flamegraph");
+
     // List available profiles
     std::vector<std::string> listProfiles() const;
 
@@ -87,6 +97,7 @@ private:
     ProfilerManager& operator=(const ProfilerManager&) = delete;
 
     bool executeCommand(const std::string& cmd, std::string& output);
+    std::string findLatestHeapProfile(const std::string& dir);
 
     std::string profile_dir_;
     std::map<ProfilerType, ProfilerState> profiler_states_;

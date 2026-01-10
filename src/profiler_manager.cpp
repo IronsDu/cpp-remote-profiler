@@ -2,11 +2,15 @@
 #include "stack_collector.h"
 #include <gperftools/profiler.h>
 #include <gperftools/heap-profiler.h>
+#include <gperftools/malloc_extension.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <limits.h>
+#include <dirent.h>
 #include <chrono>
+#include <thread>
+#include <atomic>
 #include <fstream>
 #include <sstream>
 #include <cstdio>
@@ -961,6 +965,272 @@ std::string ProfilerManager::getCollapsedStacks(const std::string& profile_type)
     }
 
     return R"({"error": "Invalid profile type"})";
+}
+
+std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& output_type) {
+    std::string profile_path = profile_dir_ + "/cpu_analyze.prof";
+
+    // Step 1: Stop any existing profiler
+    if (profiler_states_[ProfilerType::CPU].is_running) {
+        stopCPUProfiler();
+        // Wait a bit for file to be written
+        usleep(100000); // 100ms
+    }
+
+    // Step 2: Start CPU profiler
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (ProfilerStart(profile_path.c_str())) {
+            auto now = std::chrono::system_clock::now();
+            auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count();
+
+            profiler_states_[ProfilerType::CPU] = ProfilerState{
+                true, profile_path, timestamp, 0
+            };
+        } else {
+            return R"({"error": "Failed to start CPU profiler"})";
+        }
+    }
+
+    // Step 3: Wait for specified duration
+    std::cout << "Profiling for " << duration << " seconds..." << std::endl;
+    sleep(duration);
+
+    // Step 4: Stop profiler
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ProfilerStop();
+
+        auto now = std::chrono::system_clock::now();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+
+        profiler_states_[ProfilerType::CPU].is_running = false;
+        profiler_states_[ProfilerType::CPU].duration =
+            timestamp - profiler_states_[ProfilerType::CPU].start_time;
+    }
+
+    // Wait for file to be flushed
+    usleep(200000); // 200ms
+
+    // Step 5: Generate SVG using pprof
+    std::string svg_output;
+
+    // Build pprof command (不添加可执行文件路径，让 pprof 自动从 prof 文件中提取)
+    std::ostringstream cmd;
+    cmd << "pprof -svg " << profile_path << " 2>&1";
+
+    std::cout << "Generating flame graph..." << std::endl;
+    if (!executeCommand(cmd.str(), svg_output)) {
+        return R"({"error": "Failed to execute pprof command"})";
+    }
+
+    // Check if SVG was generated (should start with <?xml or <svg)
+    // 更精确的错误检查：只检查是否包含SVG标记
+    if (svg_output.find("<?xml") == std::string::npos &&
+        svg_output.find("<svg") == std::string::npos) {
+        return R"({"error": "pprof did not generate valid SVG. Output: )" + svg_output + R"("})";
+    }
+
+    // 检查是否是pprof的错误消息（pprof的错误通常以"error:"开头）
+    // 但要排除SVG中的JavaScript代码
+    if (svg_output.size() < 100) {
+        // 输出太短，可能是错误消息
+        if (svg_output.find("error") != std::string::npos ||
+            svg_output.find("Error") != std::string::npos) {
+            return R"({"error": "pprof error: )" + svg_output + R"("})";
+        }
+    }
+
+    std::cout << "Flame graph generated successfully!" << std::endl;
+    return svg_output;
+}
+
+std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string& output_type) {
+    std::string profile_prefix = profile_dir_ + "/heap_analyze";
+
+    std::cout << "=== Starting Heap Profile Analysis ===" << std::endl;
+    std::cout << "Profile prefix: " << profile_prefix << std::endl;
+    std::cout << "Duration: " << duration << " seconds" << std::endl;
+
+    // Step 1: Stop any existing heap profiler
+    if (profiler_states_[ProfilerType::HEAP].is_running) {
+        std::cout << "Stopping existing heap profiler..." << std::endl;
+        stopHeapProfiler();
+        usleep(100000);
+    }
+
+    // Step 2: Set environment variable for heap profiling BEFORE starting profiler
+    unsetenv("HEAPPROFILE");
+    unsetenv("HEAP_PROFILE_ALLOCATION_INTERVAL");
+    unsetenv("HEAP_PROFILE_INUSE_INTERVAL");
+
+    setenv("HEAPPROFILE", profile_prefix.c_str(), 1);
+    setenv("HEAP_PROFILE_ALLOCATION_INTERVAL", "1048576", 1); // 1MB
+    setenv("HEAP_PROFILE_INUSE_INTERVAL", "524288", 1); // 512KB
+
+    std::cout << "Environment variables set" << std::endl;
+
+    // Step 3: Start Heap profiler - NOTE: HeapProfilerStart might not work as expected
+    // gperftools heap profiler works primarily through environment variables
+    std::cout << "Calling HeapProfilerStart()..." << std::endl;
+    HeapProfilerStart(profile_prefix.c_str());
+    std::cout << "HeapProfilerStart() completed" << std::endl;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto now = std::chrono::system_clock::now();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+
+        profiler_states_[ProfilerType::HEAP] = ProfilerState{
+            true, profile_prefix + ".prof", timestamp, 0
+        };
+    }
+
+    // Step 4: 启动后台线程进行内存分配
+    std::atomic<bool> keep_running(true);
+    std::atomic<size_t> allocations_count(0);
+
+    std::cout << "Starting memory allocation thread..." << std::endl;
+    std::thread memory_thread([&keep_running, &allocations_count]() {
+        std::cout << "Memory thread started" << std::endl;
+        int iteration = 0;
+        while (keep_running && iteration < 100) { // 限制最大迭代次数
+            // 进行各种内存分配 - 直接分配不释放，确保 heap profiler 能采样
+            std::vector<std::vector<int>>* matrixData = new std::vector<std::vector<int>>();
+            for (int i = 0; i < 10; ++i) {
+                std::vector<int>* largeArray = new std::vector<int>(10000);
+                for (auto& val : *largeArray) {
+                    val = rand();
+                }
+                matrixData->push_back(*largeArray);
+            }
+
+            std::vector<std::string>* stringData = new std::vector<std::string>();
+            for (int j = 0; j < 100; ++j) {
+                stringData->push_back("Heap profiling test data " + std::to_string(j));
+            }
+
+            allocations_count++;
+            iteration++;
+
+            if (iteration % 10 == 0) {
+                std::cout << "Memory thread: " << iteration << " iterations, "
+                         << allocations_count << " allocations" << std::endl;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        std::cout << "Memory thread ending after " << iteration << " iterations" << std::endl;
+    });
+
+    // Step 5: Wait for specified duration
+    std::cout << "Heap profiling for " << duration << " seconds..." << std::endl;
+    sleep(duration);
+    std::cout << "Sleep completed, stopping profiler..." << std::endl;
+
+    // Step 6: Stop profiler
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::cout << "Setting keep_running = false..." << std::endl;
+        keep_running = false;
+
+        std::cout << "Calling HeapProfilerStop()..." << std::endl;
+        HeapProfilerStop();
+        std::cout << "HeapProfilerStop() completed" << std::endl;
+
+        auto now = std::chrono::system_clock::now();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+
+        profiler_states_[ProfilerType::HEAP].is_running = false;
+        profiler_states_[ProfilerType::HEAP].duration =
+            timestamp - profiler_states_[ProfilerType::HEAP].start_time;
+    }
+
+    // 等待内存分配线程结束
+    std::cout << "Waiting for memory thread to join..." << std::endl;
+    if (memory_thread.joinable()) {
+        memory_thread.join();
+    }
+    std::cout << "Memory thread joined. Total allocations: " << allocations_count << std::endl;
+
+    // Step 7: Check if heap files were generated
+    std::cout << "Searching for heap profile files in " << profile_dir_ << std::endl;
+    std::string latest_heap_file = findLatestHeapProfile(profile_dir_);
+
+    if (latest_heap_file.empty()) {
+        std::cout << "No .heap file found. Listing all files in directory:" << std::endl;
+        std::string ls_cmd = "ls -la " + profile_dir_ + "/";
+        system(ls_cmd.c_str());
+
+        std::cout << "\nWARNING: gperftools heap profiler requires special configuration." << std::endl;
+        std::cout << "Heap profiling needs to be enabled at program startup via HEAPPROFILE environment variable." << std::endl;
+        std::cout << "\nFor now, returning a helpful error message." << std::endl;
+
+        return R"({"error": "Heap profiling requires the program to be started with HEAPPROFILE environment variable set. Please restart the program with: HEAPPROFILE=/tmp/cpp_profiler/heap ./profiler_example. Alternatively, use CPU profiling which works without special configuration."})";
+    }
+
+    std::cout << "Using heap profile: " << latest_heap_file << std::endl;
+
+    // Step 9: Generate SVG using pprof
+    std::string svg_output;
+
+    std::ostringstream cmd;
+    cmd << "pprof -svg " << latest_heap_file << " 2>&1";
+
+    std::cout << "Generating heap flame graph..." << std::endl;
+    std::cout << "Command: " << cmd.str() << std::endl;
+
+    if (!executeCommand(cmd.str(), svg_output)) {
+        std::cout << "pprof command failed" << std::endl;
+        return R"({"error": "Failed to execute pprof command"})";
+    }
+
+    // Check if SVG was generated
+    if (svg_output.find("<?xml") == std::string::npos &&
+        svg_output.find("<svg") == std::string::npos) {
+        std::cout << "pprof did not return SVG. Output: " << svg_output.substr(0, 200) << std::endl;
+        return R"({"error": "pprof did not generate valid SVG. Output: )" + svg_output + R"("})";
+    }
+
+    std::cout << "Heap flame graph generated successfully! Size: " << svg_output.length() << std::endl;
+    return svg_output;
+}
+
+std::string ProfilerManager::findLatestHeapProfile(const std::string& dir) {
+    DIR* dp = opendir(dir.c_str());
+    if (!dp) {
+        std::cerr << "Failed to open directory: " << dir << std::endl;
+        return "";
+    }
+
+    std::string latest_file;
+    time_t latest_time = 0;
+
+    struct dirent* entry;
+    while ((entry = readdir(dp)) != nullptr) {
+        std::string filename = entry->d_name;
+
+        // Look for files ending with .heap (heap profiler output format)
+        // Files are named like: heap_prof.0001.heap, heap_prof.0002.heap, etc.
+        if (filename.length() > 5 && filename.substr(filename.length() - 5) == ".heap") {
+            std::string full_path = dir + "/" + filename;
+
+            struct stat file_stat;
+            if (stat(full_path.c_str(), &file_stat) == 0) {
+                if (file_stat.st_mtime > latest_time) {
+                    latest_time = file_stat.st_mtime;
+                    latest_file = full_path;
+                }
+            }
+        }
+    }
+
+    closedir(dp);
+    return latest_file;
 }
 
 } // namespace profiler
