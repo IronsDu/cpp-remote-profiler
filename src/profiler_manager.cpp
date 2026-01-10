@@ -248,8 +248,8 @@ std::string ProfilerManager::getProfileAsJSON(const std::string& profile_type) {
 
     // 对于CPU profile，使用嵌入的 pprof 工具转换为文本
     if (profile_type == "cpu") {
-        // 使用 brpc 的 pprof，需要 <program> 参数
-        std::string cmd = "./pprof --text /bin/true " + profile_path + " 2>&1";
+        // 使用 /proc/self/exe 指向当前可执行文件进行符号化
+        std::string cmd = "./pprof --text /proc/self/exe " + profile_path + " 2>&1";
         std::string output;
         if (!executeCommand(cmd, output)) {
             return R"({"error": "Failed to execute pprof"})";
@@ -1002,10 +1002,9 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     // Step 5: Generate SVG using pprof
     std::string svg_output;
 
-    // Build pprof command (使用 brpc 的 pprof，需要 <program> 参数)
-    // 使用 /bin/true 作为占位符，因为 gperftools profile 已包含符号信息
+    // Build pprof command (使用 /proc/self/exe 进行符号化)
     std::ostringstream cmd;
-    cmd << "./pprof --svg /bin/true " << profile_path << " 2>&1";
+    cmd << "./pprof --svg /proc/self/exe " << profile_path << " 2>&1";
 
     std::cout << "Generating flame graph..." << std::endl;
     if (!executeCommand(cmd.str(), svg_output)) {
@@ -1164,9 +1163,9 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     // Step 9: Generate SVG using pprof
     std::string svg_output;
 
-    // Build pprof command (使用 brpc 的 pprof，需要 <program> 参数)
+    // Build pprof command (使用 /proc/self/exe 进行符号化)
     std::ostringstream cmd;
-    cmd << "./pprof --svg /bin/true " << latest_heap_file << " 2>&1";
+    cmd << "./pprof --svg /proc/self/exe " << latest_heap_file << " 2>&1";
 
     std::cout << "Generating heap flame graph..." << std::endl;
     std::cout << "Command: " << cmd.str() << std::endl;
