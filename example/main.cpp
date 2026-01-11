@@ -1008,6 +1008,81 @@ int main(int argc, char* argv[]) {
         {Post}
     );
 
+    // Standard pprof endpoint: /pprof/profile
+    // Compatible with Go pprof tool
+    app().registerHandler(
+        "/pprof/profile",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            // 获取 seconds 参数，默认 30 秒
+            int seconds = 30;
+            auto seconds_param = req->getParameter("seconds");
+            if (!seconds_param.empty()) {
+                try {
+                    seconds = std::stoi(seconds_param);
+                    if (seconds < 1) seconds = 1;
+                    if (seconds > 300) seconds = 300;  // 最多5分钟
+                } catch (const std::exception& e) {
+                    auto resp = HttpResponse::newHttpResponse();
+                    resp->setStatusCode(k400BadRequest);
+                    resp->setBody("Invalid seconds parameter");
+                    callback(resp);
+                    return;
+                }
+            }
+
+            std::cout << "Received /pprof/profile request, seconds=" << seconds << std::endl;
+
+            // 调用 getRawCPUProfile 获取原始 profile 数据
+            std::string profile_data = profiler.getRawCPUProfile(seconds);
+
+            if (profile_data.empty()) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k500InternalServerError);
+                resp->setBody("Failed to generate CPU profile");
+                callback(resp);
+                return;
+            }
+
+            // 返回二进制 profile 数据
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(profile_data);
+            resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
+            resp->addHeader("Content-Disposition", "attachment; filename=profile");
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Standard pprof endpoint: /pprof/heap
+    // Compatible with Go pprof tool
+    app().registerHandler(
+        "/pprof/heap",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::cout << "Received /pprof/heap request" << std::endl;
+
+            // 调用 getRawHeapSample 获取 heap sample 数据
+            std::string heap_sample = profiler.getRawHeapSample();
+
+            if (heap_sample.empty()) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k500InternalServerError);
+                resp->setBody("Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set.");
+                callback(resp);
+                return;
+            }
+
+            // 返回 heap sample 数据（文本格式）
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(heap_sample);
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            resp->addHeader("Content-Disposition", "attachment; filename=heap");
+            callback(resp);
+        },
+        {Get}
+    );
+
     std::cout << "Handlers registered. Starting Drogon framework...\n";
 
     // 设置并运行 Drogon 框架

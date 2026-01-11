@@ -90,6 +90,15 @@ public:
 
     void setProfileDir(const std::string& dir) { profile_dir_ = dir; }
 
+    // Get raw CPU profile data (for /pprof/profile endpoint)
+    // seconds: sampling duration in seconds
+    // Returns raw profile binary data
+    std::string getRawCPUProfile(int seconds);
+
+    // Get raw heap sample data (for /pprof/heap endpoint)
+    // Returns heap sample in text format (compatible with pprof)
+    std::string getRawHeapSample();
+
 private:
     ProfilerManager();
     ~ProfilerManager();
@@ -103,6 +112,9 @@ private:
     std::string profile_dir_;
     std::map<ProfilerType, ProfilerState> profiler_states_;
     mutable std::mutex mutex_;
+
+    // Concurrency control for /pprof/profile requests
+    std::atomic<bool> cpu_profiling_in_progress_{false};
 
     // Symbolizer (backward-cpp)
     std::unique_ptr<Symbolizer> symbolizer_;
