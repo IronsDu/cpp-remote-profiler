@@ -15,18 +15,13 @@
             background: white;
             border: 1px solid #ddd;
             border-radius: 5px;
-            padding: 20px;
+            padding: 0;
+            width: 100%;
             overflow: auto;
-            max-width: 100%;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            min-height: 600px;
-            max-height: 80vh;
         }
-        svg {
+        #svg-container svg {
             display: block;
-            margin: 0 auto;
-            min-width: 100%;
-            min-height: 100%;
         }
     </style>
 </head>
@@ -36,18 +31,13 @@
         <strong>💡 查看提示：</strong>
         <ul>
             <li><strong>滚动：</strong> 图表可能很大，请滚动查看所有函数</li>
-            <li><strong>缩放：</strong> 使用鼠标滚轮可以缩放视图</li>
-            <li><strong>拖拽：</strong> 按住鼠标左键可以拖动图表</li>
-            <li><strong>搜索：</strong> 使用 Ctrl+F 搜索特定函数（如 cpuIntensiveTask、FibonacciCalculator）</li>
-            <li><strong>点击：</strong> 点击节点可以高亮显示相关调用</li>
+            <li><strong>缩放：</strong> 使用浏览器缩放功能（Ctrl + / Ctrl -）或鼠标滚轮（按住 Ctrl）</li>
+            <li><strong>拖拽：</strong> SVG 支持鼠标拖拽</li>
+            <li><strong>搜索：</strong> 使用 Ctrl+F 搜索特定函数</li>
         </ul>
     </div>
     <div class="toolbar">
         <button onclick="loadSVG()">🔄 重新加载</button>
-        <button onclick="zoomIn()">🔍+ 放大</button>
-        <button onclick="zoomOut()">🔍- 缩小</button>
-        <button onclick="resetZoom()">1:1 原始大小</button>
-        <button onclick="fitToWidth()">↔️ 适应宽度</button>
         <button onclick="window.print()">🖨️ 打印</button>
         <button onclick="downloadSVG()">⬇️ 下载 SVG</button>
     </div>
@@ -57,137 +47,35 @@
         const urlParams = new URLSearchParams(window.location.search);
         const duration = urlParams.get('duration') || '10';
 
-        let currentZoom = 1.0;
-        let svgElement = null;
-        let svgWrapper = null;
-
         function loadSVG() {
-            document.getElementById('svg-container').innerHTML = '正在加载火焰图...';
+            const container = document.getElementById('svg-container');
+            container.innerHTML = '正在加载火焰图...';
 
             fetch(`/api/cpu/analyze?duration=${duration}`)
-                .then(response => {
-                    const contentType = response.headers.get('Content-Type');
-                    if (contentType && contentType.includes('json')) {
-                        return response.json().then(data => {
-                            throw new Error(data.error || '未知错误');
-                        });
-                    }
-                    return response.text();
-                })
+                .then(response => response.text())
                 .then(svgText => {
-                    const container = document.getElementById('svg-container');
-                    container.innerHTML = '';
+                    // 修复 pprof SVG 的负坐标 viewBox
+                    svgText = svgText.replace(/viewBox="0 -1000 2000 1000"/g, 'viewBox="0 0 2000 1000"');
 
-                    // 创建一个包装 div 用于缩放
-                    svgWrapper = document.createElement('div');
-                    svgWrapper.style.cssText = 'transform-origin: top left; transition: transform 0.1s ease;';
-                    svgWrapper.innerHTML = svgText;
-                    container.appendChild(svgWrapper);
+                    container.innerHTML = svgText;
 
-                    setTimeout(() => {
-                        const svg = svgWrapper.querySelector('svg');
-                        svgElement = svg;
-                        if (svg) {
-                            // 确保 SVG 宽度自适应
-                            svg.style.width = '100%';
-                            svg.style.height = 'auto';
-                            svg.style.display = 'block';
-
-                            // 自动适应宽度并居中显示
-                            fitToWidth();
-
-                            // 高亮显示我们的函数
-                            highlightFunctions();
-                        }
-                    }, 100);
+                    const svg = container.querySelector('svg');
+                    if (svg) {
+                        svg.removeAttribute('width');
+                        svg.removeAttribute('height');
+                        svg.style.width = '100%';
+                        svg.style.height = 'auto';
+                        svg.style.display = 'block';
+                        console.log('SVG loaded and viewBox fixed');
+                    }
                 })
                 .catch(error => {
-                    document.getElementById('svg-container').innerHTML =
-                        `<div style="color: red; padding: 20px;">❌ 加载失败: ${error.message}</div>`;
+                    container.innerHTML = `<div style="color: red; padding: 20px;">❌ 加载失败: ${error.message}</div>`;
                 });
         }
 
-        function zoomIn() {
-            if (!svgWrapper) return;
-            currentZoom *= 1.2;
-            applyZoom();
-        }
-
-        function zoomOut() {
-            if (!svgWrapper) return;
-            currentZoom /= 1.2;
-            applyZoom();
-        }
-
-        function resetZoom() {
-            if (!svgWrapper) return;
-            currentZoom = 1.0;
-            applyZoom();
-        }
-
-        function fitToWidth() {
-            if (!svgWrapper) return;
-
-            const container = document.getElementById('svg-container');
-            const containerWidth = container.clientWidth - 40; // padding
-
-            // 尝试解析 SVG 的 viewBox 来确定实际宽度
-            const svg = svgWrapper.querySelector('svg');
-            if (!svg) return;
-
-            const viewBox = svg.getAttribute('viewBox');
-            if (viewBox) {
-                const parts = viewBox.split(/\s+/);
-                const svgWidth = parseFloat(parts[2]);
-                currentZoom = containerWidth / svgWidth;
-            } else {
-                // 回退：使用默认宽度
-                currentZoom = containerWidth / 2000;
-            }
-
-            applyZoom();
-        }
-
-        function applyZoom() {
-            if (!svgWrapper) return;
-            svgWrapper.style.transform = `scale(${currentZoom})`;
-            console.log(`Applied zoom: ${currentZoom.toFixed(2)}x`);
-        }
-
-        function highlightFunctions() {
-            if (!svgElement) return;
-
-            // 高亮显示我们的函数
-            const titles = svgElement.querySelectorAll('title');
-            let found = false;
-            for (let title of titles) {
-                const text = title.textContent;
-                if (text.includes('cpuIntensiveTask') ||
-                    text.includes('FibonacciCalculator') ||
-                    text.includes('memoryIntensiveTask') ||
-                    text.includes('DataProcessor') ||
-                    text.includes('MatrixOperations')) {
-                    const node = title.closest('g');
-                    if (node && !found) {
-                        // 短暂高亮
-                        node.style.outline = '3px solid red';
-                        node.style.outlineOffset = '2px';
-                        setTimeout(() => {
-                            node.style.outline = '';
-                            node.style.outlineOffset = '';
-                        }, 2000);
-                        found = true;
-                    }
-                }
-            }
-
-            if (found) {
-                console.log('Highlighted target function');
-            }
-        }
-
         function downloadSVG() {
-            const svg = svgWrapper ? svgWrapper.querySelector('svg') : null;
+            const svg = document.querySelector('#svg-container svg');
             if (!svg) {
                 alert('没有找到 SVG 图表');
                 return;
