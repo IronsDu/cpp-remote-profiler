@@ -1271,4 +1271,110 @@ std::string ProfilerManager::findLatestHeapProfile(const std::string& dir) {
     return latest_file;
 }
 
+std::string ProfilerManager::getRawCPUProfile(int seconds) {
+    // Validate seconds parameter
+    if (seconds < 1 || seconds > 300) {
+        std::cerr << "Invalid seconds parameter: " << seconds
+                  << ". Must be between 1 and 300." << std::endl;
+        return "";
+    }
+
+    // Check concurrency control
+    bool expected = false;
+    if (!cpu_profiling_in_progress_.compare_exchange_strong(expected, true)) {
+        std::cerr << "CPU profiling already in progress. Only one request at a time." << std::endl;
+        return "";
+    }
+
+    // Use RAII to ensure flag is reset even if exception occurs
+    struct FlagGuard {
+        std::atomic<bool>& flag;
+        ~FlagGuard() { flag.store(false); }
+    };
+    FlagGuard guard{cpu_profiling_in_progress_};
+
+    // Generate temporary profile file path
+    std::string profile_path = profile_dir_ + "/pprof_cpu_temp.prof";
+
+    // Stop any existing CPU profiler first
+    if (profiler_states_[ProfilerType::CPU].is_running) {
+        std::cout << "Stopping existing CPU profiler..." << std::endl;
+        ProfilerStop();
+        profiler_states_[ProfilerType::CPU].is_running = false;
+        usleep(100000); // 100ms to ensure file is written
+    }
+
+    // Start CPU profiler
+    std::cout << "Starting CPU profiler for " << seconds << " seconds..." << std::endl;
+    if (!ProfilerStart(profile_path.c_str())) {
+        std::cerr << "Failed to start CPU profiler" << std::endl;
+        return "";
+    }
+
+    // Update state
+    auto now = std::chrono::system_clock::now();
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count();
+    profiler_states_[ProfilerType::CPU] = ProfilerState{true, profile_path, timestamp, 0};
+
+    // Wait for specified duration
+    sleep(seconds);
+
+    // Stop profiler
+    std::cout << "Stopping CPU profiler..." << std::endl;
+    ProfilerStop();
+
+    now = std::chrono::system_clock::now();
+    timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count();
+    profiler_states_[ProfilerType::CPU].is_running = false;
+    profiler_states_[ProfilerType::CPU].duration =
+        timestamp - profiler_states_[ProfilerType::CPU].start_time;
+
+    // Wait for file to be flushed
+    usleep(200000); // 200ms
+
+    // Read profile file
+    std::ifstream file(profile_path, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open profile file: " << profile_path << std::endl;
+        return "";
+    }
+
+    // Read file content
+    std::string profile_data;
+    file.seekg(0, std::ios::end);
+    size_t file_size = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    if (file_size > 0) {
+        profile_data.resize(file_size);
+        file.read(&profile_data[0], file_size);
+    }
+
+    file.close();
+
+    std::cout << "Profile data size: " << profile_data.size() << " bytes" << std::endl;
+    return profile_data;
+}
+
+std::string ProfilerManager::getRawHeapSample() {
+    // Get heap sample from tcmalloc
+    // MallocExtensionWriter is typedef'd as std::string
+    std::string heap_sample;
+
+    // GetHeapSample writes the heap profile into the string
+    MallocExtension::instance()->GetHeapSample(&heap_sample);
+
+    if (heap_sample.empty()) {
+        std::cerr << "Failed to get heap sample. "
+                  << "Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set."
+                  << std::endl;
+        return "";
+    }
+
+    std::cout << "Heap sample size: " << heap_sample.size() << " bytes" << std::endl;
+    return heap_sample;
+}
+
 } // namespace profiler
