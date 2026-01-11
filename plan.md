@@ -3,15 +3,51 @@
 ## 项目概述
 
 **项目名称**: C++ Remote Profiler
-**目标**: 类似 Go pprof 的 C++ 远程性能分析工具
+**目标**: 类似 Go pprof 和 brpc pprof service 的 C++ 远程性能分析工具
 **技术栈**: gperftools + Drogon + vcpkg
 **开发语言**: C++20
+**设计理念**:
+- 参考 brpc pprof service 设计，提供标准 pprof 接口
+- 支持两种使用场景：pprof 工具访问 + 浏览器直接查看
+- 简化 API，去掉显式的启动/停止操作
 
 ---
 
 ## 核心架构
 
-### 1. 整体架构图
+### 1. 两种使用场景
+
+#### 场景 1: pprof 工具访问（标准模式）
+```
+pprof 工具 → GET /pprof/profile?seconds=10
+             → 服务器内部采样（启动profiler → 采样 → 停止）
+             → 返回原始 profile 文件（二进制）
+             → pprof 工具本地生成 SVG/火焰图
+```
+
+**适用场景**:
+- 开发者本地分析
+- 需要使用 pprof 的高级功能
+- 需要多种可视化格式（pdf、svg、text等）
+
+#### 场景 2: 浏览器直接查看（一键分析）
+```
+浏览器 → GET /api/cpu/analyze?duration=10
+       → 服务器内部采样 + 生成 SVG
+       → 返回 SVG 图像
+       → 浏览器直接显示火焰图
+```
+
+**适用场景**:
+- 快速查看性能概况
+- 远程服务器监控
+- 不想安装 pprof 工具
+
+**接口命名规则**:
+- `/pprof/*` - 标准 pprof 接口（兼容 Go pprof 工具）
+- `/api/*` - 自定义分析接口（用于浏览器直接查看）
+
+### 2. 整体架构图
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -76,24 +112,35 @@
 
 ### 2. API 接口
 
-#### 2.1 CPU Profiling API ✅
-- [x] `GET /api/cpu/start` - 启动 CPU profiler
-- [x] `GET /api/cpu/stop` - 停止 CPU profiler
-- [x] `GET /api/cpu/analyze?duration=N` - 一键式分析并生成 SVG
-- [x] `GET /api/cpu/status` - 查询 profiler 状态
-- [x] `GET /api/cpu/profile` - 下载 profile 文件
-- [x] `GET /api/cpu/text` - 获取文本格式分析结果
-- [x] `GET /api/cpu/samples` - 获取原始采样数据
-- [x] `GET /api/cpu/collapsed` - 获取 collapsed 格式数据
+#### 2.1 标准 pprof 接口（兼容 Go pprof）⏳
+- [ ] `GET /pprof/profile?seconds=N` - CPU profile，返回原始 profile 文件
+- [ ] `GET /pprof/heap` - Heap profile，调用 tcmalloc sample，返回原始 profile 文件
+- [ ] `GET /pprof/growth` - Heap growth profile（可选）
+- [ ] `GET /pprof/contention` - Contention profile（可选）
 
-#### 2.2 Heap Profiling API ✅
-- [x] `GET /api/heap/start` - 启动 heap profiler
-- [x] `GET /api/heap/stop` - 停止 heap profiler
-- [x] `GET /api/heap/analyze?duration=N` - 一键式分析并生成 SVG
-- [x] `GET /api/heap/status` - 查询 profiler 状态
-- [x] `GET /api/heap/profile` - 下载 profile 文件
+**工作流程**:
+```
+请求: GET /pprof/profile?seconds=10
+  ↓
+1. 启动 CPU profiler
+2. 采样 10 秒
+3. 停止 CPU profiler
+4. 返回原始 profile 文件（二进制）
+```
 
-#### 2.3 通用 API ✅
+**Heap Sampling 配置**:
+需要设置环境变量以启用 heap profiling：
+```bash
+export TCMALLOC_SAMPLE_PARAMETER=524288  # 采样间隔（字节）
+# 或者
+env TCMALLOC_SAMPLE_PARAMETER=524288 ./profiler_example
+```
+
+#### 2.2 一键分析接口（浏览器直接显示）✅
+- [x] `GET /api/cpu/analyze?duration=N` - 采样并返回 SVG
+- [x] `GET /api/heap/analyze?duration=N` - 采样并返回 SVG
+
+#### 2.3 辅助接口 ✅
 - [x] `GET /api/status` - 全局状态
 - [x] `GET /api/list` - 列出所有 profile 文件
 
@@ -120,9 +167,11 @@ std::string ProfilerManager::resolveSymbolWithBackward(void* address)
 
 #### 4.1 主控制面板 ✅
 - [x] 状态显示
-- [x] Profiler 控制按钮
-- [x] 配置选项
+- [x] 一键分析按钮（直接触发采样并显示 SVG）
+- [x] 配置选项（采样时长）
 - [x] 响应式设计
+
+**说明**: 不再有"启动"、"停止"按钮，所有采样都是一次性操作
 
 #### 4.2 火焰图显示 ✅
 - [x] CPU 火焰图页面
@@ -172,7 +221,92 @@ std::string ProfilerManager::resolveSymbolWithBackward(void* address)
 
 ## 待完成功能 ⏳
 
-### 1. 符号化优化 🔴
+### 1. 实现 Go pprof 兼容接口 🔴
+
+#### 1.1 需要实现的接口
+- [ ] `GET /pprof/profile?seconds=N` - CPU profile
+  - 内部启动 CPU profiler
+  - 采样指定秒数
+  - 停止 profiler
+  - 返回原始 profile 文件（二进制）
+
+- [ ] `GET /pprof/heap` - Heap profile
+  - 调用 `MallocExtension::GetHeapSample()` 获取 tcmalloc 采样数据
+  - 返回原始 profile 文件（二进制）
+  - **注意**: 需要设置 `TCMALLOC_SAMPLE_PARAMETER` 环境变量
+
+- [ ] 可选接口：
+  - `GET /pprof/growth` - Heap growth profile
+  - `GET /pprof/contention` - Contention profile
+
+#### 1.2 环境变量配置
+
+**TCMALLOC_SAMPLE_PARAMETER**:
+- 作用：设置 tcmalloc heap sampling 的采样间隔
+- 单位：字节
+- 默认值：524288 (512KB)
+- 推荐值：
+  - 开发环境：524288 (512KB)
+  - 生产环境：2097152 (2MB) 或更大，减少开销
+- 设置方式：
+  ```bash
+  export TCMALLOC_SAMPLE_PARAMETER=524288
+  ./profiler_example
+  ```
+
+#### 1.3 实现细节
+```cpp
+// 示例：CPU profile handler
+void getPprofProfile(const HttpRequestPtr& req,
+                     std::function<void(const HttpResponsePtr&)>&& callback) {
+    int seconds = 30;
+    auto secondsStr = req->getParameter("seconds");
+    if (!secondsStr.empty()) {
+        seconds = std::stoi(secondsStr);
+    }
+
+    // 1. 启动 CPU profiler
+    ProfilerStart("/tmp/cpp_profiler/temp.prof");
+
+    // 2. 等待指定秒数（需要在后台线程中执行）
+    sleep(seconds);
+
+    // 3. 停止 profiler
+    ProfilerStop();
+
+    // 4. 读取 profile 文件并返回
+    std::string profile_data = readFile("/tmp/cpp_profiler/temp.prof");
+
+    auto resp = HttpResponse::newHttpResponse();
+    resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
+    resp->setBody(profile_data);
+    callback(resp);
+}
+
+// 示例：Heap profile handler
+void getPprofHeap(const HttpRequestPtr& req,
+                  std::function<void(const HttpResponsePtr&)>&& callback) {
+    // 调用 tcmalloc sample
+    char* buffer = nullptr;
+    int length = 0;
+
+    // 使用 MallocExtension::GetHeapSample() 获取 heap sample
+    MallocExtension::instance()->GetHeapSample(&buffer, &length);
+
+    auto resp = HttpResponse::newHttpResponse();
+    resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
+    resp->setBody(std::string(buffer, length));
+    callback(resp);
+}
+```
+
+**注意事项**:
+- 需要异步处理，避免阻塞主线程
+- 需要处理并发请求（同时多个 /pprof/profile 请求）
+- 需要设置合理的超时时间
+- Heap profile 需要程序启动时设置 `TCMALLOC_SAMPLE_PARAMETER` 环境变量
+
+### 2. 符号化优化 🔴
 
 #### 问题描述
 **当前状态**: pprof 生成的 SVG 显示地址而非函数名
@@ -363,22 +497,44 @@ cmd << "addr2line -e " << info.dli_fname << " -f -C 0x"
 
 | 端点 | 方法 | 说明 | 状态 |
 |------|------|------|------|
+| **标准 pprof 接口** ||||
+| `/pprof/profile` | GET | CPU profile（兼容 Go pprof） | ⏳ |
+| `/pprof/heap` | GET | Heap profile（兼容 Go pprof） | ⏳ |
+| `/pprof/growth` | GET | Heap growth profile | 📋 |
+| `/pprof/contention` | GET | Contention profile | 📋 |
+| **一键分析接口** ||||
+| `/api/cpu/analyze` | GET | 采样并返回 CPU 火焰图 SVG | ✅ |
+| `/api/heap/analyze` | GET | 采样并返回 Heap 火焰图 SVG | ✅ |
+| **辅助接口** ||||
 | `/api/status` | GET | 获取全局状态 | ✅ |
-| `/api/cpu/start` | GET | 启动 CPU profiler | ✅ |
-| `/api/cpu/stop` | GET | 停止 CPU profiler | ✅ |
-| `/api/cpu/analyze` | GET | 分析并生成 SVG | ✅ |
-| `/api/cpu/status` | GET | CPU profiler 状态 | ✅ |
-| `/api/cpu/profile` | GET | 下载 profile 文件 | ✅ |
-| `/api/cpu/text` | GET | 文本格式结果 | ✅ |
-| `/api/cpu/samples` | GET | 原始采样数据 | ✅ |
-| `/api/cpu/collapsed` | GET | Collapsed 格式 | ✅ |
-| `/api/heap/start` | GET | 启动 heap profiler | ✅ |
-| `/api/heap/stop` | GET | 停止 heap profiler | ✅ |
-| `/api/heap/analyze` | GET | 分析并生成 SVG | ✅ |
-| `/api/heap/status` | GET | Heap profiler 状态 | ✅ |
-| `/api/heap/profile` | GET | 下载 profile 文件 | ✅ |
+| `/api/list` | GET | 列出所有 profile 文件 | ✅ |
 
-#### 3.2 响应格式
+#### 3.2 使用示例
+
+**场景 1: 使用 pprof 工具访问**
+```bash
+# 采样 10 秒 CPU profile
+go tool pprof http://localhost:8080/pprof/profile?seconds=10
+
+# 或者先下载再用 pprof 打开
+curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
+go tool pprof -http=:8081 cpu.prof
+
+# Heap profile（需要先设置 TCMALLOC_SAMPLE_PARAMETER）
+curl http://localhost:8080/pprof/heap > heap.prof
+go tool pprof -http=:8081 heap.prof
+```
+
+**场景 2: 浏览器直接查看**
+```bash
+# 在浏览器中打开
+http://localhost:8080/api/cpu/analyze?duration=10
+
+# 或者在主页面点击"分析 CPU"按钮
+http://localhost:8080/
+```
+
+#### 3.3 响应格式
 
 **成功响应**:
 ```json
@@ -403,20 +559,24 @@ cmd << "addr2line -e " << info.dli_fname << " -f -C 0x"
 #### 4.1 页面结构
 ```
 index.html (主控制面板)
-  ├── CPU Profiler 控制
-  ├── Heap Profiler 控制
+  ├── CPU Profiler 分析（一键触发采样 + 显示 SVG）
+  ├── Heap Profiler 分析（一键触发采样 + 显示 SVG）
   └── 状态显示
 
 show_svg.html (CPU 火焰图)
   ├── SVG 容器
-  ├── 控制按钮
+  ├── 控制按钮（重新加载、下载）
   └── 提示信息
 
 show_heap_svg.html (Heap 火焰图)
   ├── SVG 容器
-  ├── 控制按钮
+  ├── 控制按钮（重新加载、下载）
   └── 提示信息
 ```
+
+**关键变化**:
+- 去掉了"启动"、"停止"按钮
+- 保留"分析"按钮（一次性采样并显示）
 
 #### 4.2 SVG 显示方案
 
@@ -509,8 +669,12 @@ show_heap_svg.html (Heap 火焰图)
 ## 未来规划
 
 ### 短期目标 (1-2 周)
-1. [ ] 完善错误处理和日志
-2. [ ] 添加 Speedscope 格式支持
+1. [ ] **实现 Go pprof 兼容接口** (最高优先级)
+   - 实现 `/pprof/profile` 和 `/pprof/heap` 接口
+   - 返回原始 profile 文件
+   - 测试与 Go pprof 工具的兼容性
+   - 添加 `TCMALLOC_SAMPLE_PARAMETER` 环境变量支持
+2. [ ] 完善错误处理和日志
 3. [ ] 优化大 SVG 的渲染性能
 4. [ ] 添加单元测试
 
@@ -560,11 +724,16 @@ show_heap_svg.html (Heap 火焰图)
 ## 更新日志
 
 ### 2026-01-11
+- 🔄 **架构调整**: 采用 Go pprof 标准接口设计
+  - 计划实现 `/pprof/profile` 和 `/pprof/heap` 标准接口
+  - 保留 `/api/cpu/analyze` 等一键分析接口
+  - 去掉显式的启动/停止接口
+  - 添加 `TCMALLOC_SAMPLE_PARAMETER` 环境变量支持
 - ✅ 移除火焰图缩放功能
 - ✅ 修复 SVG 负坐标显示问题
 - ✅ 支持浏览器无限缩放
-- 🔍 调查 pprof 符号化问题
 - 📝 创建 plan.md 文档
+- 📝 更新开发规则（notes.md）
 
 ### 2026-01-10
 - ✅ 实现一键式 CPU/Heap 分析

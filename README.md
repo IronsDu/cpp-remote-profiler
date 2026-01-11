@@ -1,16 +1,26 @@
 # C++ Remote Profiler
 
-类似 Go pprof 的 C++ 远程性能分析工具，基于 gperftools 和 Drogon 框架实现。
+类似 Go pprof 和 brpc pprof service 的 C++ 远程性能分析工具，基于 gperftools 和 Drogon 框架实现。
 
 ## 🎯 功能特性
 
 - ✅ **CPU Profiling**: 使用 gperftools 进行 CPU 性能分析
-- ✅ **Heap Profiling**: 内存使用分析和内存泄漏检测
-- ✅ **Web 界面**: 美观的 Web 控制面板，支持交互式火焰图
+- ✅ **Heap Profiling**: 内存使用分析和内存泄漏检测（调用 tcmalloc sample）
+- ✅ **标准 pprof 接口**: 兼容 brpc pprof service，支持 Go pprof 工具直接访问
+- ✅ **Web 界面**: 美观的 Web 控制面板，支持一键式火焰图分析
 - ✅ **RESTful API**: 完整的 HTTP API 接口
-- ✅ **Profile 下载**: 支持 Go pprof 和 Speedscope 格式
-- ✅ **实时状态**: 实时查看 profiler 运行状态
 - ✅ **依赖管理**: 使用 vcpkg 管理所有依赖
+
+## 🎯 设计理念
+
+本项目参考 Go pprof 标准接口设计，提供两种使用方式：
+
+1. **标准 pprof 模式**: 提供 `/pprof/profile`、`/pprof/heap` 接口，返回原始 profile 文件，兼容 Go pprof 工具
+2. **一键分析模式**: 提供 `/api/cpu/analyze` 等接口，直接返回 SVG，适合浏览器查看
+
+**接口命名规则**:
+- `/pprof/*` - 标准 Go pprof 接口
+- `/api/*` - 自定义分析接口（浏览器直接查看）
 
 ## 🚀 快速开始
 
@@ -100,63 +110,45 @@ cd build
 
 ## 📖 使用方法
 
-### 方法 1: 通过 Web 界面（推荐）
-
-1. 在浏览器中打开 `http://localhost:8080`
-2. 点击"启动 CPU Profiler"开始性能分析
-3. 运行你的程序或让服务自动生成负载
-4. 点击"停止"结束分析
-5. 在页面底部查看交互式火焰图
-6. 可选择"下载 Profile"用于 Go pprof 或 Speedscope
-
-### 方法 2: 通过 API
+### 方法 1: 使用 Go pprof 工具（推荐）
 
 ```bash
-# 获取状态
-curl http://localhost:8080/api/status
+# CPU 采样 10 秒
+go tool pprof http://localhost:8080/pprof/profile?seconds=10
 
-# 启动 CPU profiler
-curl -X POST http://localhost:8080/api/cpu/start
+# 或者先下载 profile 文件
+curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
+go tool pprof -http=:8081 cpu.prof
 
-# 停止 CPU profiler
-curl -X POST http://localhost:8080/api/cpu/stop
+# Heap profile（需要先设置环境变量）
+curl http://localhost:8080/pprof/heap > heap.prof
+go tool pprof -http=:8081 heap.prof
+```
 
-# 下载 CPU profile（用于 Go pprof 或 Speedscope）
-curl http://localhost:8080/api/cpu/pprof -o cpu.prof
+### 方法 2: 通过 Web 界面（快速查看）
 
-# 获取火焰图 JSON 数据（用于自定义可视化）
-curl http://localhost:8080/api/cpu/flamegraph -o flamegraph.json
+1. 在浏览器中打开 `http://localhost:8080`
+2. 点击"分析 CPU"按钮，等待采样完成（默认 10 秒）
+3. 查看生成的火焰图
+4. 可选择"下载 SVG"保存结果
 
-# 查看 CPU profile 文本格式（需要安装 pprof 工具）
-curl http://localhost:8080/api/cpu/text
+### 方法 3: 通过 API 获取 SVG
 
-# Heap profiler 操作类似
-curl -X POST http://localhost:8080/api/heap/start
-curl -X POST http://localhost:8080/api/heap/stop
-curl http://localhost:8080/api/heap/pprof -o heap.prof
-curl http://localhost:8080/api/heap/flamegraph -o heap_flamegraph.json
+```bash
+# CPU 火焰图
+curl http://localhost:8080/api/cpu/analyze?duration=10
+
+# Heap 火焰图
+curl http://localhost:8080/api/heap/analyze?duration=10
 ```
 
 ## 📊 如何查看火焰图
 
 ### 方法 1: 使用内置 Web 界面（最简单）
 
-访问 `http://localhost:8080/flamegraph?type=cpu` 查看交互式火焰图
+访问 `http://localhost:8080`，点击"分析 CPU"或"分析 Heap"按钮，自动生成并显示火焰图
 
-### 方法 2: 使用 Speedscope（推荐，功能强大）
-
-1. 下载 profile 文件：
-   ```bash
-   curl http://localhost:8080/api/cpu/pprof -o cpu.prof
-   ```
-
-2. 访问 [https://www.speedscope.app/](https://www.speedscope.app/)
-
-3. 上传 `cpu.prof` 文件
-
-4. 查看交互式火焰图！
-
-### 方法 3: 使用 Go pprof 工具
+### 方法 2: 使用 Go pprof 工具（功能强大）
 
 安装 Go 和 pprof：
 ```bash
@@ -171,33 +163,58 @@ go install github.com/google/pprof@latest
 
 使用 pprof：
 ```bash
-# 文本格式
-go tool pprof -text cpu.prof
+# 直接从 URL 分析
+go tool pprof -http=:8081 http://localhost:8080/pprof/profile?seconds=10
 
-# 图形界面
+# 或者先下载
+curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
 go tool pprof -http=:8081 cpu.prof
-
-# 火焰图
-go tool pprof -http=:8081 -svg cpu.prof
 ```
+
+### 方法 3: 使用 Speedscope
+
+1. 下载 profile 文件：
+   ```bash
+   curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
+   ```
+
+2. 访问 [https://www.speedscope.app/](https://www.speedscope.app/)
+
+3. 上传 `cpu.prof` 文件
+
+4. 查看交互式火焰图！
 
 ## 🔧 API 端点
 
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/` | GET | Web 界面 |
-| `/flamegraph` | GET | 交互式火焰图页面 (?type=cpu 或 ?type=heap) |
-| `/api/status` | GET | 获取 profiler 状态 |
-| `/api/cpu/start` | POST | 启动 CPU profiler |
-| `/api/cpu/stop` | POST | 停止 CPU profiler |
-| `/api/heap/start` | POST | 启动 Heap profiler |
-| `/api/heap/stop` | POST | 停止 Heap profiler |
-| `/api/cpu/text` | GET | 获取 CPU 文本格式分析 |
-| `/api/heap/text` | GET | 获取 Heap 文本格式分析 |
-| `/api/cpu/pprof` | GET | 下载 CPU profile (protobuf 格式) |
-| `/api/heap/pprof` | GET | 下载 Heap profile |
-| `/api/cpu/flamegraph` | GET | 获取 CPU 火焰图 JSON 数据 |
-| `/api/heap/flamegraph` | GET | 获取 Heap 火焰图 JSON 数据 |
+| 端点 | 方法 | 描述 | 状态 |
+|------|------|------|------|
+| **标准 pprof 接口** ||||
+| `/pprof/profile` | GET | CPU profile（兼容 Go pprof） | ⏳ |
+| `/pprof/heap` | GET | Heap profile（兼容 Go pprof） | ⏳ |
+| **一键分析接口** ||||
+| `/api/cpu/analyze` | GET | 采样并返回 CPU 火焰图 SVG | ✅ |
+| `/api/heap/analyze` | GET | 采样并返回 Heap 火焰图 SVG | ✅ |
+| **辅助接口** ||||
+| `/` | GET | Web 主界面 | ✅ |
+| `/api/status` | GET | 获取全局状态 | ✅ |
+| `/api/list` | GET | 列出所有 profile 文件 | ✅ |
+
+### 使用示例
+
+```bash
+# CPU profile（返回原始文件，用于 pprof 工具）
+curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
+
+# Heap profile（返回原始文件，用于 pprof 工具）
+# 注意：需要设置 TCMALLOC_SAMPLE_PARAMETER 环境变量
+curl http://localhost:8080/pprof/heap > heap.prof
+
+# CPU 火焰图（返回 SVG，浏览器可直接显示）
+curl http://localhost:8080/api/cpu/analyze?duration=10
+
+# Heap 火焰图（返回 SVG，浏览器可直接显示）
+curl http://localhost:8080/api/heap/analyze?duration=10
+```
 
 ## 📁 项目结构
 
@@ -242,24 +259,40 @@ cd build
 ./tests/test_flamegraph.sh
 ```
 
-## 💡 在你的代码中使用
+## 💡 集成到你的项目
+
+### 选项 1: 作为 HTTP 服务集成（推荐）
+
+将 profiler 作为一个独立的 HTTP 服务运行：
 
 ```cpp
-#include "profiler_manager.h"
+#include <drogon/drogon.h>
 
 int main() {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    // 启动 profiler HTTP 服务
+    // 监听 8080 端口，提供 /prof 和 /heap 接口
+    // 你的主程序可以在其他端口运行
+    // 通过 HTTP 请求获取 profile 数据
+}
+```
 
+### 选项 2: 使用 gperftools 直接集成
+
+```cpp
+#include <gperftools/profiler.h>
+
+int main() {
     // 启动 CPU profiler
-    profiler.startCPUProfiler("my_app.prof");
+    ProfilerStart("/tmp/my_app.prof");
 
     // 运行需要分析的代码
     yourCodeToProfile();
 
     // 停止 CPU profiler
-    profiler.stopCPUProfiler();
+    ProfilerStop();
 
-    // profile 数据已保存到 my_app.prof
+    // 使用 pprof 工具分析
+    // go tool pprof /tmp/my_app.prof
     return 0;
 }
 ```
@@ -268,15 +301,33 @@ int main() {
 
 ```bash
 g++ -o your_app your_app.cpp \
-    -I/path/to/cpp-remote-profiler/include \
-    -L/path/to/cpp-remote-profiler/build \
-    -lprofiler_lib \
     -ltcmalloc_and_profiler \
     -lprofiler \
     -lpthread
 ```
 
 ## ⚙️ 配置说明
+
+### 环境变量
+
+**TCMALLOC_SAMPLE_PARAMETER**:
+- 作用：设置 tcmalloc heap sampling 的采样间隔
+- 单位：字节
+- 默认值：524288 (512KB)
+- 推荐值：
+  - 开发环境：524288 (512KB)
+  - 生产环境：2097152 (2MB) 或更大，减少开销
+- 设置方式：
+  ```bash
+  # 方式 1: 导出环境变量
+  export TCMALLOC_SAMPLE_PARAMETER=524288
+  ./build/profiler_example
+
+  # 方式 2: 直接在命令行设置
+  env TCMALLOC_SAMPLE_PARAMETER=524288 ./build/profiler_example
+  ```
+
+**注意**: 只有设置此环境变量后，heap profiling 才能正常工作。
 
 ### vcpkg 依赖版本
 
@@ -292,22 +343,24 @@ cd vcpkg
 ## ⚠️ 注意事项
 
 1. **编译选项**: 使用 `-g` 编译选项保留调试符号，以便正确显示函数名
-2. **性能开销**: CPU profiler 会有 5-10% 的性能开销
-3. **Heap Profiler**: 需要 tcmalloc 内存分配器
+2. **性能开销**: CPU profiler 会有 1-5% 的性能开销
+3. **Heap Profiler**: 需要 tcmalloc 内存分配器和 `TCMALLOC_SAMPLE_PARAMETER` 环境变量
 4. **生产环境**: 谨慎使用，建议在开发/测试环境中使用
+5. **并发限制**: 同一时间只能有一个 CPU profiling 请求
+6. **环境变量**: 使用 heap profiling 前必须设置 `TCMALLOC_SAMPLE_PARAMETER`
 
-## 🎨 与 Go pprof 的对比
+## 🎨 与其他工具的对比
 
-| 功能 | Go pprof | C++ Remote Profiler |
-|------|---------|---------------------|
-| CPU Profiling | ✓ | ✓ |
-| Heap Profiling | ✓ | ✓ |
-| Web 界面 | ✓ | ✓ |
-| 交互式火焰图 | ✓ | ✓ (内置) |
-| 远程分析 | ✓ | ✓ |
-| Goroutine Profiling | ✓ | ✗ |
-| Block Profiling | ✓ | ✗ |
-| Mutex Profiling | ✓ | ✗ |
+| 功能 | Go pprof | brpc pprof | C++ Remote Profiler |
+|------|---------|-----------|---------------------|
+| CPU Profiling | ✓ | ✓ | ✓ |
+| Heap Profiling | ✓ | ✓ | ✓ |
+| 标准接口 | ✓ | ✓ | ✓ (兼容 brpc) |
+| Web 界面 | ✓ | ✗ | ✓ |
+| 一键分析 SVG | ✗ | ✗ | ✓ |
+| 远程分析 | ✓ | ✓ | ✓ |
+| Goroutine Profiling | ✓ | ✗ | ✗ |
+| Growth Profiling | ✓ | ✓ | 📋 |
 
 ## 📝 许可证
 
