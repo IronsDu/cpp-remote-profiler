@@ -133,9 +133,6 @@
         <div class="section">
             <h2>CPU Profiler</h2>
             <div>
-                <span id="cpu-status" class="status stopped">已停止</span>
-                <button id="cpu-start" onclick="startCPU()">启动 CPU Profiler</button>
-                <button id="cpu-stop" class="stop-btn" onclick="stopCPU()" disabled>停止</button>
                 <button class="view-btn" onclick="openFlameGraph('cpu')">🎨 交互式火焰图</button>
                 <button class="view-btn" onclick="viewCPUSVG()">🔥 查看SVG火焰图</button>
                 <button class="view-btn" onclick="viewCPUText()">查看文本分析</button>
@@ -154,9 +151,6 @@
         <div class="section">
             <h2>Heap Profiler</h2>
             <div>
-                <span id="heap-status" class="status stopped">已停止</span>
-                <button id="heap-start" onclick="startHeap()">启动 Heap Profiler</button>
-                <button id="heap-stop" class="stop-btn" onclick="stopHeap()" disabled>停止</button>
                 <button class="view-btn" onclick="openFlameGraph('heap')">🎨 交互式火焰图</button>
                 <button class="view-btn" onclick="viewHeapSVG()">🔥 查看SVG火焰图</button>
                 <button class="view-btn" onclick="viewHeapText()">查看文本分析</button>
@@ -179,79 +173,6 @@
     </div>
 
     <script>
-        let statusCheckInterval;
-
-        async function fetchStatus() {
-            const response = await fetch('/api/status');
-            const data = await response.json();
-
-            // Update CPU status
-            const cpuStatus = document.getElementById('cpu-status');
-            const cpuStart = document.getElementById('cpu-start');
-            const cpuStop = document.getElementById('cpu-stop');
-
-            if (data.cpu.running) {
-                cpuStatus.textContent = '运行中';
-                cpuStatus.className = 'status running';
-                cpuStart.disabled = true;
-                cpuStop.disabled = false;
-            } else {
-                cpuStatus.textContent = '已停止';
-                cpuStatus.className = 'status stopped';
-                cpuStart.disabled = false;
-                cpuStop.disabled = true;
-            }
-
-            // Update Heap status
-            const heapStatus = document.getElementById('heap-status');
-            const heapStart = document.getElementById('heap-start');
-            const heapStop = document.getElementById('heap-stop');
-
-            if (data.heap.running) {
-                heapStatus.textContent = '运行中';
-                heapStatus.className = 'status running';
-                heapStart.disabled = true;
-                heapStop.disabled = false;
-            } else {
-                heapStatus.textContent = '已停止';
-                heapStatus.className = 'status stopped';
-                heapStart.disabled = false;
-                heapStop.disabled = true;
-            }
-        }
-
-        async function startCPU() {
-            log('正在启动 CPU profiler...');
-            const response = await fetch('/api/cpu/start', { method: 'POST' });
-            const data = await response.json();
-            log(data.message);
-            fetchStatus();
-        }
-
-        async function stopCPU() {
-            log('正在停止 CPU profiler...');
-            const response = await fetch('/api/cpu/stop', { method: 'POST' });
-            const data = await response.json();
-            log(data.message + ' (耗时: ' + data.duration_ms + 'ms)');
-            fetchStatus();
-        }
-
-        async function startHeap() {
-            log('正在启动 Heap profiler...');
-            const response = await fetch('/api/heap/start', { method: 'POST' });
-            const data = await response.json();
-            log(data.message);
-            fetchStatus();
-        }
-
-        async function stopHeap() {
-            log('正在停止 Heap profiler...');
-            const response = await fetch('/api/heap/stop', { method: 'POST' });
-            const data = await response.json();
-            log(data.message + ' (耗时: ' + data.duration_ms + 'ms)');
-            fetchStatus();
-        }
-
         async function viewCPUText() {
             log('正在获取 CPU profile 文本格式...\n');
             const response = await fetch('/api/cpu/text');
@@ -337,10 +258,6 @@
             const output = document.getElementById('output');
             output.textContent = message;
         }
-
-        // Start polling status
-        fetchStatus();
-        statusCheckInterval = setInterval(fetchStatus, 1000);
     </script>
 </body>
 </html>

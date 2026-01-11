@@ -42,7 +42,7 @@ $ ./test_full_flow
 ### 2. HTTP API 测试
 
 ```bash
-$ curl -X POST "http://localhost:8080/api/cpu/start?duration=5"
+$ curl "http://localhost:8080/pprof/profile?seconds=5" > /tmp/test.prof
 $ curl "http://localhost:8080/api/cpu/addresses"
 ```
 

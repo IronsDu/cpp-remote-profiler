@@ -135,22 +135,24 @@ curl "http://localhost:8080/api/cpu/analyze?duration=5"
 - 自动构建调用树结构用于渲染
 - 支持显示采样数统计
 
-### 7. 修复 CPU/Heap Profiler 自动停止功能 ✅ (2025-01-08)
-**问题**: `/api/cpu/start` 和 `/api/heap/start` 接口不支持 `duration` 参数，profiler 启动后不会自动停止
+### 7. 移除 CPU/Heap Profiler 开始/停止接口 ✅ (2025-01-11)
+**变更**: 移除 `/api/cpu/start`、`/api/cpu/stop`、`/api/heap/start`、`/api/heap/stop` 接口
 
-**修复内容**:
-- 在 HTTP 处理器中添加 `duration` 参数解析
-- 使用独立线程在指定时间后自动调用 `stopCPUProfiler()` / `stopHeapProfiler()`
-- 支持 CPU 和 Heap 两种 profiler 类型
-- 返回 `duration_ms` 字段确认配置成功
+**原因**: 使用标准 Go pprof 接口 (`/pprof/profile`, `/pprof/heap`) 替代自定义控制接口
 
 **修改文件**:
-- `example/main.cpp` - 修改 `/api/cpu/start` 和 `/api/heap/start` 处理器
+- `example/main.cpp` - 删除 start/stop 路由处理器
+- `web/index.html` - 移除启动/停止按钮和相关 JavaScript 函数
+- `UNIT_TEST_REPORT.md` - 更新测试示例使用 `/pprof/profile`
+- `BUILD_STEPS.md` - 更新测试步骤使用 `/pprof/profile`
 
-**测试结果**:
+**新的使用方式**:
 ```bash
-curl -X POST "http://localhost:8080/api/cpu/start?duration=5"
-# 5 秒后 profiler 自动停止
+# CPU profile - 采样 5 秒并保存
+curl "http://localhost:8080/pprof/profile?seconds=5" > cpu.prof
+
+# Heap profile - 获取当前堆采样
+curl "http://localhost:8080/pprof/heap" > heap.prof
 ```
 
 ### 8. 修复 CPU Profiler 使用正确的数据源 ✅ (2025-01-08)

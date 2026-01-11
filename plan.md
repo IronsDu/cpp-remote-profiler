@@ -221,7 +221,44 @@ std::string ProfilerManager::resolveSymbolWithBackward(void* address)
 
 ## 待完成功能 ⏳
 
-### 1. 实现 Go pprof 兼容接口 🔴
+### 1. 修复 SVG 符号化问题 🔴
+
+#### 问题描述
+**接口**: `/api/cpu/analyze` 返回的 SVG 火焰图中显示的是地址（0x...）而非函数名
+
+**原因分析**:
+- `analyzeCPUProfile()` 方法调用 `pprof --svg` 生成 SVG
+- 对于 PIE 可执行文件，pprof 无法正确符号化运行时地址
+- `/pprof/profile` 接口返回的原始 prof 文件是正确的
+
+**解决方案**:
+- 修改 `analyzeCPUProfile()` 使用 FlameGraph 工具（已有符号化支持）
+- 或者：在生成 SVG 前先对 profile 进行符号化预处理
+
+**状态**: 待实现
+
+### 2. 删除开始/停止接口 🔴
+
+#### 需要删除的接口
+- `DELETE /api/cpu/start`
+- `DELETE /api/cpu/stop`
+- `DELETE /api/heap/start`
+- `DELETE /api/heap/stop`
+
+#### 需要修改的文件
+- `example/main.cpp` - 删除路由处理器
+- `web/index.html` - 删除开始/停止按钮
+- `README.md` - 更新文档
+
+**保留的接口**:
+- `GET /pprof/profile` ✅
+- `GET /pprof/heap` ✅
+- `GET /api/cpu/analyze` ✅
+- `GET /api/heap/analyze` ✅
+
+**状态**: 实施中
+
+### 3. 实现 Go pprof 兼容接口 ✅
 
 #### 1.1 需要实现的接口
 - [ ] `GET /pprof/profile?seconds=N` - CPU profile

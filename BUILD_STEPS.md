@@ -95,14 +95,8 @@ make -j$(nproc)
 在另一个终端：
 
 ```bash
-# 启动 CPU profiler
-curl -X POST http://localhost:8080/api/cpu/start
-
-# 等待 5 秒
-sleep 5
-
-# 停止 profiler
-curl -X POST http://localhost:8080/api/cpu/stop
+# 使用标准 pprof 接口采样 5 秒
+curl "http://localhost:8080/pprof/profile?seconds=5" > /tmp/test.prof
 
 # 获取 collapsed 数据（应该显示函数名）
 curl http://localhost:8080/api/cpu/collapsed | head -20
