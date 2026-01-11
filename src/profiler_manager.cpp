@@ -1043,6 +1043,28 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     }
 
     std::cout << "Flame graph generated successfully!" << std::endl;
+
+    // 后处理 SVG：添加 viewBox 以支持正确的缩放和显示
+    // 查找 <svg> 标签并添加 viewBox 属性
+    size_t svg_start = svg_output.find("<svg");
+    if (svg_start != std::string::npos) {
+        size_t svg_tag_end = svg_output.find(">", svg_start);
+        if (svg_tag_end != std::string::npos) {
+            // 检查是否已有 viewBox
+            std::string svg_tag = svg_output.substr(svg_start, svg_tag_end - svg_start);
+            if (svg_tag.find("viewBox") == std::string::npos) {
+                // pprof 生成的 SVG 通常使用负坐标，典型的范围大约是：
+                // X: 0-2000, Y: -1000-0
+                // 我们使用一个保守的 viewBox
+                std::string viewbox_attr = " viewBox=\"0 -1000 2000 1000\"";
+
+                // 在 <svg> 标签内插入 viewBox 属性
+                svg_output.insert(svg_tag_end, viewbox_attr);
+                std::cout << "Added viewBox to SVG for proper scaling" << std::endl;
+            }
+        }
+    }
+
     return svg_output;
 }
 
@@ -1198,6 +1220,21 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     }
 
     std::cout << "Heap flame graph generated successfully! Size: " << svg_output.length() << std::endl;
+
+    // 后处理 SVG：添加 viewBox 以支持正确的缩放和显示
+    size_t svg_start = svg_output.find("<svg");
+    if (svg_start != std::string::npos) {
+        size_t svg_tag_end = svg_output.find(">", svg_start);
+        if (svg_tag_end != std::string::npos) {
+            std::string svg_tag = svg_output.substr(svg_start, svg_tag_end - svg_start);
+            if (svg_tag.find("viewBox") == std::string::npos) {
+                std::string viewbox_attr = " viewBox=\"0 -1000 2000 1000\"";
+                svg_output.insert(svg_tag_end, viewbox_attr);
+                std::cout << "Added viewBox to heap SVG for proper scaling" << std::endl;
+            }
+        }
+    }
+
     return svg_output;
 }
 
