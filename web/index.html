@@ -144,11 +144,7 @@
         <div class="section">
             <h2>Heap Profiler</h2>
             <div>
-                <div class="input-group">
-                    <label for="heap-duration">采样时长(秒):</label>
-                    <input type="number" id="heap-duration" value="10" min="1" max="300">
-                </div>
-                <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成SVG火焰图</button>
+                <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成Heap火焰图</button>
             </div>
         </div>
 
@@ -174,17 +170,11 @@
         }
 
         function analyzeHeap() {
-            const duration = document.getElementById('heap-duration').value;
-            log(`🚀 正在进行Heap分析，采样时长: ${duration}秒...\n(这可能需要一些时间，请耐心等待)`);
-            document.getElementById('heap-duration').disabled = true;
-
-            // 打开独立的SVG查看器页面
-            window.open(`/show_heap_svg.html?duration=${duration}`, '_blank');
-
+            log('🚀 正在获取Heap火焰图...');
+            // 打开独立的SVG查看器页面（不需要duration参数）
+            window.open('/show_heap_svg.html', '_blank');
             log('✅ Heap火焰图查看器已在新标签页打开');
             log('💡 提示：图表中显示内存分配情况');
-
-            document.getElementById('heap-duration').disabled = false;
         }
 
         function log(message) {

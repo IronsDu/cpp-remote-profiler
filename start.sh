@@ -17,6 +17,9 @@ cd build
 # 设置 PATH 包含 pprof
 export PATH=$PATH:/root/go/bin
 
+# 设置 tcmalloc heap sampling 参数 (524288 = 512KB，每分配512KB采样一次)
+export TCMALLOC_SAMPLE_PARAMETER=524288
+
 echo "启动服务器..."
 echo "访问地址: http://localhost:8080"
 echo "火焰图查看器: http://localhost:8080/flamegraph"

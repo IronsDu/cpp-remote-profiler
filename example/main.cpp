@@ -777,41 +777,37 @@ int main(int argc, char* argv[]) {
         "/api/heap/analyze",
         [&profiler](const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
-            // 获取参数
-            auto duration_param = req->getParameter("duration");
-            auto output_type_param = req->getParameter("output_type");
+            std::cout << "Starting Heap analysis (using GetHeapSample)..." << std::endl;
 
-            // 默认值
-            int duration = 10;  // 默认10秒
-            if (!duration_param.empty()) {
-                try {
-                    duration = std::stoi(duration_param);
-                    if (duration < 1) duration = 1;
-                    if (duration > 300) duration = 300;  // 最多5分钟
-                } catch (const std::exception& e) {
-                    Json::Value root;
-                    root["error"] = "Invalid duration parameter";
-                    auto resp = HttpResponse::newHttpJsonResponse(root);
-                    resp->setStatusCode(k400BadRequest);
-                    callback(resp);
-                    return;
-                }
+            // 直接获取 heap sample（不需要 duration）
+            std::string heap_sample = profiler.getRawHeapSample();
+
+            if (heap_sample.empty()) {
+                Json::Value root;
+                root["error"] = "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
             }
 
-            std::string output_type = "flamegraph";
-            if (!output_type_param.empty()) {
-                output_type = output_type_param;
-            }
+            // 保存到临时文件
+            std::string temp_file = "/tmp/heap_sample.prof";
+            std::ofstream out(temp_file);
+            out << heap_sample;
+            out.close();
 
-            std::cout << "Starting Heap analysis: duration=" << duration
-                      << "s, output_type=" << output_type << std::endl;
+            // 使用 pprof 生成 SVG
+            std::string exe_path = profiler.getExecutablePath();
+            std::string cmd = "./pprof --svg " + exe_path + " " + temp_file + " 2>&1";
+            std::string svg_content;
+            profiler.executeCommand(cmd, svg_content);
 
-            // 调用 analyzeHeapProfile（这是阻塞调用，会等待整个profiling过程完成）
-            std::string svg_content = profiler.analyzeHeapProfile(duration, output_type);
-
-            // 检查是否是错误响应（JSON格式的错误，更精确的检查）
-            if (svg_content.size() > 10 && svg_content[0] == '{' && svg_content[1] == '"') {
-                auto resp = HttpResponse::newHttpJsonResponse(Json::Value(svg_content));
+            // 检查结果
+            if (svg_content.empty() || svg_content.find("<svg>") == std::string::npos) {
+                Json::Value root;
+                root["error"] = "Failed to generate heap flame graph";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
                 resp->setStatusCode(k500InternalServerError);
                 callback(resp);
                 return;
@@ -824,7 +820,7 @@ int main(int argc, char* argv[]) {
             resp->addHeader("Content-Type", "image/svg+xml");
             callback(resp);
         },
-        {Get, Post}
+        {Get}
     );
 
     // Symbol resolution endpoint (类似 brpc pprof 的 /pprof/symbol)
