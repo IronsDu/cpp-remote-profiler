@@ -256,9 +256,43 @@ std::string ProfilerManager::resolveSymbolWithBackward(void* address)
 - `GET /api/cpu/analyze` ✅
 - `GET /api/heap/analyze` ✅
 
-**状态**: 实施中
+**状态**: ✅ 已完成（分支: remove-start-stop-interfaces）
 
-### 3. 实现 Go pprof 兼容接口 ✅
+### 3. 修复 Heap 分析接口 ✅
+
+#### 问题描述
+**接口**: `/api/heap/analyze` 无法生成火焰图
+- 原实现使用 `HeapProfilerStart()`，需要在程序启动时设置 HEAPPROFILE 环境变量
+- 不适合运行时分析
+
+#### 解决方案
+参考 brpc 实现，使用 `MallocExtension::GetHeapSample()` 直接获取 heap 采样：
+- 移除 duration 参数（heap profiling 不需要采样时长）
+- 直接调用 `getRawHeapSample()` 获取当前 heap 采样
+- 使用 pprof 生成 SVG 火焰图
+
+#### 变更内容
+1. **修改 `/api/heap/analyze` 接口** (`example/main.cpp`)
+   - 移除 duration 参数
+   - 直接调用 `getRawHeapSample()` 获取 heap sample
+   - 使用 pprof 绝对路径生成 SVG
+
+2. **修改 ProfilerManager** (`include/profiler_manager.h`)
+   - 将 `executeCommand()` 和 `getExecutablePath()` 改为 public
+   - 供 HTTP 处理器使用
+
+3. **修改 web 界面**
+   - `web/index.html`: 移除 heap 分析的 duration 输入框
+   - `web/show_heap_svg.html`: 直接调用 `/api/heap/analyze`（不带参数）
+   - `example/main.cpp`: 修改 `analyzeHeap()` 函数
+
+4. **修改 start.sh**
+   - 添加 `TCMALLOC_SAMPLE_PARAMETER=524288` 环境变量
+   - 启用 tcmalloc heap sampling 功能
+
+**状态**: ✅ 已完成（分支: remove-start-stop-interfaces）
+
+### 4. 实现 Go pprof 兼容接口 ✅
 
 #### 1.1 需要实现的接口
 - [ ] `GET /pprof/profile?seconds=N` - CPU profile

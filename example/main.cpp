@@ -797,9 +797,11 @@ int main(int argc, char* argv[]) {
             out << heap_sample;
             out.close();
 
-            // 使用 pprof 生成 SVG
+            // 使用 pprof 生成 SVG（使用绝对路径）
             std::string exe_path = profiler.getExecutablePath();
-            std::string cmd = "./pprof --svg " + exe_path + " " + temp_file + " 2>&1";
+            std::string pprof_path = "/home/dodo/cpp-remote-profiler/build/pprof";
+            std::string cmd = pprof_path + " --svg " + exe_path + " " + temp_file + " 2>&1";
+            std::cout << "Executing: " << cmd << std::endl;
             std::string svg_content;
             profiler.executeCommand(cmd, svg_content);
 
