@@ -140,7 +140,53 @@ env TCMALLOC_SAMPLE_PARAMETER=524288 ./profiler_example
 - [x] `GET /api/cpu/analyze?duration=N` - 采样并返回 SVG
 - [x] `GET /api/heap/analyze?duration=N` - 采样并返回 SVG
 
-#### 2.3 辅助接口 ✅
+**实现细节**:
+- CPU: 使用 `analyzeCPUProfile()` 进行采样和 SVG 生成
+- Heap: 使用 `getRawHeapSample()` 获取 heap sample，然后用 pprof 生成 SVG
+- SVG 后处理：添加 viewBox 属性修复负坐标问题，使浏览器正确显示
+
+#### 2.3 原始 SVG 下载接口 ✅
+- [x] `GET /api/cpu/svg_raw?duration=N` - 返回 pprof 生成的原始 CPU SVG（下载）
+- [x] `GET /api/heap/svg_raw` - 返回 pprof 生成的原始 Heap SVG（下载）
+
+**设计目的**:
+解决 `/api/cpu/analyze` 和 `/api/heap/analyze` 的 SVG 在浏览器中显示可能存在兼容性问题。用户可以下载原始 SVG，使用其他工具（如浏览器、Inkscape 等）打开查看。
+
+**与一键分析接口的区别**:
+| 特性 | `/api/cpu/analyze` | `/api/cpu/svg_raw` |
+|------|-------------------|-------------------|
+| SVG 处理 | 添加 viewBox 修复负坐标 | **不修改，返回原始 pprof 输出** |
+| Content-Disposition | inline（浏览器显示） | attachment（触发下载） |
+| pprof 输出处理 | 去除 pprof 信息输出 | **去除 pprof 信息输出** |
+| 使用场景 | 快速浏览器查看 | 下载后用专业工具分析 |
+
+**实现细节**:
+```cpp
+// CPU 原始 SVG
+std::string profile_data = profiler.getRawCPUProfile(duration);
+// 保存到临时文件
+std::string temp_file = "/tmp/cpu_raw.prof";
+// 使用 pprof 生成 SVG
+std::string cmd = "./pprof --svg " + exe_path + " " + temp_file + " 2>/dev/null";
+// 关键：提取纯 SVG 内容，去除 pprof 的信息输出（如 "Using local file..."）
+size_t svg_start = svg_content.find("<?xml");
+if (svg_start == std::string::npos) {
+    svg_start = svg_content.find("<svg");
+}
+if (svg_start != std::string::npos && svg_start > 0) {
+    svg_content = svg_content.substr(svg_start);
+}
+// 设置下载响应头
+resp->addHeader("Content-Disposition", "attachment; filename=cpu_profile.svg");
+```
+
+**关键技术点**:
+1. 使用 `2>/dev/null` 而非 `2>&1`，避免 pprof 的 stderr 输出混入 SVG
+2. 提取 SVG 开始位置（`<?xml` 或 `<svg>`），去除前导信息
+3. 设置 `Content-Disposition: attachment` 触发浏览器下载
+4. 不添加 viewBox 或任何其他修改，保持 pprof 原始输出
+
+#### 2.4 辅助接口 ✅
 - [x] `GET /api/status` - 全局状态
 - [x] `GET /api/list` - 列出所有 profile 文件
 
