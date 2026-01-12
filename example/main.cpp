@@ -368,6 +368,31 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
+    // Minimal SVG viewer page - no UI elements, just the SVG
+    app().registerHandler(
+        "/view_svg.html",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::ifstream htmlFile("../web/view_svg.html");
+            if (!htmlFile.is_open()) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setBody("<html><body><h1>Error: Cannot load view_svg.html</h1></body></html>");
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+            std::stringstream buffer;
+            buffer << htmlFile.rdbuf();
+            std::string html = buffer.str();
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(CT_TEXT_HTML);
+            callback(resp);
+        },
+        {Get}
+    );
+
 
     // CPU analyze endpoint - 一键式CPU分析（使用pprof生成SVG火焰图）
     app().registerHandler(

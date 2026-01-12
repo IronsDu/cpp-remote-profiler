@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { margin: 0; padding: 0; }
+        svg { display: block; }
+    </style>
+</head>
+<body>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const type = urlParams.get('type') || 'cpu';
+
+        function loadSVG() {
+            let apiUrl = '';
+            if (type === 'heap') {
+                apiUrl = '/api/heap/analyze';
+            } else {
+                const duration = urlParams.get('duration') || '10';
+                apiUrl = `/api/cpu/analyze?duration=${duration}`;
+            }
+
+            fetch(apiUrl)
+                .then(response => {
+                    const contentType = response.headers.get('Content-Type');
+                    if (contentType && contentType.includes('json')) {
+                        return response.json().then(data => {
+                            throw new Error(data.error || '未知错误');
+                        });
+                    }
+                    return response.text();
+                })
+                .then(svgText => {
+                    // 修复 pprof SVG 的负坐标 viewBox
+                    if (type === 'cpu') {
+                        svgText = svgText.replace(/viewBox="0 -1000 2000 1000"/g, 'viewBox="0 0 2000 1000"');
+                    }
+
+                    // 清空body并直接写入SVG
+                    document.body.innerHTML = svgText;
+
+                    // 移除可能存在的固定宽高
+                    const svg = document.querySelector('svg');
+                    if (svg) {
+                        svg.removeAttribute('width');
+                        svg.removeAttribute('height');
+                    }
+                })
+                .catch(error => {
+                    document.body.innerHTML = `
+                        <div style="padding: 20px; font-family: Arial, sans-serif;">
+                            <h2 style="color: #c62828;">❌ 加载失败</h2>
+                            <p>${error.message}</p>
+                        </div>
+                    `;
+                });
+        }
+
+        // 页面加载时直接加载SVG
+        window.addEventListener('load', loadSVG);
+    </script>
+</body>
+</html>
