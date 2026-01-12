@@ -477,6 +477,156 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
+    // CPU raw SVG endpoint - 返回pprof生成的原始SVG（不做任何修改）
+    app().registerHandler(
+        "/api/cpu/svg_raw",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            // 获取参数
+            auto duration_param = req->getParameter("duration");
+
+            // 默认值
+            int duration = 10;  // 默认10秒
+            if (!duration_param.empty()) {
+                try {
+                    duration = std::stoi(duration_param);
+                    if (duration < 1) duration = 1;
+                    if (duration > 300) duration = 300;  // 最多5分钟
+                } catch (const std::exception& e) {
+                    Json::Value root;
+                    root["error"] = "Invalid duration parameter";
+                    auto resp = HttpResponse::newHttpJsonResponse(root);
+                    resp->setStatusCode(k400BadRequest);
+                    callback(resp);
+                    return;
+                }
+            }
+
+            std::cout << "Starting CPU raw SVG generation: duration=" << duration << "s" << std::endl;
+
+            // 获取原始 CPU profile
+            std::string profile_data = profiler.getRawCPUProfile(duration);
+
+            if (profile_data.empty()) {
+                Json::Value root;
+                root["error"] = "Failed to generate CPU profile";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 保存到临时文件
+            std::string temp_file = "/tmp/cpu_raw.prof";
+            std::ofstream out(temp_file, std::ios::binary);
+            out.write(profile_data.data(), profile_data.size());
+            out.close();
+
+            // 使用 pprof 生成原始 SVG（不做任何修改）
+            std::string exe_path = profiler.getExecutablePath();
+            std::string pprof_path = "./pprof";
+            std::string cmd = pprof_path + " --svg " + exe_path + " " + temp_file + " 2>/dev/null";
+            std::cout << "Executing: " << cmd << std::endl;
+            std::string svg_content;
+            profiler.executeCommand(cmd, svg_content);
+
+            // 去掉 pprof 的信息输出，只保留 SVG 内容
+            // pprof 会在 SVG 前输出一些信息，需要找到 SVG 的开始位置
+            size_t svg_start = svg_content.find("<?xml");
+            if (svg_start == std::string::npos) {
+                svg_start = svg_content.find("<svg");
+            }
+            if (svg_start != std::string::npos && svg_start > 0) {
+                svg_content = svg_content.substr(svg_start);
+            }
+
+            // 检查结果（检查是否有 SVG 标签）
+            if (svg_content.empty() || svg_content.find("<svg") == std::string::npos) {
+                Json::Value root;
+                root["error"] = "Failed to generate SVG";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 返回原始SVG内容（不做任何修改）
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(svg_content);
+            resp->setContentTypeCode(CT_TEXT_XML);
+            resp->addHeader("Content-Type", "image/svg+xml");
+            // 添加 Content-Disposition 让浏览器下载文件
+            resp->addHeader("Content-Disposition", "attachment; filename=cpu_profile.svg");
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Heap raw SVG endpoint - 返回pprof生成的原始SVG（不做任何修改）
+    app().registerHandler(
+        "/api/heap/svg_raw",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::cout << "Starting Heap raw SVG generation..." << std::endl;
+
+            // 直接获取 heap sample
+            std::string heap_sample = profiler.getRawHeapSample();
+
+            if (heap_sample.empty()) {
+                Json::Value root;
+                root["error"] = "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 保存到临时文件
+            std::string temp_file = "/tmp/heap_raw.prof";
+            std::ofstream out(temp_file);
+            out << heap_sample;
+            out.close();
+
+            // 使用 pprof 生成原始 SVG（不做任何修改）
+            std::string exe_path = profiler.getExecutablePath();
+            std::string pprof_path = "./pprof";
+            std::string cmd = pprof_path + " --svg " + exe_path + " " + temp_file + " 2>/dev/null";
+            std::cout << "Executing: " << cmd << std::endl;
+            std::string svg_content;
+            profiler.executeCommand(cmd, svg_content);
+
+            // 去掉 pprof 的信息输出，只保留 SVG 内容
+            // pprof 会在 SVG 前输出一些信息，需要找到 SVG 的开始位置
+            size_t svg_start = svg_content.find("<?xml");
+            if (svg_start == std::string::npos) {
+                svg_start = svg_content.find("<svg");
+            }
+            if (svg_start != std::string::npos && svg_start > 0) {
+                svg_content = svg_content.substr(svg_start);
+            }
+
+            // 检查结果（检查是否有 SVG 标签）
+            if (svg_content.empty() || svg_content.find("<svg") == std::string::npos) {
+                Json::Value root;
+                root["error"] = "Failed to generate SVG";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 返回原始SVG内容（不做任何修改）
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(svg_content);
+            resp->setContentTypeCode(CT_TEXT_XML);
+            resp->addHeader("Content-Type", "image/svg+xml");
+            // 添加 Content-Disposition 让浏览器下载文件
+            resp->addHeader("Content-Disposition", "attachment; filename=heap_profile.svg");
+            callback(resp);
+        },
+        {Get}
+    );
+
     // Symbol resolution endpoint (类似 brpc pprof 的 /pprof/symbol)
     // 使用 backward-cpp 进行符号化，支持内联函数
     app().registerHandler(
