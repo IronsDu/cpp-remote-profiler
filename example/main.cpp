@@ -451,7 +451,7 @@ int main(int argc, char* argv[]) {
 
             // 使用 pprof 生成 SVG（使用绝对路径）
             std::string exe_path = profiler.getExecutablePath();
-            std::string pprof_path = "/home/dodo/cpp-remote-profiler/build/pprof";
+            std::string pprof_path = "./pprof";  // 使用相对路径，程序在 build 目录中运行
             std::string cmd = pprof_path + " --svg " + exe_path + " " + temp_file + " 2>&1";
             std::cout << "Executing: " << cmd << std::endl;
             std::string svg_content;

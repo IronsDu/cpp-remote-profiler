@@ -209,7 +209,9 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `heap_flamegraph_${duration}s.svg`;
+            // 使用时间戳生成文件名
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            a.download = `heap_flamegraph_${timestamp}.svg`;
             a.click();
             URL.revokeObjectURL(url);
         }
