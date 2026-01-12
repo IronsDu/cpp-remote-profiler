@@ -41,15 +41,11 @@ include_directories(${Protobuf_INCLUDE_DIRS})
 # Source files
 set(PROFILER_SOURCES
     src/profiler_manager.cpp
-    src/stack_collector.cpp
-    src/profile_parser.cpp
     src/symbolize.cpp
 )
 
 set(PROFILER_HEADERS
     include/profiler_manager.h
-    include/stack_collector.h
-    include/profile_parser.h
     include/symbolize.h
 )
 
@@ -89,27 +85,16 @@ target_link_libraries(profiler_example
 # Tests
 enable_testing()
 
-# 编译测试
-add_executable(profiler_test tests/profiler_test.cpp ${PROTO_FILES})
-target_link_libraries(profiler_test
+# CPU profile 测试
+add_executable(test_cpu_profile tests/test_cpu_profile.cpp ${PROTO_FILES})
+target_link_libraries(test_cpu_profile
     profiler_lib
     GTest::gtest
     GTest::gtest_main
     pthread
 )
 
-add_test(NAME ProfilerTest COMMAND profiler_test)
-
-# CPU profile 解析测试
-add_executable(cpu_profile_test tests/test_cpu_profile.cpp ${PROTO_FILES})
-target_link_libraries(cpu_profile_test
-    profiler_lib
-    GTest::gtest
-    GTest::gtest_main
-    pthread
-)
-
-add_test(NAME CPUProfileTest COMMAND cpu_profile_test)
+add_test(NAME CPUProfileTest COMMAND test_cpu_profile)
 
 # Full flow 测试
 add_executable(test_full_flow tests/test_full_flow.cpp ${PROTO_FILES})
@@ -121,7 +106,6 @@ target_link_libraries(test_full_flow
 )
 
 add_test(NAME FullFlowTest COMMAND test_full_flow)
-
 
 # Copy web files to build directory
 file(COPY ${PROJECT_SOURCE_DIR}/web DESTINATION ${CMAKE_BINARY_DIR})
