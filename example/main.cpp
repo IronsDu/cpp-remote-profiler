@@ -243,7 +243,7 @@ void memoryIntensiveTask() {
 
 // HTML 网页
 std::string getWebPage() {
-    std::ifstream htmlFile("web/index.html");
+    std::ifstream htmlFile("../web/index.html");
     if (!htmlFile.is_open()) {
         std::cerr << "Error: Cannot open web/index.html" << std::endl;
         return "<html><body><h1>Error: Cannot load index.html</h1></body></html>";
@@ -303,130 +303,6 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
-    app().registerHandler(
-        "/api/cpu/start",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            Json::Value root;
-            bool success = profiler.startCPUProfiler();
-
-            root["success"] = success;
-            if (success) {
-                root["message"] = "CPU profiler started successfully";
-                auto state = profiler.getProfilerState(profiler::ProfilerType::CPU);
-                root["output_path"] = state.output_path;
-
-                // 检查是否有 duration 参数
-                auto duration_param = req->getParameter("duration");
-                if (!duration_param.empty()) {
-                    try {
-                        int duration_sec = std::stoi(duration_param);
-                        int duration_ms = duration_sec * 1000;
-                        root["duration_ms"] = duration_ms;
-
-                        // 在新线程中定时停止 profiler
-                        std::thread([duration_ms]() {
-                            std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
-                            profiler::ProfilerManager::getInstance().stopCPUProfiler();
-                        }).detach();
-                    } catch (const std::exception& e) {
-                        root["warning"] = "Invalid duration parameter, profiler will run until manually stopped";
-                    }
-                }
-            } else {
-                root["message"] = "Failed to start CPU profiler (may already be running)";
-            }
-
-            auto resp = HttpResponse::newHttpJsonResponse(root);
-            callback(resp);
-        },
-        {Post}
-    );
-
-    app().registerHandler(
-        "/api/cpu/stop",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            Json::Value root;
-            bool success = profiler.stopCPUProfiler();
-
-            root["success"] = success;
-            if (success) {
-                root["message"] = "CPU profiler stopped successfully";
-                auto state = profiler.getProfilerState(profiler::ProfilerType::CPU);
-                root["output_path"] = state.output_path;
-                root["duration_ms"] = static_cast<Json::Int64>(state.duration);
-            } else {
-                root["message"] = "Failed to stop CPU profiler (may not be running)";
-            }
-
-            auto resp = HttpResponse::newHttpJsonResponse(root);
-            callback(resp);
-        },
-        {Post}
-    );
-
-    app().registerHandler(
-        "/api/heap/start",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            Json::Value root;
-            bool success = profiler.startHeapProfiler();
-
-            root["success"] = success;
-            if (success) {
-                root["message"] = "Heap profiler started successfully";
-                auto state = profiler.getProfilerState(profiler::ProfilerType::HEAP);
-                root["output_path"] = state.output_path;
-
-                // 检查是否有 duration 参数
-                auto duration_param = req->getParameter("duration");
-                if (!duration_param.empty()) {
-                    try {
-                        int duration_ms = std::stoi(duration_param) * 1000;
-                        root["duration_ms"] = duration_ms;
-
-                        // 在新线程中定时停止 profiler
-                        std::thread([duration_ms, &profiler]() {
-                            std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
-                            profiler.stopHeapProfiler();
-                        }).detach();
-                    } catch (const std::exception& e) {
-                        root["warning"] = "Invalid duration parameter, profiler will run until manually stopped";
-                    }
-                }
-            } else {
-                root["message"] = "Failed to start Heap profiler (may already be running)";
-            }
-
-            auto resp = HttpResponse::newHttpJsonResponse(root);
-            callback(resp);
-        },
-        {Post}
-    );
-
-    app().registerHandler(
-        "/api/heap/stop",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            Json::Value root;
-            bool success = profiler.stopHeapProfiler();
-
-            root["success"] = success;
-            if (success) {
-                root["message"] = "Heap profiler stopped successfully";
-                auto state = profiler.getProfilerState(profiler::ProfilerType::HEAP);
-                root["output_path"] = state.output_path;
-                root["duration_ms"] = static_cast<Json::Int64>(state.duration);
-            } else {
-                root["message"] = "Failed to stop Heap profiler (may not be running)";
-            }
-
-            auto resp = HttpResponse::newHttpJsonResponse(root);
-            callback(resp);
-        },
-        {Post}
-    );
 
     app().registerHandler(
         "/",
@@ -441,80 +317,13 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
-    // Flame graph viewer page
-    app().registerHandler(
-        "/flamegraph",
-        [](const HttpRequestPtr& req,
-           std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::ifstream htmlFile("web/flamegraph.html");
-            if (!htmlFile.is_open()) {
-                auto resp = HttpResponse::newHttpResponse();
-                resp->setBody("<html><body><h1>Error: Cannot load flamegraph.html</h1></body></html>");
-                resp->setStatusCode(k500InternalServerError);
-                callback(resp);
-                return;
-            }
-            std::stringstream buffer;
-            buffer << htmlFile.rdbuf();
-            std::string html = buffer.str();
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(html);
-            resp->setContentTypeCode(CT_TEXT_HTML);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Browser rendering test page
-    app().registerHandler(
-        "/test",
-        [](const HttpRequestPtr& req,
-           std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::ifstream htmlFile("../tests/test_browser_rendering.html");
-            std::stringstream buffer;
-            buffer << htmlFile.rdbuf();
-            std::string html = buffer.str();
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(html);
-            resp->setContentTypeCode(CT_TEXT_HTML);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Debug page
-    app().registerHandler(
-        "/debug",
-        [](const HttpRequestPtr& req,
-           std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::ifstream htmlFile("web/debug.html");
-            if (!htmlFile.is_open()) {
-                auto resp = HttpResponse::newHttpResponse();
-                resp->setBody("<html><body><h1>Error: Cannot load debug.html</h1></body></html>");
-                resp->setStatusCode(k500InternalServerError);
-                callback(resp);
-                return;
-            }
-            std::stringstream buffer;
-            buffer << htmlFile.rdbuf();
-            std::string html = buffer.str();
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(html);
-            resp->setContentTypeCode(CT_TEXT_HTML);
-            callback(resp);
-        },
-        {Get}
-    );
 
     // SVG flame graph viewer page
     app().registerHandler(
         "/show_svg.html",
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::ifstream htmlFile("web/show_svg.html");
+            std::ifstream htmlFile("../web/show_svg.html");
             if (!htmlFile.is_open()) {
                 auto resp = HttpResponse::newHttpResponse();
                 resp->setBody("<html><body><h1>Error: Cannot load show_svg.html</h1></body></html>");
@@ -539,7 +348,7 @@ int main(int argc, char* argv[]) {
         "/show_heap_svg.html",
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::ifstream htmlFile("web/show_heap_svg.html");
+            std::ifstream htmlFile("../web/show_heap_svg.html");
             if (!htmlFile.is_open()) {
                 auto resp = HttpResponse::newHttpResponse();
                 resp->setBody("<html><body><h1>Error: Cannot load show_heap_svg.html</h1></body></html>");
@@ -559,287 +368,6 @@ int main(int argc, char* argv[]) {
         {Get}
     );
 
-    // 下载 CPU profile (pprof 格式)
-    app().registerHandler(
-        "/api/cpu/pprof",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto state = profiler.getProfilerState(profiler::ProfilerType::CPU);
-
-            std::ifstream file(state.output_path, std::ios::binary);
-            if (!file.is_open()) {
-                Json::Value root;
-                root["error"] = "Cannot open CPU profile file";
-                auto resp = HttpResponse::newHttpJsonResponse(root);
-                callback(resp);
-                return;
-            }
-
-            std::ostringstream oss;
-            oss << file.rdbuf();
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(oss.str());
-            resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
-            resp->addHeader("Content-Disposition", "attachment; filename=cpu.prof");
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // 下载 Heap profile (pprof 格式)
-    app().registerHandler(
-        "/api/heap/pprof",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string profileData = profiler.getHeapProfileData();
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(profileData);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            resp->addHeader("Content-Disposition", "attachment; filename=heap.prof");
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // CPU profile (raw protobuf prof file for frontend)
-    app().registerHandler(
-        "/api/cpu/profile",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto state = profiler.getProfilerState(profiler::ProfilerType::CPU);
-
-            std::ifstream file(state.output_path, std::ios::binary);
-            if (!file.is_open()) {
-                Json::Value root;
-                root["error"] = "Cannot open CPU profile file: " + state.output_path;
-                auto resp = HttpResponse::newHttpJsonResponse(root);
-                resp->setStatusCode(k404NotFound);
-                callback(resp);
-                return;
-            }
-
-            std::ostringstream oss;
-            oss << file.rdbuf();
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(oss.str());
-            resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Heap profile (raw prof file for frontend)
-    app().registerHandler(
-        "/api/heap/profile",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto heapState = profiler.getProfilerState(profiler::ProfilerType::HEAP);
-            std::ifstream file(heapState.output_path);
-            if (!file.is_open()) {
-                Json::Value root;
-                root["error"] = "Cannot open heap profile file: " + heapState.output_path;
-                auto resp = HttpResponse::newHttpJsonResponse(root);
-                resp->setStatusCode(k404NotFound);
-                callback(resp);
-                return;
-            }
-
-            std::stringstream buffer;
-            buffer << file.rdbuf();
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(buffer.str());
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // CPU profile JSON (用于前端火焰图渲染)
-    app().registerHandler(
-        "/api/cpu/json",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string jsonData = profiler.getProfileAsJSON("cpu");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(jsonData);
-            resp->setContentTypeCode(CT_APPLICATION_JSON);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Heap profile JSON (用于前端火焰图渲染)
-    app().registerHandler(
-        "/api/heap/json",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string jsonData = profiler.getProfileAsJSON("heap");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(jsonData);
-            resp->setContentTypeCode(CT_APPLICATION_JSON);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // CPU collapsed stacks for flame graph (deprecated)
-    app().registerHandler(
-        "/api/cpu/collapsed",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string collapsedData = profiler.getCollapsedStacks("cpu");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(collapsedData);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // CPU profile address stacks (for new architecture)
-    app().registerHandler(
-        "/api/cpu/addresses",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string addressData = profiler.getCPUProfileAddresses();
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(addressData);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Heap collapsed stacks for flame graph
-    app().registerHandler(
-        "/api/heap/collapsed",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string collapsedData = profiler.getCollapsedStacks("heap");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(collapsedData);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Debug endpoint - 直接返回heap.prof文件内容
-    app().registerHandler(
-        "/debug/heap/raw",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            auto heapState = profiler.getProfilerState(profiler::ProfilerType::HEAP);
-            std::ifstream file(heapState.output_path);
-            std::stringstream buffer;
-            buffer << file.rdbuf();
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(buffer.str());
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // CPU flame graph data (层次化的火焰图数据) - 保持兼容
-    app().registerHandler(
-        "/api/cpu/flamegraph",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string jsonData = profiler.getFlameGraphData("cpu");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(jsonData);
-            resp->setContentTypeCode(CT_APPLICATION_JSON);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Heap flame graph data - 保持兼容
-    app().registerHandler(
-        "/api/heap/flamegraph",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string jsonData = profiler.getFlameGraphData("heap");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(jsonData);
-            resp->setContentTypeCode(CT_APPLICATION_JSON);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // CPU text profile (for debugging)
-    app().registerHandler(
-        "/api/cpu/text",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string collapsedData = profiler.getProfileSamples("cpu");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(collapsedData);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Heap text profile (for debugging)
-    app().registerHandler(
-        "/api/heap/text",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string collapsedData = profiler.getProfileSamples("heap");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(collapsedData);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // CPU profile samples (addresses for frontend rendering)
-    app().registerHandler(
-        "/api/cpu/samples",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string jsonData = profiler.getProfileSamples("cpu");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(jsonData);
-            resp->setContentTypeCode(CT_APPLICATION_JSON);
-            callback(resp);
-        },
-        {Get}
-    );
-
-    // Heap profile samples
-    app().registerHandler(
-        "/api/heap/samples",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::string jsonData = profiler.getProfileSamples("heap");
-
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(jsonData);
-            resp->setContentTypeCode(CT_APPLICATION_JSON);
-            callback(resp);
-        },
-        {Get}
-    );
 
     // CPU analyze endpoint - 一键式CPU分析（使用pprof生成SVG火焰图）
     app().registerHandler(
@@ -901,41 +429,39 @@ int main(int argc, char* argv[]) {
         "/api/heap/analyze",
         [&profiler](const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
-            // 获取参数
-            auto duration_param = req->getParameter("duration");
-            auto output_type_param = req->getParameter("output_type");
+            std::cout << "Starting Heap analysis (using GetHeapSample)..." << std::endl;
 
-            // 默认值
-            int duration = 10;  // 默认10秒
-            if (!duration_param.empty()) {
-                try {
-                    duration = std::stoi(duration_param);
-                    if (duration < 1) duration = 1;
-                    if (duration > 300) duration = 300;  // 最多5分钟
-                } catch (const std::exception& e) {
-                    Json::Value root;
-                    root["error"] = "Invalid duration parameter";
-                    auto resp = HttpResponse::newHttpJsonResponse(root);
-                    resp->setStatusCode(k400BadRequest);
-                    callback(resp);
-                    return;
-                }
+            // 直接获取 heap sample（不需要 duration）
+            std::string heap_sample = profiler.getRawHeapSample();
+
+            if (heap_sample.empty()) {
+                Json::Value root;
+                root["error"] = "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
             }
 
-            std::string output_type = "flamegraph";
-            if (!output_type_param.empty()) {
-                output_type = output_type_param;
-            }
+            // 保存到临时文件
+            std::string temp_file = "/tmp/heap_sample.prof";
+            std::ofstream out(temp_file);
+            out << heap_sample;
+            out.close();
 
-            std::cout << "Starting Heap analysis: duration=" << duration
-                      << "s, output_type=" << output_type << std::endl;
+            // 使用 pprof 生成 SVG（使用绝对路径）
+            std::string exe_path = profiler.getExecutablePath();
+            std::string pprof_path = "./pprof";  // 使用相对路径，程序在 build 目录中运行
+            std::string cmd = pprof_path + " --svg " + exe_path + " " + temp_file + " 2>&1";
+            std::cout << "Executing: " << cmd << std::endl;
+            std::string svg_content;
+            profiler.executeCommand(cmd, svg_content);
 
-            // 调用 analyzeHeapProfile（这是阻塞调用，会等待整个profiling过程完成）
-            std::string svg_content = profiler.analyzeHeapProfile(duration, output_type);
-
-            // 检查是否是错误响应（JSON格式的错误，更精确的检查）
-            if (svg_content.size() > 10 && svg_content[0] == '{' && svg_content[1] == '"') {
-                auto resp = HttpResponse::newHttpJsonResponse(Json::Value(svg_content));
+            // 检查结果（检查是否有 SVG 标签）
+            if (svg_content.empty() || svg_content.find("<svg") == std::string::npos) {
+                Json::Value root;
+                root["error"] = "Failed to generate heap flame graph";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
                 resp->setStatusCode(k500InternalServerError);
                 callback(resp);
                 return;
@@ -948,7 +474,7 @@ int main(int argc, char* argv[]) {
             resp->addHeader("Content-Type", "image/svg+xml");
             callback(resp);
         },
-        {Get, Post}
+        {Get}
     );
 
     // Symbol resolution endpoint (类似 brpc pprof 的 /pprof/symbol)

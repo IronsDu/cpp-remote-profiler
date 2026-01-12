@@ -133,16 +133,6 @@
         <div class="section">
             <h2>CPU Profiler</h2>
             <div>
-                <span id="cpu-status" class="status stopped">已停止</span>
-                <button id="cpu-start" onclick="startCPU()">启动 CPU Profiler</button>
-                <button id="cpu-stop" class="stop-btn" onclick="stopCPU()" disabled>停止</button>
-                <button class="view-btn" onclick="openFlameGraph('cpu')">🎨 交互式火焰图</button>
-                <button class="view-btn" onclick="viewCPUSVG()">🔥 查看SVG火焰图</button>
-                <button class="view-btn" onclick="viewCPUText()">查看文本分析</button>
-                <button class="view-btn" onclick="downloadCPUProfile()">下载 Profile</button>
-            </div>
-            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
-                <strong>🚀 一键式分析（简单方案）</strong><br>
                 <div class="input-group">
                     <label for="cpu-duration">采样时长(秒):</label>
                     <input type="number" id="cpu-duration" value="10" min="1" max="300">
@@ -154,21 +144,7 @@
         <div class="section">
             <h2>Heap Profiler</h2>
             <div>
-                <span id="heap-status" class="status stopped">已停止</span>
-                <button id="heap-start" onclick="startHeap()">启动 Heap Profiler</button>
-                <button id="heap-stop" class="stop-btn" onclick="stopHeap()" disabled>停止</button>
-                <button class="view-btn" onclick="openFlameGraph('heap')">🎨 交互式火焰图</button>
-                <button class="view-btn" onclick="viewHeapSVG()">🔥 查看SVG火焰图</button>
-                <button class="view-btn" onclick="viewHeapText()">查看文本分析</button>
-                <button class="view-btn" onclick="downloadHeapProfile()">下载 Profile</button>
-            </div>
-            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
-                <strong>🚀 一键式分析（简单方案）</strong><br>
-                <div class="input-group">
-                    <label for="heap-duration">采样时长(秒):</label>
-                    <input type="number" id="heap-duration" value="10" min="1" max="300">
-                </div>
-                <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成SVG火焰图</button>
+                <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成Heap火焰图</button>
             </div>
         </div>
 
@@ -179,132 +155,6 @@
     </div>
 
     <script>
-        let statusCheckInterval;
-
-        async function fetchStatus() {
-            const response = await fetch('/api/status');
-            const data = await response.json();
-
-            // Update CPU status
-            const cpuStatus = document.getElementById('cpu-status');
-            const cpuStart = document.getElementById('cpu-start');
-            const cpuStop = document.getElementById('cpu-stop');
-
-            if (data.cpu.running) {
-                cpuStatus.textContent = '运行中';
-                cpuStatus.className = 'status running';
-                cpuStart.disabled = true;
-                cpuStop.disabled = false;
-            } else {
-                cpuStatus.textContent = '已停止';
-                cpuStatus.className = 'status stopped';
-                cpuStart.disabled = false;
-                cpuStop.disabled = true;
-            }
-
-            // Update Heap status
-            const heapStatus = document.getElementById('heap-status');
-            const heapStart = document.getElementById('heap-start');
-            const heapStop = document.getElementById('heap-stop');
-
-            if (data.heap.running) {
-                heapStatus.textContent = '运行中';
-                heapStatus.className = 'status running';
-                heapStart.disabled = true;
-                heapStop.disabled = false;
-            } else {
-                heapStatus.textContent = '已停止';
-                heapStatus.className = 'status stopped';
-                heapStart.disabled = false;
-                heapStop.disabled = true;
-            }
-        }
-
-        async function startCPU() {
-            log('正在启动 CPU profiler...');
-            const response = await fetch('/api/cpu/start', { method: 'POST' });
-            const data = await response.json();
-            log(data.message);
-            fetchStatus();
-        }
-
-        async function stopCPU() {
-            log('正在停止 CPU profiler...');
-            const response = await fetch('/api/cpu/stop', { method: 'POST' });
-            const data = await response.json();
-            log(data.message + ' (耗时: ' + data.duration_ms + 'ms)');
-            fetchStatus();
-        }
-
-        async function startHeap() {
-            log('正在启动 Heap profiler...');
-            const response = await fetch('/api/heap/start', { method: 'POST' });
-            const data = await response.json();
-            log(data.message);
-            fetchStatus();
-        }
-
-        async function stopHeap() {
-            log('正在停止 Heap profiler...');
-            const response = await fetch('/api/heap/stop', { method: 'POST' });
-            const data = await response.json();
-            log(data.message + ' (耗时: ' + data.duration_ms + 'ms)');
-            fetchStatus();
-        }
-
-        async function viewCPUText() {
-            log('正在获取 CPU profile 文本格式...\n');
-            const response = await fetch('/api/cpu/text');
-            const text = await response.text();
-
-            // 如果返回错误信息
-            if (text.includes('error:') || text.includes('Error')) {
-                log(text);
-            } else {
-                log(text);
-            }
-        }
-
-        async function viewHeapText() {
-            log('正在获取 Heap profile 文本格式...\n');
-            const response = await fetch('/api/heap/text');
-            const text = await response.text();
-
-            if (text.includes('error:') || text.includes('Error')) {
-                log(text);
-            } else {
-                log(text);
-            }
-        }
-
-        function downloadCPUProfile() {
-            window.open('/api/cpu/pprof', '_blank');
-            log('CPU profile 下载已开始');
-        }
-
-        function downloadHeapProfile() {
-            window.open('/api/heap/pprof', '_blank');
-            log('Heap profile 下载已开始');
-        }
-
-        function viewCPUSVG() {
-            log('正在获取 CPU 火焰图...');
-            window.open('/api/cpu/svg', '_blank');
-            log('CPU 火焰图已在新标签页打开');
-        }
-
-        function viewHeapSVG() {
-            log('正在获取 Heap 火焰图...');
-            window.open('/api/heap/svg', '_blank');
-            log('Heap 火焰图已在新标签页打开');
-        }
-
-        function openFlameGraph(type) {
-            log('正在打开交互式火焰图查看器...');
-            window.open('/flamegraph?type=' + type, '_blank');
-            log('交互式火焰图已在新标签页打开');
-        }
-
         function analyzeCPU() {
             const duration = document.getElementById('cpu-duration').value;
             log(`🚀 正在进行CPU分析，采样时长: ${duration}秒...\n(这可能需要一些时间，请耐心等待)`);
@@ -320,27 +170,17 @@
         }
 
         function analyzeHeap() {
-            const duration = document.getElementById('heap-duration').value;
-            log(`🚀 正在进行Heap分析，采样时长: ${duration}秒...\n(这可能需要一些时间，请耐心等待)`);
-            document.getElementById('heap-duration').disabled = true;
-
-            // 打开独立的SVG查看器页面
-            window.open(`/show_heap_svg.html?duration=${duration}`, '_blank');
-
+            log('🚀 正在获取Heap火焰图...');
+            // 打开独立的SVG查看器页面（不需要duration参数）
+            window.open('/show_heap_svg.html', '_blank');
             log('✅ Heap火焰图查看器已在新标签页打开');
             log('💡 提示：图表中显示内存分配情况');
-
-            document.getElementById('heap-duration').disabled = false;
         }
 
         function log(message) {
             const output = document.getElementById('output');
             output.textContent = message;
         }
-
-        // Start polling status
-        fetchStatus();
-        statusCheckInterval = setInterval(fetchStatus, 1000);
     </script>
 </body>
 </html>

@@ -99,14 +99,16 @@ public:
     // Returns heap sample in text format (compatible with pprof)
     std::string getRawHeapSample();
 
+    // Helper methods (public for use in HTTP handlers)
+    bool executeCommand(const std::string& cmd, std::string& output);
+    std::string getExecutablePath();
+
 private:
     ProfilerManager();
     ~ProfilerManager();
     ProfilerManager(const ProfilerManager&) = delete;
     ProfilerManager& operator=(const ProfilerManager&) = delete;
 
-    bool executeCommand(const std::string& cmd, std::string& output);
-    std::string getExecutablePath();
     std::string findLatestHeapProfile(const std::string& dir);
 
     std::string profile_dir_;

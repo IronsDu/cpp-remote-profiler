@@ -54,9 +54,6 @@
     <div id="svg-container">加载中...</div>
 
     <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const duration = urlParams.get('duration') || '10';
-
         let currentZoom = 1.0;
         let svgElement = null;
         let viewportElement = null;
@@ -64,7 +61,8 @@
         function loadSVG() {
             document.getElementById('svg-container').innerHTML = '正在加载Heap火焰图...';
 
-            fetch(`/api/heap/analyze?duration=${duration}`)
+            // Heap分析不需要duration参数，直接调用接口
+            fetch('/api/heap/analyze')
                 .then(response => {
                     const contentType = response.headers.get('Content-Type');
                     if (contentType && contentType.includes('json')) {
@@ -211,7 +209,9 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `heap_flamegraph_${duration}s.svg`;
+            // 使用时间戳生成文件名
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            a.download = `heap_flamegraph_${timestamp}.svg`;
             a.click();
             URL.revokeObjectURL(url);
         }
