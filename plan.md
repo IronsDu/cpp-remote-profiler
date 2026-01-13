@@ -920,6 +920,34 @@ show_heap_svg.html (Heap 火焰图)
 
 ## 更新日志
 
+### 2026-01-13
+- 🔄 **重大重构**: 代码组织优化，支持作为库使用
+  - **目录结构重构**:
+    - 创建 `src/web_resources.cpp` - 嵌入所有 HTML 页面到 C++ 代码
+    - 创建 `src/web_server.cpp` - 提取所有 HTTP 路由处理
+    - 创建 `include/web_resources.h` 和 `include/web_server.h` - 库接口
+    - 创建 `example/workload.cpp` 和 `example/workload.h` - 示例工作负载代码
+    - 简化 `example/main.cpp` - 从 772 行减少到 45 行，只保留主入口
+  - **Web 资源嵌入**:
+    - 所有 HTML 页面（index.html, show_svg.html, show_heap_svg.html）嵌入到 C++ 代码
+    - 删除 `web/` 目录，用户无需拷贝静态文件
+    - 通过 `WebResources::getIndexPage()` 等函数访问嵌入的内容
+  - **库的使用方式**:
+    - **方式 1（Web 界面）**: 链接库，调用 `profiler::registerHttpHandlers()` 启动 Web 服务
+    - **方式 2（核心库）**: 只链接 `profiler_lib`，直接调用 `ProfilerManager` API
+  - **编译系统更新**:
+    - 更新 `CMakeLists.txt`，添加新源文件到库
+    - 移除复制 web 目录的命令
+  - **测试验证**:
+    - ✅ 编译成功（23MB 可执行文件）
+    - ✅ 服务器启动成功，所有页面正常访问
+    - ✅ API 接口正常工作
+    - ✅ HTML 内容已正确嵌入到代码中
+- ✅ 添加主页面下载按钮功能
+  - 在 CPU 和 Heap section 各添加橙色下载按钮
+  - 实现下载状态管理和用户提示
+  - CPU 和 Heap 可同时下载（独立状态管理）
+
 ### 2026-01-11
 - 🔄 **架构调整**: 采用 Go pprof 标准接口设计
   - 计划实现 `/pprof/profile` 和 `/pprof/heap` 标准接口
@@ -939,6 +967,6 @@ show_heap_svg.html (Heap 火焰图)
 
 ---
 
-**文档版本**: 1.0
-**最后更新**: 2026-01-11
+**文档版本**: 1.1
+**最后更新**: 2026-01-13
 **维护者**: Claude Code
