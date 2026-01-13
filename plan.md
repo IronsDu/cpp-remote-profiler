@@ -186,6 +186,86 @@ resp->addHeader("Content-Disposition", "attachment; filename=cpu_profile.svg");
 3. 设置 `Content-Disposition: attachment` 触发浏览器下载
 4. 不添加 viewBox 或任何其他修改，保持 pprof 原始输出
 
+#### 2.3.1 主页面下载按钮 ✅
+**功能描述**:
+在主页面 (`web/index.html`) 添加两个按钮，用于直接下载原始 SVG 文件，无需打开新标签页。
+
+**实现细节**:
+1. **UI 设计**:
+   - 橙色下载按钮 (`#FF9800`)，区别于紫色分析按钮
+   - 下载中显示 `⏳ 下载中...` 并禁用按钮
+   - 完成后恢复按钮并显示成功/失败提示
+   - CPU 和 Heap 可同时下载（各自独立管理状态）
+
+2. **JavaScript 实现**:
+   ```javascript
+   function downloadCPURawSVG() {
+       const duration = document.getElementById('cpu-duration').value;
+       const btn = document.getElementById('cpu-download-btn');
+
+       // 1. 禁用按钮，显示下载中状态
+       btn.disabled = true;
+       btn.textContent = '⏳ 下载中...';
+       log(`📥 正在下载 CPU 原始 SVG (采样时长: ${duration}秒)...`);
+
+       // 2. 使用 fetch 下载文件
+       fetch(`/api/cpu/svg_raw?duration=${duration}`)
+           .then(response => {
+               if (!response.ok) throw new Error('下载失败');
+               return response.blob();
+           })
+           .then(blob => {
+               // 3. 创建下载链接并触发下载
+               const url = URL.createObjectURL(blob);
+               const a = document.createElement('a');
+               a.href = url;
+               a.download = `cpu_profile_${duration}s.svg`;
+               a.click();
+               URL.revokeObjectURL(url);
+
+               // 4. 恢复按钮，显示成功
+               btn.disabled = false;
+               btn.textContent = '📥 下载 CPU 原始 SVG';
+               log('✅ CPU 原始 SVG 下载完成');
+           })
+           .catch(error => {
+               // 5. 错误处理
+               btn.disabled = false;
+               btn.textContent = '📥 下载 CPU 原始 SVG';
+               log(`❌ CPU 原始 SVG 下载失败: ${error.message}`);
+           });
+   }
+
+   // Heap 同理
+   function downloadHeapRawSVG() { ... }
+   ```
+
+3. **CSS 样式**:
+   ```css
+   .download-btn {
+       background-color: #FF9800;
+   }
+   .download-btn:hover {
+       background-color: #F57C00;
+   }
+   button:disabled {
+       background-color: #cccccc;
+       cursor: not-allowed;
+       opacity: 0.6;
+   }
+   ```
+
+4. **环境变量配置**:
+   - 设置 `TCMALLOC_SAMPLE_PARAMETER=524288` (512KB)
+   - 在启动 profiler_example 时设置此环境变量
+   - 确保 Heap Profiling 功能正常工作
+
+**测试验证**:
+- ✅ CPU 原始 SVG 下载成功（HTTP 200，文件格式正确）
+- ✅ Heap 原始 SVG 下载成功（HTTP 200，文件格式正确）
+- ✅ 按钮状态切换正常（禁用/恢复）
+- ✅ 独立状态管理（CPU 和 Heap 可同时下载）
+
 #### 2.4 辅助接口 ✅
 - [x] `GET /api/status` - 全局状态
 - [x] `GET /api/list` - 列出所有 profile 文件

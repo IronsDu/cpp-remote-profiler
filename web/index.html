@@ -47,6 +47,7 @@
         button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
+            opacity: 0.6;
         }
         .stop-btn {
             background-color: #f44336;
@@ -110,6 +111,12 @@
         .analyze-btn:hover {
             background-color: #7B1FA2;
         }
+        .download-btn {
+            background-color: #FF9800;
+        }
+        .download-btn:hover {
+            background-color: #F57C00;
+        }
         .input-group {
             display: inline-block;
             margin: 5px;
@@ -138,6 +145,7 @@
                     <input type="number" id="cpu-duration" value="10" min="1" max="300">
                 </div>
                 <button class="analyze-btn" onclick="analyzeCPU()">⚡ 一键分析并生成SVG火焰图</button>
+                <button class="download-btn" id="cpu-download-btn" onclick="downloadCPURawSVG()">📥 下载 CPU 原始 SVG</button>
             </div>
         </div>
 
@@ -145,6 +153,7 @@
             <h2>Heap Profiler</h2>
             <div>
                 <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成Heap火焰图</button>
+                <button class="download-btn" id="heap-download-btn" onclick="downloadHeapRawSVG()">📥 下载 Heap 原始 SVG</button>
             </div>
         </div>
 
@@ -180,6 +189,84 @@
         function log(message) {
             const output = document.getElementById('output');
             output.textContent = message;
+        }
+
+        function downloadCPURawSVG() {
+            const duration = document.getElementById('cpu-duration').value;
+            const btn = document.getElementById('cpu-download-btn');
+
+            // 禁用按钮，显示下载中状态
+            btn.disabled = true;
+            btn.textContent = '⏳ 下载中...';
+            log(`📥 正在下载 CPU 原始 SVG (采样时长: ${duration}秒)...`);
+
+            // 使用 fetch 下载文件
+            fetch(`/api/cpu/svg_raw?duration=${duration}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    // 创建下载链接
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `cpu_profile_${duration}s.svg`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+
+                    // 恢复按钮，显示成功
+                    btn.disabled = false;
+                    btn.textContent = '📥 下载 CPU 原始 SVG';
+                    log('✅ CPU 原始 SVG 下载完成');
+                })
+                .catch(error => {
+                    // 错误处理
+                    btn.disabled = false;
+                    btn.textContent = '📥 下载 CPU 原始 SVG';
+                    log(`❌ CPU 原始 SVG 下载失败: ${error.message}`);
+                });
+        }
+
+        function downloadHeapRawSVG() {
+            const btn = document.getElementById('heap-download-btn');
+
+            // 禁用按钮，显示下载中状态
+            btn.disabled = true;
+            btn.textContent = '⏳ 下载中...';
+            log('📥 正在下载 Heap 原始 SVG...');
+
+            // 使用 fetch 下载文件
+            fetch('/api/heap/svg_raw')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    // 创建下载链接
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                    a.download = `heap_profile_${timestamp}.svg`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+
+                    // 恢复按钮，显示成功
+                    btn.disabled = false;
+                    btn.textContent = '📥 下载 Heap 原始 SVG';
+                    log('✅ Heap 原始 SVG 下载完成');
+                })
+                .catch(error => {
+                    // 错误处理
+                    btn.disabled = false;
+                    btn.textContent = '📥 下载 Heap 原始 SVG';
+                    log(`❌ Heap 原始 SVG 下载失败: ${error.message}`);
+                });
         }
     </script>
 </body>
