@@ -42,11 +42,15 @@ include_directories(${Protobuf_INCLUDE_DIRS})
 set(PROFILER_SOURCES
     src/profiler_manager.cpp
     src/symbolize.cpp
+    src/web_resources.cpp
+    src/web_server.cpp
 )
 
 set(PROFILER_HEADERS
     include/profiler_manager.h
     include/symbolize.h
+    include/web_resources.h
+    include/web_server.h
 )
 
 # Generate protobuf files
@@ -76,7 +80,7 @@ target_link_libraries(profiler_lib
 )
 
 # Example executable
-add_executable(profiler_example example/main.cpp ${PROTO_FILES})
+add_executable(profiler_example example/main.cpp example/workload.cpp ${PROTO_FILES})
 target_link_libraries(profiler_example
     profiler_lib
     Drogon::Drogon
@@ -107,5 +111,6 @@ target_link_libraries(test_full_flow
 
 add_test(NAME FullFlowTest COMMAND test_full_flow)
 
-# Copy web files to build directory
-file(COPY ${PROJECT_SOURCE_DIR}/web DESTINATION ${CMAKE_BINARY_DIR})
+# Note: Web files are now embedded in C++ code (src/web_resources.cpp)
+# No need to copy web directory to build directory
+
