@@ -164,6 +164,14 @@ static const char INDEX_PAGE[] = R"HTML(
         </div>
 
         <div class="section">
+            <h2>Heap Growth Profiler</h2>
+            <div>
+                <button class="analyze-btn" onclick="analyzeGrowth()">⚡ 一键分析并生成Growth火焰图</button>
+                <button class="download-btn" id="growth-download-btn" onclick="downloadGrowthRawSVG()">📥 下载 Growth 原始 SVG</button>
+            </div>
+        </div>
+
+        <div class="section">
             <h2>输出</h2>
             <div id="output" class="output">等待操作...</div>
         </div>
@@ -190,6 +198,14 @@ static const char INDEX_PAGE[] = R"HTML(
             window.open('/show_heap_svg.html', '_blank');
             log('✅ Heap火焰图查看器已在新标签页打开');
             log('💡 提示：图表中显示内存分配情况');
+        }
+
+        function analyzeGrowth() {
+            log('🚀 正在获取Heap Growth火焰图...');
+            // 打开独立的SVG查看器页面（不需要duration参数）
+            window.open('/show_growth_svg.html', '_blank');
+            log('✅ Heap Growth火焰图查看器已在新标签页打开');
+            log('💡 提示：图表中显示堆内存增长情况');
         }
 
         function log(message) {
@@ -272,6 +288,45 @@ static const char INDEX_PAGE[] = R"HTML(
                     btn.disabled = false;
                     btn.textContent = '📥 下载 Heap 原始 SVG';
                     log(`❌ Heap 原始 SVG 下载失败: ${error.message}`);
+                });
+        }
+
+        function downloadGrowthRawSVG() {
+            const btn = document.getElementById('growth-download-btn');
+
+            // 禁用按钮，显示下载中状态
+            btn.disabled = true;
+            btn.textContent = '⏳ 下载中...';
+            log('📥 正在下载 Growth 原始 SVG...');
+
+            // 使用 fetch 下载文件
+            fetch('/api/growth/svg_raw')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    // 创建下载链接
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                    a.download = `growth_profile_${timestamp}.svg`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+
+                    // 恢复按钮，显示成功
+                    btn.disabled = false;
+                    btn.textContent = '📥 下载 Growth 原始 SVG';
+                    log('✅ Growth 原始 SVG 下载完成');
+                })
+                .catch(error => {
+                    // 错误处理
+                    btn.disabled = false;
+                    btn.textContent = '📥 下载 Growth 原始 SVG';
+                    log(`❌ Growth 原始 SVG 下载失败: ${error.message}`);
                 });
         }
     </script>
@@ -606,6 +661,195 @@ static const char HEAP_SVG_VIEWER_PAGE[] = R"HTML(
 </html>
 )HTML";
 
+static const char GROWTH_SVG_VIEWER_PAGE[] = R"HTML(
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Growth Flame Graph Viewer</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; background: #f5f5f5; }
+        h1 { color: #333; margin-bottom: 10px; }
+        .info { background: #fff3e0; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .info ul { margin: 10px 0; padding-left: 20px; }
+        .info li { margin: 5px 0; }
+        .toolbar { margin-bottom: 20px; }
+        button { padding: 10px 20px; margin-right: 10px; cursor: pointer; font-size: 14px; }
+        button:hover { background: #f0f0f0; }
+        #svg-container {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            overflow: auto;
+            max-width: 100%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            min-height: 600px;
+            max-height: 80vh;
+        }
+        svg {
+            display: block;
+            margin: 0 auto;
+            min-width: 100%;
+            min-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔥 Heap Growth 堆增长火焰图</h1>
+    <div class="info">
+        <strong>💡 查看提示：</strong>
+        <ul>
+            <li><strong>滚动：</strong> 图表可能很大，请滚动查看所有函数</li>
+            <li><strong>缩放：</strong> 使用鼠标滚轮可以缩放视图</li>
+            <li><strong>拖拽：</strong> 按住鼠标左键可以拖动图表</li>
+            <li><strong>搜索：</strong> 使用 Ctrl+F 搜索特定函数</li>
+            <li><strong>点击：</strong> 点击节点可以高亮显示相关调用</li>
+        </ul>
+    </div>
+    <div class="toolbar">
+        <button onclick="loadSVG()">🔄 重新加载</button>
+        <button onclick="zoomIn()">🔍+ 放大</button>
+        <button onclick="zoomOut()">🔍- 缩小</button>
+        <button onclick="resetZoom()">1:1 原始大小</button>
+        <button onclick="fitToWidth()">↔️ 适应宽度</button>
+        <button onclick="window.print()">🖨️ 打印</button>
+        <button onclick="downloadSVG()">⬇️ 下载 SVG</button>
+    </div>
+    <div id="svg-container">加载中...</div>
+
+    <script>
+        let currentZoom = 1.0;
+        let svgElement = null;
+        let viewportElement = null;
+
+        function loadSVG() {
+            document.getElementById('svg-container').innerHTML = '正在加载Growth火焰图...';
+
+            // Growth分析不需要duration参数，直接调用接口
+            fetch('/api/growth/analyze')
+                .then(response => {
+                    const contentType = response.headers.get('Content-Type');
+                    if (contentType && contentType.includes('json')) {
+                        return response.json().then(data => {
+                            throw new Error(data.error || '未知错误');
+                        });
+                    }
+                    return response.text();
+                })
+                .then(svgText => {
+                    const container = document.getElementById('svg-container');
+                    container.innerHTML = svgText;
+
+                    // 调整 SVG 的显示，确保完整渲染
+                    setTimeout(() => {
+                        const svg = container.querySelector('svg');
+                        svgElement = svg;
+                        if (svg) {
+                            // 移除固定的宽高，让SVG自适应
+                            svg.removeAttribute('width');
+                            svg.removeAttribute('height');
+
+                            // 设置一个合理的最小尺寸
+                            svg.style.minWidth = '100%';
+                            svg.style.minHeight = '600px';
+
+                            // 查找并调整 viewport transform
+                            const viewport = svg.querySelector('#viewport');
+                            viewportElement = viewport;
+                            if (viewport) {
+                                // 获取当前的 transform
+                                const transform = viewport.getAttribute('transform');
+                                console.log('Original transform:', transform);
+
+                                // 不修改 transform，保持 pprof 的原始布局
+                                // 但添加一些样式让显示更好
+                                viewport.style.transformBox = 'fill-box';
+                                viewport.style.transformOrigin = 'top left';
+                            }
+                        }
+                    }, 100);
+                })
+                .catch(error => {
+                    document.getElementById('svg-container').innerHTML =
+                        `<div style="color: red; padding: 20px;">❌ 加载失败: ${error.message}</div>`;
+                    console.error('Error loading SVG:', error);
+                });
+        }
+
+        function zoomIn() {
+            currentZoom *= 1.2;
+            applyZoom();
+        }
+
+        function zoomOut() {
+            currentZoom /= 1.2;
+            applyZoom();
+        }
+
+        function resetZoom() {
+            currentZoom = 1.0;
+            applyZoom();
+        }
+
+        function fitToWidth() {
+            const container = document.getElementById('svg-container');
+            const svg = container.querySelector('svg');
+            if (!svg) return;
+
+            const containerWidth = container.clientWidth - 40;
+            const svgWidth = svg.getBBox().width;
+
+            currentZoom = containerWidth / svgWidth;
+            applyZoom();
+        }
+
+        function applyZoom() {
+            if (!viewportElement) return;
+
+            const originalTransform = viewportElement.getAttribute('transform') || '';
+
+            // 解析原始的 scale
+            const scaleMatch = originalTransform.match(/scale\(([^)]+)\)/);
+            const baseScale = scaleMatch ? parseFloat(scaleMatch[1]) : 1.0;
+
+            // 解析原始的 translate
+            const translateMatch = originalTransform.match(/translate\(([^)]+)\)/);
+            const baseTranslate = translateMatch ? translateMatch[1] : '0,0';
+
+            // 应用新的缩放
+            const newScale = baseScale * currentZoom;
+            viewportElement.setAttribute('transform',
+                `scale(${newScale},${newScale}) translate(${baseTranslate})`);
+
+            console.log(`Applied zoom: ${currentZoom}x (${newScale})`);
+        }
+
+        function downloadSVG() {
+            const svg = document.querySelector('svg');
+            if (!svg) {
+                alert('没有找到 SVG 图表');
+                return;
+            }
+            const serializer = new XMLSerializer();
+            const svgStr = serializer.serializeToString(svg);
+            const blob = new Blob([svgStr], {type: 'image/svg+xml'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            // 使用时间戳生成文件名
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            a.download = `growth_flamegraph_${timestamp}.svg`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // 页面加载时自动加载 SVG
+        window.addEventListener('load', loadSVG);
+    </script>
+</body>
+</html>
+)HTML";
+
 
 std::string WebResources::getIndexPage() {
     return std::string(INDEX_PAGE);
@@ -617,6 +861,10 @@ std::string WebResources::getCpuSvgViewerPage() {
 
 std::string WebResources::getHeapSvgViewerPage() {
     return std::string(HEAP_SVG_VIEWER_PAGE);
+}
+
+std::string WebResources::getGrowthSvgViewerPage() {
+    return std::string(GROWTH_SVG_VIEWER_PAGE);
 }
 
 } // namespace profiler

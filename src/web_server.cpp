@@ -19,15 +19,20 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             Json::Value root;
             root["cpu"]["running"] = profiler.isProfilerRunning(profiler::ProfilerType::CPU);
             root["heap"]["running"] = profiler.isProfilerRunning(profiler::ProfilerType::HEAP);
+            root["growth"]["running"] = profiler.isProfilerRunning(profiler::ProfilerType::HEAP_GROWTH);
 
             auto cpuState = profiler.getProfilerState(profiler::ProfilerType::CPU);
             auto heapState = profiler.getProfilerState(profiler::ProfilerType::HEAP);
+            auto growthState = profiler.getProfilerState(profiler::ProfilerType::HEAP_GROWTH);
 
             root["cpu"]["output_path"] = cpuState.output_path;
             root["cpu"]["duration_ms"] = static_cast<Json::Int64>(cpuState.duration);
 
             root["heap"]["output_path"] = heapState.output_path;
             root["heap"]["duration_ms"] = static_cast<Json::Int64>(heapState.duration);
+
+            root["growth"]["output_path"] = growthState.output_path;
+            root["growth"]["duration_ms"] = static_cast<Json::Int64>(growthState.duration);
 
             auto resp = HttpResponse::newHttpJsonResponse(root);
             callback(resp);
@@ -69,6 +74,20 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string html = WebResources::getHeapSvgViewerPage();
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(CT_TEXT_HTML);
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Growth SVG flame graph viewer page
+    app().registerHandler(
+        "/show_growth_svg.html",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::string html = WebResources::getGrowthSvgViewerPage();
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(html);
             resp->setContentTypeCode(CT_TEXT_HTML);
@@ -169,6 +188,59 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             if (svg_content.empty() || svg_content.find("<svg") == std::string::npos) {
                 Json::Value root;
                 root["error"] = "Failed to generate heap flame graph";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 返回SVG内容
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(svg_content);
+            resp->setContentTypeCode(CT_TEXT_XML);
+            resp->addHeader("Content-Type", "image/svg+xml");
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Growth analyze endpoint - 一键式Growth分析（使用pprof生成SVG火焰图）
+    app().registerHandler(
+        "/api/growth/analyze",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::cout << "Starting Heap Growth analysis (using GetHeapGrowthStacks)..." << std::endl;
+
+            // 直接获取 heap growth stacks（不需要 duration）
+            std::string heap_growth = profiler.getRawHeapGrowthStacks();
+
+            if (heap_growth.empty()) {
+                Json::Value root;
+                root["error"] = "Failed to get heap growth stacks. No heap growth data available.";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 保存到临时文件
+            std::string temp_file = "/tmp/growth.prof";
+            std::ofstream out(temp_file);
+            out << heap_growth;
+            out.close();
+
+            // 使用 pprof 生成 SVG（使用绝对路径）
+            std::string exe_path = profiler.getExecutablePath();
+            std::string pprof_path = "./pprof";  // 使用相对路径，程序在 build 目录中运行
+            std::string cmd = pprof_path + " --svg " + exe_path + " " + temp_file + " 2>&1";
+            std::cout << "Executing: " << cmd << std::endl;
+            std::string svg_content;
+            profiler.executeCommand(cmd, svg_content);
+
+            // 检查结果（检查是否有 SVG 标签）
+            if (svg_content.empty() || svg_content.find("<svg") == std::string::npos) {
+                Json::Value root;
+                root["error"] = "Failed to generate growth flame graph";
                 auto resp = HttpResponse::newHttpJsonResponse(root);
                 resp->setStatusCode(k500InternalServerError);
                 callback(resp);
@@ -336,6 +408,71 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
         {Get}
     );
 
+    // Growth raw SVG endpoint - 返回pprof生成的原始SVG（不做任何修改）
+    app().registerHandler(
+        "/api/growth/svg_raw",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::cout << "Starting Growth raw SVG generation..." << std::endl;
+
+            // 直接获取 heap growth stacks
+            std::string heap_growth = profiler.getRawHeapGrowthStacks();
+
+            if (heap_growth.empty()) {
+                Json::Value root;
+                root["error"] = "Failed to get heap growth stacks. No heap growth data available.";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 保存到临时文件
+            std::string temp_file = "/tmp/growth_raw.prof";
+            std::ofstream out(temp_file);
+            out << heap_growth;
+            out.close();
+
+            // 使用 pprof 生成原始 SVG（不做任何修改）
+            std::string exe_path = profiler.getExecutablePath();
+            std::string pprof_path = "./pprof";
+            std::string cmd = pprof_path + " --svg " + exe_path + " " + temp_file + " 2>/dev/null";
+            std::cout << "Executing: " << cmd << std::endl;
+            std::string svg_content;
+            profiler.executeCommand(cmd, svg_content);
+
+            // 去掉 pprof 的信息输出，只保留 SVG 内容
+            // pprof 会在 SVG 前输出一些信息，需要找到 SVG 的开始位置
+            size_t svg_start = svg_content.find("<?xml");
+            if (svg_start == std::string::npos) {
+                svg_start = svg_content.find("<svg");
+            }
+            if (svg_start != std::string::npos && svg_start > 0) {
+                svg_content = svg_content.substr(svg_start);
+            }
+
+            // 检查结果（检查是否有 SVG 标签）
+            if (svg_content.empty() || svg_content.find("<svg") == std::string::npos) {
+                Json::Value root;
+                root["error"] = "Failed to generate SVG";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 返回原始SVG内容（不做任何修改）
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(svg_content);
+            resp->setContentTypeCode(CT_TEXT_XML);
+            resp->addHeader("Content-Type", "image/svg+xml");
+            // 添加 Content-Disposition 让浏览器下载文件
+            resp->addHeader("Content-Disposition", "attachment; filename=growth_profile.svg");
+            callback(resp);
+        },
+        {Get}
+    );
+
     // Symbol resolution endpoint (类似 brpc pprof 的 /pprof/symbol)
     // 使用 backward-cpp 进行符号化，支持内联函数
     app().registerHandler(
@@ -463,6 +600,35 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->setBody(heap_sample);
             resp->setContentTypeCode(CT_TEXT_PLAIN);
             resp->addHeader("Content-Disposition", "attachment; filename=heap");
+            callback(resp);
+        },
+        {Get}
+    );
+
+    // Standard pprof endpoint: /pprof/growth
+    // Compatible with Go pprof tool - returns heap growth stacks
+    app().registerHandler(
+        "/pprof/growth",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::cout << "Received /pprof/growth request" << std::endl;
+
+            // 调用 getRawHeapGrowthStacks 获取 heap growth stacks 数据
+            std::string heap_growth = profiler.getRawHeapGrowthStacks();
+
+            if (heap_growth.empty()) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k500InternalServerError);
+                resp->setBody("Failed to get heap growth stacks. No heap growth data available.");
+                callback(resp);
+                return;
+            }
+
+            // 返回 heap growth stacks 数据（文本格式）
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(heap_growth);
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            resp->addHeader("Content-Disposition", "attachment; filename=growth");
             callback(resp);
         },
         {Get}

@@ -33,6 +33,7 @@ ProfilerManager::ProfilerManager() {
     // Initialize profiler states
     profiler_states_[ProfilerType::CPU] = ProfilerState{false, "", 0, 0};
     profiler_states_[ProfilerType::HEAP] = ProfilerState{false, "", 0, 0};
+    profiler_states_[ProfilerType::HEAP_GROWTH] = ProfilerState{false, "", 0, 0};
 
     // Initialize symbolizer
     try {
@@ -895,6 +896,25 @@ std::string ProfilerManager::getRawHeapSample() {
 
     std::cout << "Heap sample size: " << heap_sample.size() << " bytes" << std::endl;
     return heap_sample;
+}
+
+std::string ProfilerManager::getRawHeapGrowthStacks() {
+    // Get heap growth stacks from tcmalloc
+    // MallocExtensionWriter is typedef'd as std::string
+    std::string heap_growth_stacks;
+
+    // GetHeapGrowthStacks writes the heap growth stacks into the string
+    MallocExtension::instance()->GetHeapGrowthStacks(&heap_growth_stacks);
+
+    if (heap_growth_stacks.empty()) {
+        std::cerr << "Failed to get heap growth stacks. "
+                  << "No heap growth data available."
+                  << std::endl;
+        return "";
+    }
+
+    std::cout << "Heap growth stacks size: " << heap_growth_stacks.size() << " bytes" << std::endl;
+    return heap_growth_stacks;
 }
 
 } // namespace profiler

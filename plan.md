@@ -104,6 +104,13 @@ pprof 工具 → GET /pprof/profile?seconds=10
 - [x] 配置采样时长
 - [x] 自动生成 profile 文件
 
+#### 1.3 Heap Growth Profiling ✅ (新增)
+- [x] 集成 gperftools heap growth profiler
+- [x] 使用 `GetHeapGrowthStacks()` API
+- [x] 无需采样时长（即时获取）
+- [x] 自动生成 profile 文件和 SVG 火焰图
+- [x] 不需要 `TCMALLOC_SAMPLE_PARAMETER` 环境变量
+
 #### 1.3 Web 服务器 ✅
 - [x] 基于 Drogon 框架的 HTTP 服务器
 - [x] RESTful API 接口
@@ -139,6 +146,7 @@ env TCMALLOC_SAMPLE_PARAMETER=524288 ./profiler_example
 #### 2.2 一键分析接口（浏览器直接显示）✅
 - [x] `GET /api/cpu/analyze?duration=N` - 采样并返回 SVG
 - [x] `GET /api/heap/analyze?duration=N` - 采样并返回 SVG
+- [x] `GET /api/growth/analyze` - 获取 heap growth 并返回 SVG（新增）
 
 **实现细节**:
 - CPU: 使用 `analyzeCPUProfile()` 进行采样和 SVG 生成
@@ -148,6 +156,7 @@ env TCMALLOC_SAMPLE_PARAMETER=524288 ./profiler_example
 #### 2.3 原始 SVG 下载接口 ✅
 - [x] `GET /api/cpu/svg_raw?duration=N` - 返回 pprof 生成的原始 CPU SVG（下载）
 - [x] `GET /api/heap/svg_raw` - 返回 pprof 生成的原始 Heap SVG（下载）
+- [x] `GET /api/growth/svg_raw` - 返回 pprof 生成的原始 Growth SVG（下载）（新增）
 
 **设计目的**:
 解决 `/api/cpu/analyze` 和 `/api/heap/analyze` 的 SVG 在浏览器中显示可能存在兼容性问题。用户可以下载原始 SVG，使用其他工具（如浏览器、Inkscape 等）打开查看。
@@ -302,6 +311,7 @@ std::string ProfilerManager::resolveSymbolWithBackward(void* address)
 #### 4.2 火焰图显示 ✅
 - [x] CPU 火焰图页面
 - [x] Heap 火焰图页面
+- [x] Growth 火焰图页面（新增）
 - [x] SVG 直接嵌入显示
 - [x] 移除缩放功能（使用浏览器原生缩放）
 
@@ -758,6 +768,7 @@ http://localhost:8080/
 index.html (主控制面板)
   ├── CPU Profiler 分析（一键触发采样 + 显示 SVG）
   ├── Heap Profiler 分析（一键触发采样 + 显示 SVG）
+  ├── Heap Growth Profiler 分析（即时获取 + 显示 SVG）（新增）
   └── 状态显示
 
 show_svg.html (CPU 火焰图)
@@ -766,6 +777,11 @@ show_svg.html (CPU 火焰图)
   └── 提示信息
 
 show_heap_svg.html (Heap 火焰图)
+  ├── SVG 容器
+  ├── 控制按钮（重新加载、下载）
+  └── 提示信息
+
+show_growth_svg.html (Heap Growth 火焰图)（新增）
   ├── SVG 容器
   ├── 控制按钮（重新加载、下载）
   └── 提示信息
@@ -919,6 +935,28 @@ show_heap_svg.html (Heap 火焰图)
 ---
 
 ## 更新日志
+
+### 2026-01-14
+- ✅ **实现 Heap Growth Profiler**
+  - **核心 API**: 使用 `MallocExtension::GetHeapGrowthStacks()` 获取堆增长数据
+  - **新增接口**:
+    - `/pprof/growth` - 标准 pprof 接口，返回 heap growth stacks
+    - `/api/growth/analyze` - 一键分析并生成 SVG 火焰图
+    - `/api/growth/svg_raw` - 下载原始 SVG 文件
+  - **前端支持**:
+    - 主页面新增 "Heap Growth Profiler" section
+    - 新增 `show_growth_svg.html` 查看器页面
+    - 实现下载按钮和查看器功能
+  - **关键特性**:
+    - 无需 `TCMALLOC_SAMPLE_PARAMETER` 环境变量
+    - 无需采样时长（即时获取当前堆增长数据）
+    - 输出格式与 heap profile 相同，兼容 pprof
+  - **测试验证**:
+    - ✅ `/pprof/growth` 返回正确的 heap growth stacks 数据
+    - ✅ `/api/growth/analyze` 成功生成 SVG 火焰图
+    - ✅ `/api/growth/svg_raw` 成功下载原始 SVG
+    - ✅ `/show_growth_svg.html` 查看器正常工作
+    - ✅ `/api/status` 包含 growth 状态信息
 
 ### 2026-01-13
 - 🔄 **重大重构**: 代码组织优化，支持作为库使用

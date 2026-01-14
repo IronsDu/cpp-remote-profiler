@@ -15,6 +15,9 @@ public:
 
     // 获取 Heap 火焰图查看器 HTML
     static std::string getHeapSvgViewerPage();
+
+    // 获取 Growth 火焰图查看器 HTML
+    static std::string getGrowthSvgViewerPage();
 };
 
 } // namespace profiler

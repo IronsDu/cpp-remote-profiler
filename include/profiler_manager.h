@@ -12,7 +12,8 @@ namespace profiler {
 
 enum class ProfilerType {
     CPU,
-    HEAP
+    HEAP,
+    HEAP_GROWTH
 };
 
 struct ProfilerState {
@@ -68,6 +69,10 @@ public:
     // Get raw heap sample data (for /pprof/heap endpoint)
     // Returns heap sample in text format (compatible with pprof)
     std::string getRawHeapSample();
+
+    // Get heap growth stacks data (for /pprof/growth endpoint)
+    // Returns heap growth stacks in text format (compatible with pprof)
+    std::string getRawHeapGrowthStacks();
 
     // Helper methods (public for use in HTTP handlers)
     bool executeCommand(const std::string& cmd, std::string& output);
