@@ -48,9 +48,6 @@ public:
     // Resolve address to symbol with inline frames using backward-cpp
     std::string resolveSymbolWithBackward(void* address);
 
-    // Get collapsed stack traces for flame graph (format: "func1;func2;func3 count")
-    std::string getCollapsedStacks(const std::string& profile_type);
-
     // Analyze CPU profile and return SVG flame graph
     // duration: sampling duration in seconds
     // output_type: "flamegraph" (default), "iciclegraph", etc.
