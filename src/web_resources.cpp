@@ -176,8 +176,7 @@ static const char INDEX_PAGE[] = R"HTML(
                     </select>
                 </div>
                 <button class="analyze-btn" onclick="analyzeCPU()">⚡ 一键分析并生成火焰图</button>
-                <button class="download-btn" id="cpu-download-btn" onclick="downloadCPURawSVG()">📥 下载 CPU pprof SVG</button>
-                <button class="download-btn" id="cpu-flamegraph-download-btn" onclick="downloadCPUFlameGraph()">🔥 下载 CPU FlameGraph</button>
+                <button class="download-btn" id="cpu-download-btn" onclick="downloadCPUChart()">📥 下载 CPU 图表</button>
             </div>
         </div>
 
@@ -192,8 +191,7 @@ static const char INDEX_PAGE[] = R"HTML(
                     </select>
                 </div>
                 <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成Heap火焰图</button>
-                <button class="download-btn" id="heap-download-btn" onclick="downloadHeapRawSVG()">📥 下载 Heap pprof SVG</button>
-                <button class="download-btn" id="heap-flamegraph-download-btn" onclick="downloadHeapFlameGraph()">🔥 下载 Heap FlameGraph</button>
+                <button class="download-btn" id="heap-download-btn" onclick="downloadHeapChart()">📥 下载 Heap 图表</button>
             </div>
         </div>
 
@@ -208,8 +206,7 @@ static const char INDEX_PAGE[] = R"HTML(
                     </select>
                 </div>
                 <button class="analyze-btn" onclick="analyzeGrowth()">⚡ 一键分析并生成Growth火焰图</button>
-                <button class="download-btn" id="growth-download-btn" onclick="downloadGrowthRawSVG()">📥 下载 Growth pprof SVG</button>
-                <button class="download-btn" id="growth-flamegraph-download-btn" onclick="downloadGrowthFlameGraph()">🔥 下载 Growth FlameGraph</button>
+                <button class="download-btn" id="growth-download-btn" onclick="downloadGrowthChart()">📥 下载 Growth 图表</button>
             </div>
         </div>
 
@@ -258,17 +255,37 @@ static const char INDEX_PAGE[] = R"HTML(
             output.textContent = message;
         }
 
-        function downloadCPURawSVG() {
+        function downloadCPUChart() {
             const duration = document.getElementById('cpu-duration').value;
+            const chartType = document.getElementById('cpu-chart-type').value;
             const btn = document.getElementById('cpu-download-btn');
 
             // 禁用按钮，显示下载中状态
             btn.disabled = true;
-            btn.textContent = '⏳ 下载中...';
-            log(`📥 正在下载 CPU 原始 SVG (采样时长: ${duration}秒)...`);
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ 准备下载...';
+
+            // 根据图表类型选择端点和文件名
+            const endpoint = chartType === 'flamegraph' ? '/api/cpu/flamegraph_raw' : '/api/cpu/svg_raw';
+            const chartTypeName = chartType === 'flamegraph' ? 'FlameGraph' : 'pprof SVG';
+            const filenamePrefix = chartType === 'flamegraph' ? 'cpu_flamegraph' : 'cpu_profile';
+
+            log(`📥 开始下载 CPU ${chartTypeName} (采样时长: ${duration}秒)...`);
+
+            // 估计下载时间（基于采样时长）
+            const estimatedTime = Math.max(3, parseInt(duration) + 2); // 至少3秒
+            let countdown = estimatedTime;
+            let progressInterval;
+
+            // 启动倒计时
+            progressInterval = setInterval(() => {
+                countdown--;
+                const progress = Math.round(((estimatedTime - countdown) / estimatedTime) * 100);
+                btn.textContent = `⏳ 生成中 ${progress}% (${countdown}s)`;
+            }, 1000);
 
             // 使用 fetch 下载文件
-            fetch(`/api/cpu/svg_raw?duration=${duration}`)
+            fetch(`${endpoint}?duration=${duration}`)
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -276,76 +293,63 @@ static const char INDEX_PAGE[] = R"HTML(
                     return response.blob();
                 })
                 .then(blob => {
+                    // 清除倒计时
+                    clearInterval(progressInterval);
+                    btn.textContent = '⏳ 保存文件...';
+
                     // 创建下载链接
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `cpu_profile_${duration}s.svg`;
+                    a.download = `${filenamePrefix}_${duration}s.svg`;
                     a.click();
                     URL.revokeObjectURL(url);
 
                     // 恢复按钮，显示成功
                     btn.disabled = false;
-                    btn.textContent = '📥 下载 CPU 原始 SVG';
-                    log('✅ CPU 原始 SVG 下载完成');
+                    btn.textContent = originalText;
+                    log(`✅ CPU ${chartTypeName} 下载完成 (大小: ${(blob.size / 1024).toFixed(1)} KB)`);
                 })
                 .catch(error => {
+                    // 清除倒计时
+                    clearInterval(progressInterval);
                     // 错误处理
                     btn.disabled = false;
-                    btn.textContent = '📥 下载 CPU 原始 SVG';
-                    log(`❌ CPU 原始 SVG 下载失败: ${error.message}`);
+                    btn.textContent = originalText;
+                    log(`❌ CPU ${chartTypeName} 下载失败: ${error.message}`);
                 });
         }
 
-        function downloadCPUFlameGraph() {
-            const duration = document.getElementById('cpu-duration').value;
-            const btn = document.getElementById('cpu-flamegraph-download-btn');
-
-            // 禁用按钮，显示下载中状态
-            btn.disabled = true;
-            btn.textContent = '⏳ 下载中...';
-            log(`🔥 正在下载 CPU FlameGraph (采样时长: ${duration}秒)...`);
-
-            // 使用 fetch 下载文件
-            fetch(`/api/cpu/flamegraph_raw?duration=${duration}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    }
-                    return response.blob();
-                })
-                .then(blob => {
-                    // 创建下载链接
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `cpu_flamegraph_${duration}s.svg`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-
-                    // 恢复按钮，显示成功
-                    btn.disabled = false;
-                    btn.textContent = '🔥 下载 CPU FlameGraph';
-                    log('✅ CPU FlameGraph 下载完成');
-                })
-                .catch(error => {
-                    // 错误处理
-                    btn.disabled = false;
-                    btn.textContent = '🔥 下载 CPU FlameGraph';
-                    log(`❌ CPU FlameGraph 下载失败: ${error.message}`);
-                });
-        }
-
-        function downloadHeapRawSVG() {
+        function downloadHeapChart() {
+            const chartType = document.getElementById('heap-chart-type').value;
             const btn = document.getElementById('heap-download-btn');
 
             // 禁用按钮，显示下载中状态
             btn.disabled = true;
-            btn.textContent = '⏳ 下载中...';
-            log('📥 正在下载 Heap 原始 SVG...');
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ 准备下载...';
+
+            // 根据图表类型选择端点和文件名
+            const endpoint = chartType === 'flamegraph' ? '/api/heap/flamegraph_raw' : '/api/heap/svg_raw';
+            const chartTypeName = chartType === 'flamegraph' ? 'FlameGraph' : 'pprof SVG';
+            const filenamePrefix = chartType === 'flamegraph' ? 'heap_flamegraph' : 'heap_profile';
+
+            log(`📥 开始下载 Heap ${chartTypeName}...`);
+
+            // 估计下载时间（Heap profile 通常较快）
+            const estimatedTime = 5; // 固定5秒
+            let countdown = estimatedTime;
+            let progressInterval;
+
+            // 启动倒计时
+            progressInterval = setInterval(() => {
+                countdown--;
+                const progress = Math.round(((estimatedTime - countdown) / estimatedTime) * 100);
+                btn.textContent = `⏳ 生成中 ${progress}% (${countdown}s)`;
+            }, 1000);
 
             // 使用 fetch 下载文件
-            fetch('/api/heap/svg_raw')
+            fetch(endpoint)
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -353,77 +357,64 @@ static const char INDEX_PAGE[] = R"HTML(
                     return response.blob();
                 })
                 .then(blob => {
+                    // 清除倒计时
+                    clearInterval(progressInterval);
+                    btn.textContent = '⏳ 保存文件...';
+
                     // 创建下载链接
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-                    a.download = `heap_profile_${timestamp}.svg`;
+                    a.download = `${filenamePrefix}_${timestamp}.svg`;
                     a.click();
                     URL.revokeObjectURL(url);
 
                     // 恢复按钮，显示成功
                     btn.disabled = false;
-                    btn.textContent = '📥 下载 Heap 原始 SVG';
-                    log('✅ Heap 原始 SVG 下载完成');
+                    btn.textContent = originalText;
+                    log(`✅ Heap ${chartTypeName} 下载完成 (大小: ${(blob.size / 1024).toFixed(1)} KB)`);
                 })
                 .catch(error => {
+                    // 清除倒计时
+                    clearInterval(progressInterval);
                     // 错误处理
                     btn.disabled = false;
-                    btn.textContent = '📥 下载 Heap 原始 SVG';
-                    log(`❌ Heap 原始 SVG 下载失败: ${error.message}`);
+                    btn.textContent = originalText;
+                    log(`❌ Heap ${chartTypeName} 下载失败: ${error.message}`);
                 });
         }
 
-        function downloadHeapFlameGraph() {
-            const btn = document.getElementById('heap-flamegraph-download-btn');
-
-            // 禁用按钮，显示下载中状态
-            btn.disabled = true;
-            btn.textContent = '⏳ 下载中...';
-            log('🔥 正在下载 Heap FlameGraph...');
-
-            // 使用 fetch 下载文件
-            fetch('/api/heap/flamegraph_raw')
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    }
-                    return response.blob();
-                })
-                .then(blob => {
-                    // 创建下载链接
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-                    a.download = `heap_flamegraph_${timestamp}.svg`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-
-                    // 恢复按钮，显示成功
-                    btn.disabled = false;
-                    btn.textContent = '🔥 下载 Heap FlameGraph';
-                    log('✅ Heap FlameGraph 下载完成');
-                })
-                .catch(error => {
-                    // 错误处理
-                    btn.disabled = false;
-                    btn.textContent = '🔥 下载 Heap FlameGraph';
-                    log(`❌ Heap FlameGraph 下载失败: ${error.message}`);
-                });
-        }
-
-        function downloadGrowthRawSVG() {
+        function downloadGrowthChart() {
+            const chartType = document.getElementById('growth-chart-type').value;
             const btn = document.getElementById('growth-download-btn');
 
             // 禁用按钮，显示下载中状态
             btn.disabled = true;
-            btn.textContent = '⏳ 下载中...';
-            log('📥 正在下载 Growth 原始 SVG...');
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ 准备下载...';
+
+            // 根据图表类型选择端点和文件名
+            const endpoint = chartType === 'flamegraph' ? '/api/growth/flamegraph_raw' : '/api/growth/svg_raw';
+            const chartTypeName = chartType === 'flamegraph' ? 'FlameGraph' : 'pprof SVG';
+            const filenamePrefix = chartType === 'flamegraph' ? 'growth_flamegraph' : 'growth_profile';
+
+            log(`📥 开始下载 Growth ${chartTypeName}...`);
+
+            // 估计下载时间（Growth profile 通常较快）
+            const estimatedTime = 5; // 固定5秒
+            let countdown = estimatedTime;
+            let progressInterval;
+
+            // 启动倒计时
+            progressInterval = setInterval(() => {
+                countdown--;
+                const progress = Math.round(((estimatedTime - countdown) / estimatedTime) * 100);
+                btn.textContent = `⏳ 生成中 ${progress}% (${countdown}s)`;
+            }, 1000);
 
             // 使用 fetch 下载文件
-            fetch('/api/growth/svg_raw')
+            fetch(endpoint)
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -431,64 +422,31 @@ static const char INDEX_PAGE[] = R"HTML(
                     return response.blob();
                 })
                 .then(blob => {
+                    // 清除倒计时
+                    clearInterval(progressInterval);
+                    btn.textContent = '⏳ 保存文件...';
+
                     // 创建下载链接
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-                    a.download = `growth_profile_${timestamp}.svg`;
+                    a.download = `${filenamePrefix}_${timestamp}.svg`;
                     a.click();
                     URL.revokeObjectURL(url);
 
                     // 恢复按钮，显示成功
                     btn.disabled = false;
-                    btn.textContent = '📥 下载 Growth 原始 SVG';
-                    log('✅ Growth 原始 SVG 下载完成');
+                    btn.textContent = originalText;
+                    log(`✅ Growth ${chartTypeName} 下载完成 (大小: ${(blob.size / 1024).toFixed(1)} KB)`);
                 })
                 .catch(error => {
+                    // 清除倒计时
+                    clearInterval(progressInterval);
                     // 错误处理
                     btn.disabled = false;
-                    btn.textContent = '📥 下载 Growth 原始 SVG';
-                    log(`❌ Growth 原始 SVG 下载失败: ${error.message}`);
-                });
-        }
-
-        function downloadGrowthFlameGraph() {
-            const btn = document.getElementById('growth-flamegraph-download-btn');
-
-            // 禁用按钮，显示下载中状态
-            btn.disabled = true;
-            btn.textContent = '⏳ 下载中...';
-            log('🔥 正在下载 Growth FlameGraph...');
-
-            // 使用 fetch 下载文件
-            fetch('/api/growth/flamegraph_raw')
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    }
-                    return response.blob();
-                })
-                .then(blob => {
-                    // 创建下载链接
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-                    a.download = `growth_flamegraph_${timestamp}.svg`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-
-                    // 恢复按钮，显示成功
-                    btn.disabled = false;
-                    btn.textContent = '🔥 下载 Growth FlameGraph';
-                    log('✅ Growth FlameGraph 下载完成');
-                })
-                .catch(error => {
-                    // 错误处理
-                    btn.disabled = false;
-                    btn.textContent = '🔥 下载 Growth FlameGraph';
-                    log(`❌ Growth FlameGraph 下载失败: ${error.message}`);
+                    btn.textContent = originalText;
+                    log(`❌ Growth ${chartTypeName} 下载失败: ${error.message}`);
                 });
         }
     </script>
