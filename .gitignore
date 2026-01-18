@@ -42,6 +42,9 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 
+# Unused directories
+third_party/
+
 # vcpkg (commented out if you want to commit vcpkg for reproducibility)
 # vcpkg/
 
