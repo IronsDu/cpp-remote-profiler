@@ -55,6 +55,24 @@ static const char INDEX_PAGE[] = R"HTML(
             cursor: not-allowed;
             opacity: 0.6;
         }
+        select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-width: 200px;
+            font-size: 14px;
+            background-color: white;
+            cursor: pointer;
+            font-family: Arial, sans-serif;
+        }
+        select:hover {
+            border-color: #4CAF50;
+        }
+        select:focus {
+            outline: none;
+            border-color: #4CAF50;
+            box-shadow: 0 0 5px rgba(76, 175, 80, 0.3);
+        }
         .stop-btn {
             background-color: #f44336;
         }
@@ -150,24 +168,48 @@ static const char INDEX_PAGE[] = R"HTML(
                     <label for="cpu-duration">采样时长(秒):</label>
                     <input type="number" id="cpu-duration" value="10" min="1" max="300">
                 </div>
-                <button class="analyze-btn" onclick="analyzeCPU()">⚡ 一键分析并生成SVG火焰图</button>
-                <button class="download-btn" id="cpu-download-btn" onclick="downloadCPURawSVG()">📥 下载 CPU 原始 SVG</button>
+                <div class="input-group">
+                    <label for="cpu-chart-type">图表类型:</label>
+                    <select id="cpu-chart-type">
+                        <option value="pprof">pprof SVG</option>
+                        <option value="flamegraph">FlameGraph (Brendan Gregg)</option>
+                    </select>
+                </div>
+                <button class="analyze-btn" onclick="analyzeCPU()">⚡ 一键分析并生成火焰图</button>
+                <button class="download-btn" id="cpu-download-btn" onclick="downloadCPURawSVG()">📥 下载 CPU pprof SVG</button>
+                <button class="download-btn" id="cpu-flamegraph-download-btn" onclick="downloadCPUFlameGraph()">🔥 下载 CPU FlameGraph</button>
             </div>
         </div>
 
         <div class="section">
             <h2>Heap Profiler</h2>
             <div>
+                <div class="input-group">
+                    <label for="heap-chart-type">图表类型:</label>
+                    <select id="heap-chart-type">
+                        <option value="pprof">pprof SVG</option>
+                        <option value="flamegraph">FlameGraph (Brendan Gregg)</option>
+                    </select>
+                </div>
                 <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成Heap火焰图</button>
-                <button class="download-btn" id="heap-download-btn" onclick="downloadHeapRawSVG()">📥 下载 Heap 原始 SVG</button>
+                <button class="download-btn" id="heap-download-btn" onclick="downloadHeapRawSVG()">📥 下载 Heap pprof SVG</button>
+                <button class="download-btn" id="heap-flamegraph-download-btn" onclick="downloadHeapFlameGraph()">🔥 下载 Heap FlameGraph</button>
             </div>
         </div>
 
         <div class="section">
             <h2>Heap Growth Profiler</h2>
             <div>
+                <div class="input-group">
+                    <label for="growth-chart-type">图表类型:</label>
+                    <select id="growth-chart-type">
+                        <option value="pprof">pprof SVG</option>
+                        <option value="flamegraph">FlameGraph (Brendan Gregg)</option>
+                    </select>
+                </div>
                 <button class="analyze-btn" onclick="analyzeGrowth()">⚡ 一键分析并生成Growth火焰图</button>
-                <button class="download-btn" id="growth-download-btn" onclick="downloadGrowthRawSVG()">📥 下载 Growth 原始 SVG</button>
+                <button class="download-btn" id="growth-download-btn" onclick="downloadGrowthRawSVG()">📥 下载 Growth pprof SVG</button>
+                <button class="download-btn" id="growth-flamegraph-download-btn" onclick="downloadGrowthFlameGraph()">🔥 下载 Growth FlameGraph</button>
             </div>
         </div>
 
@@ -180,32 +222,35 @@ static const char INDEX_PAGE[] = R"HTML(
     <script>
         function analyzeCPU() {
             const duration = document.getElementById('cpu-duration').value;
-            log(`🚀 正在进行CPU分析，采样时长: ${duration}秒...\n(这可能需要一些时间，请耐心等待)`);
+            const chartType = document.getElementById('cpu-chart-type').value;
+            log(`🚀 正在进行CPU分析，采样时长: ${duration}秒, 图表类型: ${chartType}...\n(这可能需要一些时间，请耐心等待)`);
             document.getElementById('cpu-duration').disabled = true;
 
-            // 打开独立的SVG查看器页面
-            window.open(`/show_svg.html?duration=${duration}`, '_blank');
+            // 打开独立的SVG查看器页面，传递 output_type 参数
+            window.open(`/show_svg.html?duration=${duration}&output_type=${chartType}`, '_blank');
 
             log('✅ 火焰图查看器已在新标签页打开');
-            log('💡 提示：图表中包含 cpuIntensiveTask、FibonacciCalculator、memoryIntensiveTask 等函数');
+            log(`💡 提示：当前使用 ${chartType === 'flamegraph' ? 'Brendan Gregg FlameGraph' : 'pprof SVG'}`);
 
             document.getElementById('cpu-duration').disabled = false;
         }
 
         function analyzeHeap() {
-            log('🚀 正在获取Heap火焰图...');
-            // 打开独立的SVG查看器页面（不需要duration参数）
-            window.open('/show_heap_svg.html', '_blank');
+            const chartType = document.getElementById('heap-chart-type').value;
+            log(`🚀 正在获取Heap火焰图 (图表类型: ${chartType})...`);
+            // 打开独立的SVG查看器页面，传递 output_type 参数
+            window.open(`/show_heap_svg.html?output_type=${chartType}`, '_blank');
             log('✅ Heap火焰图查看器已在新标签页打开');
-            log('💡 提示：图表中显示内存分配情况');
+            log(`💡 提示：当前使用 ${chartType === 'flamegraph' ? 'Brendan Gregg FlameGraph' : 'pprof SVG'}`);
         }
 
         function analyzeGrowth() {
-            log('🚀 正在获取Heap Growth火焰图...');
-            // 打开独立的SVG查看器页面（不需要duration参数）
-            window.open('/show_growth_svg.html', '_blank');
+            const chartType = document.getElementById('growth-chart-type').value;
+            log(`🚀 正在获取Heap Growth火焰图 (图表类型: ${chartType})...`);
+            // 打开独立的SVG查看器页面，传递 output_type 参数
+            window.open(`/show_growth_svg.html?output_type=${chartType}`, '_blank');
             log('✅ Heap Growth火焰图查看器已在新标签页打开');
-            log('💡 提示：图表中显示堆内存增长情况');
+            log(`💡 提示：当前使用 ${chartType === 'flamegraph' ? 'Brendan Gregg FlameGraph' : 'pprof SVG'}`);
         }
 
         function log(message) {
@@ -252,6 +297,45 @@ static const char INDEX_PAGE[] = R"HTML(
                 });
         }
 
+        function downloadCPUFlameGraph() {
+            const duration = document.getElementById('cpu-duration').value;
+            const btn = document.getElementById('cpu-flamegraph-download-btn');
+
+            // 禁用按钮，显示下载中状态
+            btn.disabled = true;
+            btn.textContent = '⏳ 下载中...';
+            log(`🔥 正在下载 CPU FlameGraph (采样时长: ${duration}秒)...`);
+
+            // 使用 fetch 下载文件
+            fetch(`/api/cpu/flamegraph_raw?duration=${duration}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    // 创建下载链接
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `cpu_flamegraph_${duration}s.svg`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+
+                    // 恢复按钮，显示成功
+                    btn.disabled = false;
+                    btn.textContent = '🔥 下载 CPU FlameGraph';
+                    log('✅ CPU FlameGraph 下载完成');
+                })
+                .catch(error => {
+                    // 错误处理
+                    btn.disabled = false;
+                    btn.textContent = '🔥 下载 CPU FlameGraph';
+                    log(`❌ CPU FlameGraph 下载失败: ${error.message}`);
+                });
+        }
+
         function downloadHeapRawSVG() {
             const btn = document.getElementById('heap-download-btn');
 
@@ -291,6 +375,45 @@ static const char INDEX_PAGE[] = R"HTML(
                 });
         }
 
+        function downloadHeapFlameGraph() {
+            const btn = document.getElementById('heap-flamegraph-download-btn');
+
+            // 禁用按钮，显示下载中状态
+            btn.disabled = true;
+            btn.textContent = '⏳ 下载中...';
+            log('🔥 正在下载 Heap FlameGraph...');
+
+            // 使用 fetch 下载文件
+            fetch('/api/heap/flamegraph_raw')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    // 创建下载链接
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                    a.download = `heap_flamegraph_${timestamp}.svg`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+
+                    // 恢复按钮，显示成功
+                    btn.disabled = false;
+                    btn.textContent = '🔥 下载 Heap FlameGraph';
+                    log('✅ Heap FlameGraph 下载完成');
+                })
+                .catch(error => {
+                    // 错误处理
+                    btn.disabled = false;
+                    btn.textContent = '🔥 下载 Heap FlameGraph';
+                    log(`❌ Heap FlameGraph 下载失败: ${error.message}`);
+                });
+        }
+
         function downloadGrowthRawSVG() {
             const btn = document.getElementById('growth-download-btn');
 
@@ -327,6 +450,45 @@ static const char INDEX_PAGE[] = R"HTML(
                     btn.disabled = false;
                     btn.textContent = '📥 下载 Growth 原始 SVG';
                     log(`❌ Growth 原始 SVG 下载失败: ${error.message}`);
+                });
+        }
+
+        function downloadGrowthFlameGraph() {
+            const btn = document.getElementById('growth-flamegraph-download-btn');
+
+            // 禁用按钮，显示下载中状态
+            btn.disabled = true;
+            btn.textContent = '⏳ 下载中...';
+            log('🔥 正在下载 Growth FlameGraph...');
+
+            // 使用 fetch 下载文件
+            fetch('/api/growth/flamegraph_raw')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    // 创建下载链接
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                    a.download = `growth_flamegraph_${timestamp}.svg`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+
+                    // 恢复按钮，显示成功
+                    btn.disabled = false;
+                    btn.textContent = '🔥 下载 Growth FlameGraph';
+                    log('✅ Growth FlameGraph 下载完成');
+                })
+                .catch(error => {
+                    // 错误处理
+                    btn.disabled = false;
+                    btn.textContent = '🔥 下载 Growth FlameGraph';
+                    log(`❌ Growth FlameGraph 下载失败: ${error.message}`);
                 });
         }
     </script>
@@ -383,16 +545,19 @@ static const char CPU_SVG_VIEWER_PAGE[] = R"HTML(
     <script>
         const urlParams = new URLSearchParams(window.location.search);
         const duration = urlParams.get('duration') || '10';
+        const outputType = urlParams.get('output_type') || 'pprof';
 
         function loadSVG() {
             const container = document.getElementById('svg-container');
             container.innerHTML = '正在加载火焰图...';
 
-            fetch(`/api/cpu/analyze?duration=${duration}`)
+            fetch(`/api/cpu/analyze?duration=${duration}&output_type=${outputType}`)
                 .then(response => response.text())
                 .then(svgText => {
-                    // 修复 pprof SVG 的负坐标 viewBox
-                    svgText = svgText.replace(/viewBox="0 -1000 2000 1000"/g, 'viewBox="0 0 2000 1000"');
+                    // Only fix viewBox for pprof SVG (not FlameGraph)
+                    if (outputType === 'pprof') {
+                        svgText = svgText.replace(/viewBox="0 -1000 2000 1000"/g, 'viewBox="0 0 2000 1000"');
+                    }
 
                     container.innerHTML = svgText;
 
@@ -496,11 +661,14 @@ static const char HEAP_SVG_VIEWER_PAGE[] = R"HTML(
         let svgElement = null;
         let viewportElement = null;
 
+        const urlParams = new URLSearchParams(window.location.search);
+        const outputType = urlParams.get('output_type') || 'pprof';
+
         function loadSVG() {
             document.getElementById('svg-container').innerHTML = '正在加载Heap火焰图...';
 
-            // Heap分析不需要duration参数，直接调用接口
-            fetch('/api/heap/analyze')
+            // Heap分析传递output_type参数
+            fetch(`/api/heap/analyze?output_type=${outputType}`)
                 .then(response => {
                     const contentType = response.headers.get('Content-Type');
                     if (contentType && contentType.includes('json')) {
@@ -722,11 +890,14 @@ static const char GROWTH_SVG_VIEWER_PAGE[] = R"HTML(
         let svgElement = null;
         let viewportElement = null;
 
+        const urlParams = new URLSearchParams(window.location.search);
+        const outputType = urlParams.get('output_type') || 'pprof';
+
         function loadSVG() {
             document.getElementById('svg-container').innerHTML = '正在加载Growth火焰图...';
 
-            // Growth分析不需要duration参数，直接调用接口
-            fetch('/api/growth/analyze')
+            // Growth分析传递output_type参数
+            fetch(`/api/growth/analyze?output_type=${outputType}`)
                 .then(response => {
                     const contentType = response.headers.get('Content-Type');
                     if (contentType && contentType.includes('json')) {

@@ -86,6 +86,11 @@ private:
 
     std::string findLatestHeapProfile(const std::string& dir);
 
+    // Generate flame graph from collapsed format using flamegraph.pl
+    std::string generateFlameGraph(
+        const std::string& collapsed_file,
+        const std::string& title);
+
     std::string profile_dir_;
     std::map<ProfilerType, ProfilerState> profiler_states_;
     mutable std::mutex mutex_;

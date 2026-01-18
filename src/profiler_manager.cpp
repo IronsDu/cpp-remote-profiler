@@ -1,5 +1,6 @@
 #include "profiler_manager.h"
 #include "embed_pprof.h"
+#include "embed_flamegraph.h"
 #include <gperftools/profiler.h>
 #include <gperftools/heap-profiler.h>
 #include <gperftools/malloc_extension.h>
@@ -25,6 +26,11 @@ namespace profiler {
 ProfilerManager::ProfilerManager() {
     // Write embedded pprof script to current directory
     writePprofScript("./pprof");
+
+    // Write embedded flamegraph.pl script to current directory
+    if (!writeFlamegraphScript("./flamegraph.pl")) {
+        std::cerr << "Warning: Failed to write flamegraph.pl script" << std::endl;
+    }
 
     // Create profile directory if not exists
     profile_dir_ = "/tmp/cpp_profiler";
@@ -218,6 +224,39 @@ bool ProfilerManager::executeCommand(const std::string& cmd, std::string& output
     }
     pclose(pipe);
     return true;
+}
+
+// Generate flame graph from collapsed format using flamegraph.pl
+std::string ProfilerManager::generateFlameGraph(
+    const std::string& collapsed_file,
+    const std::string& title) {
+
+    std::string svg_output;
+
+    // Build flamegraph.pl command
+    // Use "perl ./flamegraph.pl" instead of "./flamegraph.pl" for better compatibility
+    std::ostringstream cmd;
+    cmd << "perl ./flamegraph.pl"
+        << " --title=\"" << title << "\""
+        << " --width=1200"
+        << " " << collapsed_file
+        << " 2>/dev/null";
+
+    std::cout << "Generating FlameGraph: " << cmd.str() << std::endl;
+
+    if (!executeCommand(cmd.str(), svg_output)) {
+        std::cerr << "Failed to execute flamegraph.pl" << std::endl;
+        return R"({"error": "Failed to execute flamegraph.pl command"})";
+    }
+
+    // Validate output
+    if (svg_output.find("<?xml") == std::string::npos &&
+        svg_output.find("<svg") == std::string::npos) {
+        std::cerr << "flamegraph.pl did not generate valid SVG" << std::endl;
+        return R"({"error": "flamegraph.pl did not generate valid SVG"})";
+    }
+
+    return svg_output;
 }
 
 
@@ -533,55 +572,110 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     // Wait for file to be flushed
     usleep(200000); // 200ms
 
-    // Step 5: Generate SVG using pprof
+    // Step 5: Generate SVG using pprof or flamegraph.pl
     std::string svg_output;
-
-    // Build pprof command (使用可执行文件的绝对路径进行符号化)
     std::string exe_path = getExecutablePath();
-    std::ostringstream cmd;
-    cmd << "./pprof --svg " << exe_path << " " << profile_path << " 2>/dev/null";
 
-    std::cout << "Generating flame graph..." << std::endl;
-    if (!executeCommand(cmd.str(), svg_output)) {
-        return R"({"error": "Failed to execute pprof command"})";
-    }
+    // Check output_type
+    if (output_type == "flamegraph") {
+        // PATH 1: Generate FlameGraph using Brendan Gregg's tool
+        std::cout << "Generating FlameGraph output..." << std::endl;
 
-    // Check if SVG was generated (should start with <?xml or <svg)
-    // 更精确的错误检查：只检查是否包含SVG标记
-    if (svg_output.find("<?xml") == std::string::npos &&
-        svg_output.find("<svg") == std::string::npos) {
-        return R"({"error": "pprof did not generate valid SVG. Output: )" + svg_output + R"("})";
-    }
+        // Step 5a: Generate collapsed format using pprof --collapsed
+        std::string collapsed_file = "/tmp/cpu_collapsed.prof";
+        std::ostringstream collapsed_cmd;
+        collapsed_cmd << "./pprof --collapsed " << exe_path << " " << profile_path
+                      << " > " << collapsed_file << " 2>&1";
 
-    // 检查是否是pprof的错误消息（pprof的错误通常以"error:"开头）
-    // 但要排除SVG中的JavaScript代码
-    if (svg_output.size() < 100) {
-        // 输出太短，可能是错误消息
-        if (svg_output.find("error") != std::string::npos ||
-            svg_output.find("Error") != std::string::npos) {
-            return R"({"error": "pprof error: )" + svg_output + R"("})";
+        std::cout << "Running collapsed command: " << collapsed_cmd.str() << std::endl;
+
+        std::string collapsed_output;
+        if (!executeCommand(collapsed_cmd.str(), collapsed_output)) {
+            return R"({"error": "Failed to execute pprof --collapsed command"})";
         }
-    }
 
-    std::cout << "Flame graph generated successfully!" << std::endl;
+        // Check if collapsed file was created and has content
+        std::ifstream collapsed_in(collapsed_file);
+        if (!collapsed_in.is_open()) {
+            return R"({"error": "Failed to create collapsed file"})";
+        }
 
-    // 后处理 SVG：添加 viewBox 以支持正确的缩放和显示
-    // 查找 <svg> 标签并添加 viewBox 属性
-    size_t svg_start = svg_output.find("<svg");
-    if (svg_start != std::string::npos) {
-        size_t svg_tag_end = svg_output.find(">", svg_start);
-        if (svg_tag_end != std::string::npos) {
-            // 检查是否已有 viewBox
-            std::string svg_tag = svg_output.substr(svg_start, svg_tag_end - svg_start);
-            if (svg_tag.find("viewBox") == std::string::npos) {
-                // pprof 生成的 SVG 通常使用负坐标，典型的范围大约是：
-                // X: 0-2000, Y: -1000-0
-                // 我们使用一个保守的 viewBox
-                std::string viewbox_attr = " viewBox=\"0 -1000 2000 1000\"";
+        // Verify file has actual data (not just "Using local file..." messages)
+        std::string line;
+        bool has_data = false;
+        while (std::getline(collapsed_in, line)) {
+            if (!line.empty() && line[0] != '#') {
+                has_data = true;
+                break;
+            }
+        }
+        collapsed_in.close();
 
-                // 在 <svg> 标签内插入 viewBox 属性
-                svg_output.insert(svg_tag_end, viewbox_attr);
-                std::cout << "Added viewBox to SVG for proper scaling" << std::endl;
+        if (!has_data) {
+            std::cout << "pprof --collapsed produced no data" << std::endl;
+            return R"({"error": "pprof --collapsed produced no data"})";
+        }
+
+        std::cout << "Collapsed stacks written to " << collapsed_file << std::endl;
+
+        // Step 5b: Generate FlameGraph from collapsed format
+        svg_output = generateFlameGraph(collapsed_file, "CPU Flame Graph");
+
+        // Check if it's an error
+        if (svg_output.size() > 10 && svg_output[0] == '{' && svg_output[1] == '"') {
+            // Error occurred, return as-is
+            return svg_output;
+        }
+
+    } else {
+        // PATH 2: Default - Generate pprof SVG (existing behavior)
+        std::cout << "Generating pprof SVG output..." << std::endl;
+
+        // Build pprof command (使用可执行文件的绝对路径进行符号化)
+        std::ostringstream cmd;
+        cmd << "./pprof --svg " << exe_path << " " << profile_path << " 2>/dev/null";
+
+        if (!executeCommand(cmd.str(), svg_output)) {
+            return R"({"error": "Failed to execute pprof command"})";
+        }
+
+        // Check if SVG was generated (should start with <?xml or <svg)
+        // 更精确的错误检查：只检查是否包含SVG标记
+        if (svg_output.find("<?xml") == std::string::npos &&
+            svg_output.find("<svg") == std::string::npos) {
+            return R"({"error": "pprof did not generate valid SVG. Output: )" + svg_output + R"("})";
+        }
+
+        // 检查是否是pprof的错误消息（pprof的错误通常以"error:"开头）
+        // 但要排除SVG中的JavaScript代码
+        if (svg_output.size() < 100) {
+            // 输出太短，可能是错误消息
+            if (svg_output.find("error") != std::string::npos ||
+                svg_output.find("Error") != std::string::npos) {
+                return R"({"error": "pprof error: )" + svg_output + R"("})";
+            }
+        }
+
+        std::cout << "pprof SVG generated successfully!" << std::endl;
+
+        // 后处理 SVG：添加 viewBox 以支持正确的缩放和显示
+        // 查找 <svg> 标签并添加 viewBox 属性
+        size_t svg_start = svg_output.find("<svg");
+        if (svg_start != std::string::npos) {
+            size_t svg_tag_end = svg_output.find(">", svg_start);
+            if (svg_tag_end != std::string::npos) {
+                // 检查是否已有 viewBox
+                std::string svg_tag = svg_output.substr(svg_start, svg_tag_end - svg_start);
+                if (svg_tag.find("viewBox") == std::string::npos) {
+                    // pprof 生成的 SVG 通常使用负坐标，典型的范围大约是：
+                    // X: 0-2000, Y: -1000-0
+                    // 我们使用一个保守的 viewBox
+                    std::string viewbox_attr = " viewBox=\"0 -1000 2000 1000\"";
+
+                    // 在 <svg> 标签内插入 viewBox 属性
+                    svg_output.insert(svg_tag_end, viewbox_attr);
+                    std::cout << "Added viewBox to SVG for proper scaling" << std::endl;
+                }
             }
         }
     }
@@ -717,41 +811,98 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
 
     std::cout << "Using heap profile: " << latest_heap_file << std::endl;
 
-    // Step 9: Generate SVG using pprof
+    // Step 9: Generate SVG using pprof or flamegraph.pl
     std::string svg_output;
-
-    // Build pprof command (使用可执行文件的绝对路径进行符号化)
     std::string exe_path = getExecutablePath();
-    std::ostringstream cmd;
-    cmd << "./pprof --svg " << exe_path << " " << latest_heap_file << " 2>/dev/null";
 
-    std::cout << "Generating heap flame graph..." << std::endl;
-    std::cout << "Command: " << cmd.str() << std::endl;
+    // Check output_type
+    if (output_type == "flamegraph") {
+        // PATH 1: Generate FlameGraph using Brendan Gregg's tool
+        std::cout << "Generating Heap FlameGraph..." << std::endl;
 
-    if (!executeCommand(cmd.str(), svg_output)) {
-        std::cout << "pprof command failed" << std::endl;
-        return R"({"error": "Failed to execute pprof command"})";
-    }
+        // Step 9a: Generate collapsed format using pprof --collapsed
+        std::string collapsed_file = "/tmp/heap_collapsed.prof";
+        std::ostringstream collapsed_cmd;
+        collapsed_cmd << "./pprof --collapsed " << exe_path << " " << latest_heap_file
+                      << " > " << collapsed_file << " 2>&1";
 
-    // Check if SVG was generated
-    if (svg_output.find("<?xml") == std::string::npos &&
-        svg_output.find("<svg") == std::string::npos) {
-        std::cout << "pprof did not return SVG. Output: " << svg_output.substr(0, 200) << std::endl;
-        return R"({"error": "pprof did not generate valid SVG. Output: )" + svg_output + R"("})";
-    }
+        std::cout << "Running collapsed command: " << collapsed_cmd.str() << std::endl;
 
-    std::cout << "Heap flame graph generated successfully! Size: " << svg_output.length() << std::endl;
+        std::string collapsed_output;
+        if (!executeCommand(collapsed_cmd.str(), collapsed_output)) {
+            return R"({"error": "Failed to execute pprof --collapsed command"})";
+        }
 
-    // 后处理 SVG：添加 viewBox 以支持正确的缩放和显示
-    size_t svg_start = svg_output.find("<svg");
-    if (svg_start != std::string::npos) {
-        size_t svg_tag_end = svg_output.find(">", svg_start);
-        if (svg_tag_end != std::string::npos) {
-            std::string svg_tag = svg_output.substr(svg_start, svg_tag_end - svg_start);
-            if (svg_tag.find("viewBox") == std::string::npos) {
-                std::string viewbox_attr = " viewBox=\"0 -1000 2000 1000\"";
-                svg_output.insert(svg_tag_end, viewbox_attr);
-                std::cout << "Added viewBox to heap SVG for proper scaling" << std::endl;
+        // Check if collapsed file was created and has content
+        std::ifstream collapsed_in(collapsed_file);
+        if (!collapsed_in.is_open()) {
+            return R"({"error": "Failed to create collapsed file"})";
+        }
+
+        // Verify file has actual data (not just "Using local file..." messages)
+        std::string line;
+        bool has_data = false;
+        while (std::getline(collapsed_in, line)) {
+            if (!line.empty() && line[0] != '#') {
+                has_data = true;
+                break;
+            }
+        }
+        collapsed_in.close();
+
+        if (!has_data) {
+            std::cout << "pprof --collapsed produced no data" << std::endl;
+            return R"({"error": "pprof --collapsed produced no data"})";
+        }
+
+        std::cout << "Collapsed stacks written to " << collapsed_file << std::endl;
+
+        // Step 9b: Generate FlameGraph from collapsed format
+        svg_output = generateFlameGraph(collapsed_file, "Heap Flame Graph");
+
+        // Check if it's an error
+        if (svg_output.size() > 10 && svg_output[0] == '{' && svg_output[1] == '"') {
+            // Error occurred, return as-is
+            return svg_output;
+        }
+
+        std::cout << "Heap FlameGraph generated successfully! Size: " << svg_output.length() << std::endl;
+
+    } else {
+        // PATH 2: Default - Generate pprof SVG (existing behavior)
+        std::cout << "Generating Heap pprof SVG..." << std::endl;
+
+        // Build pprof command (使用可执行文件的绝对路径进行符号化)
+        std::ostringstream cmd;
+        cmd << "./pprof --svg " << exe_path << " " << latest_heap_file << " 2>/dev/null";
+
+        std::cout << "Command: " << cmd.str() << std::endl;
+
+        if (!executeCommand(cmd.str(), svg_output)) {
+            std::cout << "pprof command failed" << std::endl;
+            return R"({"error": "Failed to execute pprof command"})";
+        }
+
+        // Check if SVG was generated
+        if (svg_output.find("<?xml") == std::string::npos &&
+            svg_output.find("<svg") == std::string::npos) {
+            std::cout << "pprof did not return SVG. Output: " << svg_output.substr(0, 200) << std::endl;
+            return R"({"error": "pprof did not generate valid SVG. Output: )" + svg_output + R"("})";
+        }
+
+        std::cout << "Heap pprof SVG generated successfully! Size: " << svg_output.length() << std::endl;
+
+        // 后处理 SVG：添加 viewBox 以支持正确的缩放和显示
+        size_t svg_start = svg_output.find("<svg");
+        if (svg_start != std::string::npos) {
+            size_t svg_tag_end = svg_output.find(">", svg_start);
+            if (svg_tag_end != std::string::npos) {
+                std::string svg_tag = svg_output.substr(svg_start, svg_tag_end - svg_start);
+                if (svg_tag.find("viewBox") == std::string::npos) {
+                    std::string viewbox_attr = " viewBox=\"0 -1000 2000 1000\"";
+                    svg_output.insert(svg_tag_end, viewbox_attr);
+                    std::cout << "Added viewBox to heap SVG for proper scaling" << std::endl;
+                }
             }
         }
     }
