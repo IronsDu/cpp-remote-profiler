@@ -35,6 +35,12 @@ cpu.prof*
 # Temporary files
 *.tmp
 *.temp
+*.bak
+*.old
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
 
 # vcpkg (commented out if you want to commit vcpkg for reproducibility)
 # vcpkg/
