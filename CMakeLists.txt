@@ -23,7 +23,6 @@ find_package(Drogon CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
-find_package(Protobuf CONFIG REQUIRED)
 find_package(Backward CONFIG REQUIRED)
 find_package(absl REQUIRED)
 
@@ -33,10 +32,8 @@ pkg_check_modules(GPERFTOOLS REQUIRED libprofiler libtcmalloc)
 
 # Include directories
 include_directories(${PROJECT_SOURCE_DIR}/include)
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/third_party/profile)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${GPERFTOOLS_INCLUDE_DIRS})
-include_directories(${Protobuf_INCLUDE_DIRS})
 
 # Source files
 set(PROFILER_SOURCES
@@ -53,34 +50,17 @@ set(PROFILER_HEADERS
     include/web_server.h
 )
 
-# Generate protobuf files
-set(PROTO_PATH ${PROJECT_SOURCE_DIR}/third_party/profile)
-set(PROTO_SRC ${PROTO_PATH}/profile.proto)
-
-# 使用 protobuf_generate 生成代码，并关联到目标
-protobuf_generate(
-    TARGETS profiler_lib profiler_example profiler_test
-    LANGUAGE cpp
-    OUT_VAR PROTO_FILES
-    PROTOS ${PROTO_SRC}
-)
-
-message(STATUS "Generated protobuf files: ${PROTO_FILES}")
-message(STATUS "Protobuf include dirs: ${Protobuf_INCLUDE_DIRS}")
-message(STATUS "CMAKE_CURRENT_BINARY_DIR: ${CMAKE_CURRENT_BINARY_DIR}")
-
 # Create library
-add_library(profiler_lib ${PROFILER_SOURCES} ${PROFILER_HEADERS} ${PROTO_FILES})
+add_library(profiler_lib ${PROFILER_SOURCES} ${PROFILER_HEADERS})
 target_link_libraries(profiler_lib
     ${GPERFTOOLS_LIBRARIES}
-    protobuf::libprotobuf
     Backward::Backward
     absl::symbolize
     ${CMAKE_DL_LIBS}
 )
 
 # Example executable
-add_executable(profiler_example example/main.cpp example/workload.cpp ${PROTO_FILES})
+add_executable(profiler_example example/main.cpp example/workload.cpp)
 target_link_libraries(profiler_example
     profiler_lib
     Drogon::Drogon
@@ -90,7 +70,7 @@ target_link_libraries(profiler_example
 enable_testing()
 
 # CPU profile 测试
-add_executable(test_cpu_profile tests/test_cpu_profile.cpp ${PROTO_FILES})
+add_executable(test_cpu_profile tests/test_cpu_profile.cpp)
 target_link_libraries(test_cpu_profile
     profiler_lib
     GTest::gtest
@@ -101,7 +81,7 @@ target_link_libraries(test_cpu_profile
 add_test(NAME CPUProfileTest COMMAND test_cpu_profile)
 
 # Full flow 测试
-add_executable(test_full_flow tests/test_full_flow.cpp ${PROTO_FILES})
+add_executable(test_full_flow tests/test_full_flow.cpp)
 target_link_libraries(test_full_flow
     profiler_lib
     GTest::gtest
