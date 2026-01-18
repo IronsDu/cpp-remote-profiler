@@ -6,7 +6,10 @@
 #include <gperftools/malloc_extension.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+#include <signal.h>
 #include <limits.h>
 #include <dirent.h>
 #include <chrono>
@@ -20,8 +23,21 @@
 #include <vector>
 #include <dlfcn.h>
 #include <cstdint>
+#include <execinfo.h>
+#include <cxxabi.h>
+#include <fcntl.h>
+#include <ucontext.h>
+#include <unwind.h>
+#include "absl/debugging/stacktrace.h"
+#include "absl/debugging/symbolize.h"
 
 namespace profiler {
+
+// Static member initialization
+std::atomic<bool> ProfilerManager::capture_in_progress_{false};
+SharedStackTrace* ProfilerManager::shared_stacks_ = nullptr;
+int ProfilerManager::max_threads_ = 0;
+pid_t ProfilerManager::main_thread_id_ = 0;
 
 ProfilerManager::ProfilerManager() {
     // Write embedded pprof script to current directory
@@ -48,6 +64,43 @@ ProfilerManager::ProfilerManager() {
         std::cerr << "Failed to initialize symbolizer: " << e.what() << std::endl;
         // Continue without symbolizer (will fall back to addr2line)
     }
+
+    // Store main thread ID
+    main_thread_id_ = gettid();
+
+    // Initialize abseil symbolizer
+    absl::InitializeSymbolizer("");
+
+    // Initialize shared memory for stack traces (allocate for max 256 threads)
+    max_threads_ = 256;
+    size_t shared_size = sizeof(SharedStackTrace) * max_threads_;
+
+    // Use anonymous mmap for shared memory
+    void* mem = mmap(nullptr, shared_size, PROT_READ | PROT_WRITE,
+                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (mem == MAP_FAILED) {
+        std::cerr << "Failed to allocate shared memory for stack traces: "
+                  << strerror(errno) << std::endl;
+        shared_stacks_ = nullptr;
+        max_threads_ = 0;
+    } else {
+        shared_stacks_ = static_cast<SharedStackTrace*>(mem);
+        // Initialize all slots
+        for (int i = 0; i < max_threads_; ++i) {
+            shared_stacks_[i].ready = false;
+            shared_stacks_[i].depth = 0;
+        }
+    }
+
+    // Register signal handler for stack tracing
+    struct sigaction sa;
+    sa.sa_sigaction = &ProfilerManager::signalHandler;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(STACK_CAPTURE_SIGNAL, &sa, nullptr) != 0) {
+        std::cerr << "Failed to register signal handler: " << strerror(errno) << std::endl;
+    }
 }
 
 ProfilerManager::~ProfilerManager() {
@@ -56,6 +109,13 @@ ProfilerManager::~ProfilerManager() {
     }
     if (profiler_states_[ProfilerType::HEAP].is_running) {
         IsHeapProfilerRunning();
+    }
+
+    // Clean up shared memory
+    if (shared_stacks_ != nullptr) {
+        size_t shared_size = sizeof(SharedStackTrace) * max_threads_;
+        munmap(shared_stacks_, shared_size);
+        shared_stacks_ = nullptr;
     }
 }
 
@@ -867,4 +927,319 @@ std::string ProfilerManager::getRawHeapGrowthStacks() {
     return heap_growth_stacks;
 }
 
+std::string ProfilerManager::getThreadStacks() {
+    std::ostringstream result;
+
+    // Open /proc/self/task directory to list all threads
+    DIR* task_dir = opendir("/proc/self/task");
+    if (!task_dir) {
+        std::cerr << "Failed to open /proc/self/task" << std::endl;
+        return "";
+    }
+
+    result << "Thread Stacks Snapshot\n";
+    result << "======================\n\n";
+
+    // Iterate through all thread directories
+    struct dirent* entry;
+    int thread_count = 0;
+
+    while ((entry = readdir(task_dir)) != nullptr) {
+        // Skip "." and ".." entries
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+
+        // Get thread ID
+        pid_t tid = atoi(entry->d_name);
+        if (tid == 0) {
+            continue;
+        }
+
+        thread_count++;
+
+        result << "Thread " << tid << ":\n";
+
+        // Read thread stat to get state and name
+        std::string stat_file = std::string("/proc/self/task/") + entry->d_name + "/stat";
+        std::ifstream stat_stream(stat_file);
+
+        if (stat_stream.is_open()) {
+            std::string line;
+            if (std::getline(stat_stream, line)) {
+                // Parse stat file (format: pid (comm) state ...)
+                size_t open_paren = line.find('(');
+                size_t close_paren = line.find(')', open_paren);
+
+                if (open_paren != std::string::npos && close_paren != std::string::npos) {
+                    std::string name = line.substr(open_paren + 1, close_paren - open_paren - 1);
+
+                    // Get state character (after close_paren + 2)
+                    if (close_paren + 2 < line.length()) {
+                        char state = line[close_paren + 2];
+
+                        // Convert state to readable format
+                        const char* state_str = "Unknown";
+                        switch (state) {
+                            case 'R': state_str = "Running"; break;
+                            case 'S': state_str = "Sleeping"; break;
+                            case 'D': state_str = "Disk sleep"; break;
+                            case 'Z': state_str = "Zombie"; break;
+                            case 'T': state_str = "Stopped"; break;
+                            case 't': state_str = "Tracing stop"; break;
+                            case 'X': state_str = "Dead"; break;
+                            case 'x': state_str = "Dead"; break;
+                            case 'K': state_str = "Wakekill"; break;
+                            case 'W': state_str = "Waking"; break;
+                            case 'P': state_str = "Parked"; break;
+                        }
+
+                        result << "  Name: " << name << "\n";
+                        result << "  State: " << state_str << " (" << state << ")\n";
+                    }
+                }
+            }
+            stat_stream.close();
+        }
+
+        // Try to read wchan (what thread is waiting on)
+        std::string wchan_file = std::string("/proc/self/task/") + entry->d_name + "/wchan";
+        std::ifstream wchan_stream(wchan_file);
+
+        if (wchan_stream.is_open()) {
+            std::string wchan;
+            if (std::getline(wchan_stream, wchan) && !wchan.empty()) {
+                result << "  Waiting in: " << wchan << "\n";
+            }
+            wchan_stream.close();
+        }
+
+        result << "\n";
+    }
+
+    closedir(task_dir);
+
+    result << "Total threads: " << thread_count << "\n";
+
+    std::string output = result.str();
+    std::cout << "Thread stacks collected, size: " << output.size() << " bytes" << std::endl;
+
+    return output;
+}
+
+// Signal handler for capturing stack traces (signal-safe)
+void ProfilerManager::signalHandler(int signum, siginfo_t* info, void* context) {
+    // Check if we should capture
+    if (!capture_in_progress_.load(std::memory_order_relaxed)) {
+        return;
+    }
+
+    // Check shared memory
+    if (!shared_stacks_) {
+        return;
+    }
+
+    // Get current thread ID
+    pid_t tid = gettid();
+
+    // Calculate slot based on TID
+    int slot = tid % max_threads_;
+
+    // Try to capture full stack trace using backtrace()
+    // Note: backtrace() is not officially async-signal-safe, but often works on Linux
+    int depth = backtrace(shared_stacks_[slot].addresses, 64);
+
+    // Store metadata
+    shared_stacks_[slot].tid = tid;
+    shared_stacks_[slot].depth = depth;
+
+    // Mark as ready
+    shared_stacks_[slot].ready.store(true, std::memory_order_release);
+
+    // Suppress unused parameter warnings
+    (void)signum;
+    (void)info;
+    (void)context;
+}
+
+std::string ProfilerManager::symbolizeAddress(void* addr) {
+    // Try to symbolize using abseil
+    char symbol_buf[1024];
+    if (absl::Symbolize(addr, symbol_buf, sizeof(symbol_buf))) {
+        return std::string(symbol_buf);
+    }
+
+    // Fallback to backward-cpp
+    return resolveSymbolWithBackward(addr);
+}
+
+std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
+    std::vector<ThreadStackTrace> result;
+
+    if (!shared_stacks_) {
+        std::cerr << "Shared memory not initialized" << std::endl;
+        // Fallback: capture current thread only
+        pid_t current_tid = gettid();
+        ThreadStackTrace trace;
+        trace.tid = current_tid;
+        trace.depth = backtrace(trace.addresses, 64);
+        trace.captured = true;
+        result.push_back(trace);
+        return result;
+    }
+
+    // Get all thread IDs
+    std::vector<pid_t> tids;
+    DIR* task_dir = opendir("/proc/self/task");
+    if (!task_dir) {
+        std::cerr << "Failed to open /proc/self/task" << std::endl;
+        return result;
+    }
+
+    struct dirent* entry;
+    while ((entry = readdir(task_dir)) != nullptr) {
+        if (entry->d_name[0] == '.') continue;
+        pid_t tid = atoi(entry->d_name);
+        if (tid > 0) {
+            tids.push_back(tid);
+        }
+    }
+    closedir(task_dir);
+
+    std::cout << "Found " << tids.size() << " threads" << std::endl;
+
+    // Clear all ready flags in shared memory
+    for (int i = 0; i < max_threads_; ++i) {
+        shared_stacks_[i].ready = false;
+        shared_stacks_[i].depth = 0;
+        shared_stacks_[i].tid = 0;
+        // Clear addresses to avoid stale data
+        for (int j = 0; j < 64; ++j) {
+            shared_stacks_[i].addresses[j] = nullptr;
+        }
+    }
+
+    // Memory barrier to ensure clears are visible
+    __sync_synchronize();
+
+    // Set capture flag
+    capture_in_progress_.store(true, std::memory_order_release);
+
+    pid_t current_tid = gettid();
+    pid_t current_pid = getpid();
+
+    // Send signal to all threads including current thread
+    // Use tgkill for more precise signal delivery
+    int signals_sent = 0;
+    int signals_failed = 0;
+
+    for (pid_t tid : tids) {
+        // For current thread, use raise() which is safer
+        if (tid == current_tid) {
+            std::cout << "Using raise() for current thread: " << tid << std::endl;
+            raise(STACK_CAPTURE_SIGNAL);
+            signals_sent++;
+        } else {
+            // For other threads, try tgkill first, then pthread_kill
+            int ret = syscall(SYS_tgkill, current_pid, tid, STACK_CAPTURE_SIGNAL);
+            if (ret == 0) {
+                signals_sent++;
+            } else if (ret == ESRCH) {
+                // Thread doesn't exist anymore
+                signals_failed++;
+            } else {
+                // Other errors - try pthread_kill as fallback
+                ret = pthread_kill(tid, STACK_CAPTURE_SIGNAL);
+                if (ret == 0) {
+                    signals_sent++;
+                } else {
+                    signals_failed++;
+                }
+            }
+        }
+    }
+
+    std::cout << "Sent signal to " << signals_sent << " threads ("
+              << signals_failed << " failed)" << std::endl;
+
+    // Wait for all threads to handle the signal
+    // Give them time to respond
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Clear capture flag
+    capture_in_progress_.store(false, std::memory_order_release);
+
+    // Memory barrier to ensure flag clear is visible
+    __sync_synchronize();
+
+    // Small additional delay to ensure all signal handlers have completed
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Collect results from shared memory
+    int collected = 0;
+    for (int i = 0; i < max_threads_; ++i) {
+        // Memory barrier before reading
+        __sync_synchronize();
+
+        if (shared_stacks_[i].ready && shared_stacks_[i].depth > 0) {
+            ThreadStackTrace trace;
+            trace.tid = shared_stacks_[i].tid;
+            trace.depth = shared_stacks_[i].depth;
+            trace.captured = true;
+
+            // Copy addresses
+            for (int j = 0; j < trace.depth && j < 64; ++j) {
+                trace.addresses[j] = shared_stacks_[i].addresses[j];
+            }
+
+            result.push_back(trace);
+            collected++;
+        }
+    }
+
+    std::cout << "Collected " << collected << " thread stacks from shared memory" << std::endl;
+    return result;
+}
+
+std::string ProfilerManager::getThreadCallStacks() {
+    std::ostringstream result;
+
+    result << "Thread Call Stacks (via Signal Handler)\n";
+    result << "=========================================\n\n";
+
+    // Capture all thread stacks via signal handler
+    auto stacks = captureAllThreadStacks();
+
+    result << "Total threads captured: " << stacks.size() << "\n\n";
+
+    // Process each thread's stack
+    for (const auto& trace : stacks) {
+        result << "Thread " << trace.tid << ":\n";
+        result << "  Frames: " << trace.depth << "\n";
+
+        // Symbolize and print each frame using abseil
+        for (int i = 0; i < trace.depth; ++i) {
+            void* addr = trace.addresses[i];
+            std::string symbolized = symbolizeAddress(addr);
+
+            result << "    #" << i << " ";
+
+            if (symbolized.empty() || symbolized[0] == '0') {
+                result << "0x" << std::hex << reinterpret_cast<uintptr_t>(addr)
+                       << std::dec << "\n";
+            } else {
+                result << symbolized << "\n";
+            }
+        }
+
+        result << "\n";
+    }
+
+    std::string output = result.str();
+    std::cout << "Thread callstacks collected, size: " << output.size() << " bytes" << std::endl;
+
+    return output;
+}
+
 } // namespace profiler
+
