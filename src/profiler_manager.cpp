@@ -6,7 +6,10 @@
 #include <gperftools/malloc_extension.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+#include <signal.h>
 #include <limits.h>
 #include <dirent.h>
 #include <chrono>
@@ -20,8 +23,30 @@
 #include <vector>
 #include <dlfcn.h>
 #include <cstdint>
+#include <execinfo.h>
+#include <cxxabi.h>
+#include <fcntl.h>
+#include <ucontext.h>
+#include <unwind.h>
+#include "absl/debugging/stacktrace.h"
+#include "absl/debugging/symbolize.h"
 
 namespace profiler {
+
+// Static member initialization
+std::atomic<bool> ProfilerManager::capture_in_progress_{false};
+SharedStackTrace* ProfilerManager::shared_stacks_ = nullptr;
+int ProfilerManager::stack_array_size_ = 0;
+std::atomic<pid_t> ProfilerManager::excluded_tid_{0};
+std::atomic<int> ProfilerManager::completed_count_{0};
+int ProfilerManager::expected_count_ = 0;
+pid_t ProfilerManager::main_thread_id_ = 0;
+
+// Signal configuration
+int ProfilerManager::stack_capture_signal_ = SIGUSR1;  // Default: SIGUSR1
+struct sigaction ProfilerManager::old_action_;
+bool ProfilerManager::old_action_saved_ = false;
+bool ProfilerManager::enable_signal_chaining_ = false;
 
 ProfilerManager::ProfilerManager() {
     // Write embedded pprof script to current directory
@@ -48,6 +73,17 @@ ProfilerManager::ProfilerManager() {
         std::cerr << "Failed to initialize symbolizer: " << e.what() << std::endl;
         // Continue without symbolizer (will fall back to addr2line)
     }
+
+    // Store main thread ID
+    main_thread_id_ = gettid();
+
+    // Initialize abseil symbolizer
+    absl::InitializeSymbolizer("");
+
+    // Note: shared_stacks_ will be allocated dynamically in captureAllThreadStacks()
+
+    // Register signal handler for stack tracing (saves old handler)
+    installSignalHandler();
 }
 
 ProfilerManager::~ProfilerManager() {
@@ -57,11 +93,75 @@ ProfilerManager::~ProfilerManager() {
     if (profiler_states_[ProfilerType::HEAP].is_running) {
         IsHeapProfilerRunning();
     }
+
+    // Restore old signal handler
+    restoreSignalHandler();
+
+    // Note: shared_stacks_ is allocated and freed in captureAllThreadStacks()
 }
 
 ProfilerManager& ProfilerManager::getInstance() {
     static ProfilerManager instance;
     return instance;
+}
+
+void ProfilerManager::setStackCaptureSignal(int signal) {
+    // Check if signal is valid
+    if (signal < 1 || signal > SIGRTMAX) {
+        std::cerr << "Invalid signal number: " << signal << std::endl;
+        return;
+    }
+
+    // If handler is already installed, restore old one first
+    if (old_action_saved_) {
+        std::cerr << "Warning: Signal handler already installed for signal "
+                  << stack_capture_signal_ << ". Restoring before changing." << std::endl;
+        // Note: This won't work correctly if multiple instances exist,
+        // but it's a best-effort attempt
+        ProfilerManager::getInstance().restoreSignalHandler();
+    }
+
+    stack_capture_signal_ = signal;
+    std::cout << "Stack capture signal set to: " << signal << std::endl;
+}
+
+int ProfilerManager::getStackCaptureSignal() {
+    return stack_capture_signal_;
+}
+
+void ProfilerManager::setSignalChaining(bool enable) {
+    enable_signal_chaining_ = enable;
+    std::cout << "Signal chaining " << (enable ? "enabled" : "disabled") << std::endl;
+}
+
+void ProfilerManager::installSignalHandler() {
+    struct sigaction sa;
+    sa.sa_sigaction = &ProfilerManager::signalHandler;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+
+    // Save old signal handler
+    if (sigaction(stack_capture_signal_, &sa, &old_action_) == 0) {
+        old_action_saved_ = true;
+        std::cout << "Registered signal handler for signal "
+                  << stack_capture_signal_ << std::endl;
+    } else {
+        std::cerr << "Failed to register signal handler for signal "
+                  << stack_capture_signal_ << ": " << strerror(errno) << std::endl;
+    }
+}
+
+void ProfilerManager::restoreSignalHandler() {
+    if (old_action_saved_) {
+        if (sigaction(stack_capture_signal_, &old_action_, nullptr) == 0) {
+            std::cout << "Restored old signal handler for signal "
+                      << stack_capture_signal_ << std::endl;
+        } else {
+            std::cerr << "Failed to restore old signal handler: "
+                      << strerror(errno) << std::endl;
+        }
+        old_action_saved_ = false;
+    }
 }
 
 bool ProfilerManager::startCPUProfiler(const std::string& output_path) {
@@ -867,4 +967,391 @@ std::string ProfilerManager::getRawHeapGrowthStacks() {
     return heap_growth_stacks;
 }
 
+std::string ProfilerManager::getThreadStacks() {
+    std::ostringstream result;
+
+    // Open /proc/self/task directory to list all threads
+    DIR* task_dir = opendir("/proc/self/task");
+    if (!task_dir) {
+        std::cerr << "Failed to open /proc/self/task" << std::endl;
+        return "";
+    }
+
+    result << "Thread Stacks Snapshot\n";
+    result << "======================\n\n";
+
+    // Iterate through all thread directories
+    struct dirent* entry;
+    int thread_count = 0;
+
+    while ((entry = readdir(task_dir)) != nullptr) {
+        // Skip "." and ".." entries
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+
+        // Get thread ID
+        pid_t tid = atoi(entry->d_name);
+        if (tid == 0) {
+            continue;
+        }
+
+        thread_count++;
+
+        result << "Thread " << tid << ":\n";
+
+        // Read thread stat to get state and name
+        std::string stat_file = std::string("/proc/self/task/") + entry->d_name + "/stat";
+        std::ifstream stat_stream(stat_file);
+
+        if (stat_stream.is_open()) {
+            std::string line;
+            if (std::getline(stat_stream, line)) {
+                // Parse stat file (format: pid (comm) state ...)
+                size_t open_paren = line.find('(');
+                size_t close_paren = line.find(')', open_paren);
+
+                if (open_paren != std::string::npos && close_paren != std::string::npos) {
+                    std::string name = line.substr(open_paren + 1, close_paren - open_paren - 1);
+
+                    // Get state character (after close_paren + 2)
+                    if (close_paren + 2 < line.length()) {
+                        char state = line[close_paren + 2];
+
+                        // Convert state to readable format
+                        const char* state_str = "Unknown";
+                        switch (state) {
+                            case 'R': state_str = "Running"; break;
+                            case 'S': state_str = "Sleeping"; break;
+                            case 'D': state_str = "Disk sleep"; break;
+                            case 'Z': state_str = "Zombie"; break;
+                            case 'T': state_str = "Stopped"; break;
+                            case 't': state_str = "Tracing stop"; break;
+                            case 'X': state_str = "Dead"; break;
+                            case 'x': state_str = "Dead"; break;
+                            case 'K': state_str = "Wakekill"; break;
+                            case 'W': state_str = "Waking"; break;
+                            case 'P': state_str = "Parked"; break;
+                        }
+
+                        result << "  Name: " << name << "\n";
+                        result << "  State: " << state_str << " (" << state << ")\n";
+                    }
+                }
+            }
+            stat_stream.close();
+        }
+
+        // Try to read wchan (what thread is waiting on)
+        std::string wchan_file = std::string("/proc/self/task/") + entry->d_name + "/wchan";
+        std::ifstream wchan_stream(wchan_file);
+
+        if (wchan_stream.is_open()) {
+            std::string wchan;
+            if (std::getline(wchan_stream, wchan) && !wchan.empty()) {
+                result << "  Waiting in: " << wchan << "\n";
+            }
+            wchan_stream.close();
+        }
+
+        result << "\n";
+    }
+
+    closedir(task_dir);
+
+    result << "Total threads: " << thread_count << "\n";
+
+    std::string output = result.str();
+    std::cout << "Thread stacks collected, size: " << output.size() << " bytes" << std::endl;
+
+    return output;
+}
+
+// Signal handler for capturing stack traces (signal-safe)
+void ProfilerManager::signalHandler(int signum, siginfo_t* info, void* context) {
+    // Check if this is our configured signal
+    if (signum != stack_capture_signal_) {
+        // If signal chaining is enabled, call the old handler
+        if (enable_signal_chaining_ && old_action_saved_
+            && old_action_.sa_sigaction) {
+            old_action_.sa_sigaction(signum, info, context);
+        }
+        return;
+    }
+
+    // Check if we should capture
+    if (!capture_in_progress_.load(std::memory_order_relaxed)) {
+        // If signal chaining is enabled, call the old handler
+        if (enable_signal_chaining_ && old_action_saved_
+            && old_action_.sa_sigaction) {
+            old_action_.sa_sigaction(signum, info, context);
+        }
+        return;
+    }
+
+    // Check shared memory
+    if (!shared_stacks_) {
+        return;
+    }
+
+    // Get current thread ID
+    pid_t tid = gettid();
+
+    // Boundary check: skip if thread ID exceeds array size
+    if (tid >= stack_array_size_) {
+        return;
+    }
+
+    // Skip excluded thread (the one handling the HTTP request)
+    pid_t excluded = excluded_tid_.load(std::memory_order_relaxed);
+    if (excluded != 0 && tid == excluded) {
+        return;
+    }
+
+    // Use tid directly as array index
+    int depth = backtrace(shared_stacks_[tid].addresses, 64);
+
+    // Store metadata
+    shared_stacks_[tid].tid = tid;
+    shared_stacks_[tid].depth = depth;
+
+    // Mark as ready
+    shared_stacks_[tid].ready.store(true, std::memory_order_release);
+
+    // Increment completed counter
+    completed_count_.fetch_add(1, std::memory_order_release);
+
+    // Note: We don't call old handler here to avoid interfering with stack capture
+    // If signal chaining is needed, the user should use a different signal
+    (void)info;
+    (void)context;
+}
+
+std::string ProfilerManager::symbolizeAddress(void* addr) {
+    // Try to symbolize using abseil
+    char symbol_buf[1024];
+    if (absl::Symbolize(addr, symbol_buf, sizeof(symbol_buf))) {
+        return std::string(symbol_buf);
+    }
+
+    // Fallback to backward-cpp
+    return resolveSymbolWithBackward(addr);
+}
+
+std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
+    std::vector<ThreadStackTrace> result;
+
+    // 1. Read all thread IDs and find maximum
+    std::vector<pid_t> tids;
+    pid_t max_tid = 0;
+    DIR* task_dir = opendir("/proc/self/task");
+    if (!task_dir) {
+        std::cerr << "Failed to open /proc/self/task" << std::endl;
+        return result;
+    }
+
+    struct dirent* entry;
+    while ((entry = readdir(task_dir)) != nullptr) {
+        if (entry->d_name[0] == '.') continue;
+        pid_t tid = atoi(entry->d_name);
+        if (tid > 0) {
+            tids.push_back(tid);
+            if (tid > max_tid) {
+                max_tid = tid;
+            }
+        }
+    }
+    closedir(task_dir);
+
+    std::cout << "Found " << tids.size() << " threads, max_tid = " << max_tid << std::endl;
+
+    // 2. Allocate array based on max_tid (tid as direct index)
+    int array_size = max_tid + 1;
+    size_t shared_size = sizeof(SharedStackTrace) * array_size;
+
+    SharedStackTrace* temp_stacks = (SharedStackTrace*)mmap(
+        nullptr, shared_size,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1, 0
+    );
+
+    if (temp_stacks == MAP_FAILED) {
+        std::cerr << "Failed to allocate shared memory for stack traces" << std::endl;
+        return result;
+    }
+
+    // Initialize array
+    for (int i = 0; i < array_size; ++i) {
+        temp_stacks[i].ready = false;
+        temp_stacks[i].depth = 0;
+        temp_stacks[i].tid = 0;
+        for (int j = 0; j < 64; ++j) {
+            temp_stacks[i].addresses[j] = nullptr;
+        }
+    }
+
+    // Save to static variables (signal handler needs access)
+    shared_stacks_ = temp_stacks;
+    stack_array_size_ = array_size;
+
+    __sync_synchronize();
+
+    // 3. Set capture flag and excluded thread
+    completed_count_.store(0, std::memory_order_release);
+    capture_in_progress_.store(true, std::memory_order_release);
+
+    pid_t current_tid = gettid();
+    pid_t current_pid = getpid();
+
+    // Exclude current thread (the one handling HTTP request)
+    excluded_tid_.store(current_tid, std::memory_order_release);
+
+    // 4. Send signal to all threads EXCEPT current thread
+    int signals_sent = 0;
+    int signals_failed = 0;
+
+    for (pid_t tid : tids) {
+        // Skip the HTTP request handling thread
+        if (tid == current_tid) {
+            continue;
+        }
+
+        int ret = syscall(SYS_tgkill, current_pid, tid, stack_capture_signal_);
+        if (ret == 0) {
+            signals_sent++;
+        } else if (ret == ESRCH) {
+            signals_failed++;
+        } else {
+            // Try pthread_kill as fallback
+            ret = pthread_kill(tid, stack_capture_signal_);
+            if (ret == 0) {
+                signals_sent++;
+            } else {
+                signals_failed++;
+            }
+        }
+    }
+
+    std::cout << "Sent signal to " << signals_sent << " threads ("
+              << signals_failed << " failed)" << std::endl;
+
+    // Set expected count based on ACTUAL signals sent (not original thread count)
+    // This handles the case where threads exit between enumerating and sending signals
+    expected_count_ = signals_sent;
+
+    // If no threads were signaled, nothing to do
+    if (expected_count_ == 0) {
+        std::cout << "No threads to capture (all may have exited)" << std::endl;
+        capture_in_progress_.store(false, std::memory_order_release);
+        excluded_tid_.store(0, std::memory_order_release);
+        munmap(temp_stacks, shared_size);
+        shared_stacks_ = nullptr;
+        stack_array_size_ = 0;
+        return result;
+    }
+
+    // 5. Wait for all signal handlers to complete
+    // Use a counter-based approach instead of fixed sleep
+    const int MAX_WAIT_MS = 2000;  // Maximum wait time
+    const int CHECK_INTERVAL_MS = 10;  // Check interval
+    int elapsed = 0;
+
+    while (elapsed < MAX_WAIT_MS) {
+        int completed = completed_count_.load(std::memory_order_acquire);
+
+        if (completed >= expected_count_) {
+            std::cout << "All threads completed stack capture in " << elapsed << "ms" << std::endl;
+            break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(CHECK_INTERVAL_MS));
+        elapsed += CHECK_INTERVAL_MS;
+    }
+
+    if (elapsed >= MAX_WAIT_MS) {
+        int completed = completed_count_.load(std::memory_order_acquire);
+        std::cout << "Warning: Timeout waiting for threads to complete. "
+                  << "Expected " << expected_count_ << ", got " << completed << std::endl;
+    }
+
+    // Now safe to clear flags
+    capture_in_progress_.store(false, std::memory_order_release);
+    excluded_tid_.store(0, std::memory_order_release);
+
+    __sync_synchronize();
+
+    // 6. Collect results from shared memory (filter valid elements)
+    int collected = 0;
+    for (int i = 0; i < array_size; ++i) {
+        __sync_synchronize();
+
+        // Filter: only collect valid entries (ready=true and depth>0)
+        if (temp_stacks[i].ready && temp_stacks[i].depth > 0) {
+            ThreadStackTrace trace;
+            trace.tid = temp_stacks[i].tid;
+            trace.depth = temp_stacks[i].depth;
+            trace.captured = true;
+
+            for (int j = 0; j < trace.depth && j < 64; ++j) {
+                trace.addresses[j] = temp_stacks[i].addresses[j];
+            }
+
+            result.push_back(trace);
+            collected++;
+        }
+    }
+
+    std::cout << "Collected " << collected << " thread stacks from " << array_size
+              << " slots (" << tids.size() << " threads total)" << std::endl;
+
+    // 7. Clean up
+    munmap(temp_stacks, shared_size);
+    shared_stacks_ = nullptr;
+    stack_array_size_ = 0;
+
+    return result;
+}
+
+std::string ProfilerManager::getThreadCallStacks() {
+    std::ostringstream result;
+
+    result << "Thread Call Stacks (via Signal Handler)\n";
+    result << "=========================================\n\n";
+
+    // Capture all thread stacks via signal handler
+    auto stacks = captureAllThreadStacks();
+
+    result << "Total threads captured: " << stacks.size() << "\n\n";
+
+    // Process each thread's stack
+    for (const auto& trace : stacks) {
+        result << "Thread " << trace.tid << ":\n";
+        result << "  Frames: " << trace.depth << "\n";
+
+        // Symbolize and print each frame using abseil
+        for (int i = 0; i < trace.depth; ++i) {
+            void* addr = trace.addresses[i];
+            std::string symbolized = symbolizeAddress(addr);
+
+            result << "    #" << i << " ";
+
+            if (symbolized.empty() || symbolized[0] == '0') {
+                result << "0x" << std::hex << reinterpret_cast<uintptr_t>(addr)
+                       << std::dec << "\n";
+            } else {
+                result << symbolized << "\n";
+            }
+        }
+
+        result << "\n";
+    }
+
+    std::string output = result.str();
+    std::cout << "Thread callstacks collected, size: " << output.size() << " bytes" << std::endl;
+
+    return output;
+}
+
 } // namespace profiler
+

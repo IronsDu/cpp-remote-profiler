@@ -1058,6 +1058,35 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
         },
         {Get}
     );
+
+    // Thread stacks endpoint: /api/thread/stacks
+    // Returns all thread stacks with full backtrace in text format
+    app().registerHandler(
+        "/api/thread/stacks",
+        [&profiler](const HttpRequestPtr& req,
+                    std::function<void(const HttpResponsePtr&)>&& callback) {
+            std::cout << "Received /api/thread/stacks request" << std::endl;
+
+            // 调用 getThreadCallStacks 获取线程调用堆栈数据
+            std::string thread_stacks = profiler.getThreadCallStacks();
+
+            if (thread_stacks.empty()) {
+                Json::Value root;
+                root["error"] = "Failed to get thread call stacks";
+                auto resp = HttpResponse::newHttpJsonResponse(root);
+                resp->setStatusCode(k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // 返回线程调用堆栈数据（文本格式）
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(thread_stacks);
+            resp->setContentTypeCode(CT_TEXT_PLAIN);
+            callback(resp);
+        },
+        {Get}
+    );
 }
 
 } // namespace profiler

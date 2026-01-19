@@ -6,10 +6,12 @@
 
 - ✅ **CPU Profiling**: 使用 gperftools 进行 CPU 性能分析
 - ✅ **Heap Profiling**: 内存使用分析和内存泄漏检测（调用 tcmalloc sample）
+- ✅ **线程堆栈捕获**: 获取所有线程的调用堆栈，支持动态线程数
 - ✅ **标准 pprof 接口**: 兼容 brpc pprof service，支持 Go pprof 工具直接访问
 - ✅ **Web 界面**: 美观的 Web 控制面板，支持一键式火焰图分析
 - ✅ **RESTful API**: 完整的 HTTP API 接口
 - ✅ **依赖管理**: 使用 vcpkg 管理所有依赖
+- ✅ **信号处理器安全**: 保存并恢复用户程序的信号处理器
 
 ## 🎯 设计理念
 
@@ -191,9 +193,12 @@ go tool pprof -http=:8081 cpu.prof
 | **标准 pprof 接口** ||||
 | `/pprof/profile` | GET | CPU profile（兼容 Go pprof） | ⏳ |
 | `/pprof/heap` | GET | Heap profile（兼容 Go pprof） | ⏳ |
+| `/pprof/growth` | GET | Heap growth stacks（兼容 Go pprof） | ⏳ |
 | **一键分析接口** ||||
 | `/api/cpu/analyze` | GET | 采样并返回 CPU 火焰图 SVG | ✅ |
 | `/api/heap/analyze` | GET | 采样并返回 Heap 火焰图 SVG | ✅ |
+| **线程分析接口** ||||
+| `/api/thread/stacks` | GET | 获取所有线程的调用堆栈 | ✅ |
 | **辅助接口** ||||
 | `/` | GET | Web 主界面 | ✅ |
 | `/api/status` | GET | 获取全局状态 | ✅ |
@@ -209,11 +214,17 @@ curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
 # 注意：需要设置 TCMALLOC_SAMPLE_PARAMETER 环境变量
 curl http://localhost:8080/pprof/heap > heap.prof
 
+# Heap growth stacks（返回调用堆栈）
+curl http://localhost:8080/pprof/growth
+
 # CPU 火焰图（返回 SVG，浏览器可直接显示）
 curl http://localhost:8080/api/cpu/analyze?duration=10
 
 # Heap 火焰图（返回 SVG，浏览器可直接显示）
 curl http://localhost:8080/api/heap/analyze?duration=10
+
+# 获取所有线程的调用堆栈
+curl http://localhost:8080/api/thread/stacks
 ```
 
 ## 📁 项目结构
@@ -306,6 +317,30 @@ g++ -o your_app your_app.cpp \
     -lpthread
 ```
 
+### 配置信号（可选）
+
+如果你的程序已经使用了 `SIGUSR1` 或 `SIGUSR2`，可以配置其他信号：
+
+```cpp
+#include "profiler_manager.h"
+
+int main() {
+    // 在使用 Profiler 之前设置信号
+    profiler::ProfilerManager::setStackCaptureSignal(SIGRTMIN + 5);
+
+    auto& profiler = profiler::ProfilerManager::getInstance();
+
+    // ... 正常使用 profiler ...
+}
+```
+
+**可用信号选项**：
+- `SIGUSR1` (默认) - 大多数程序可用
+- `SIGUSR2` - Drogon 可能使用 SIGUSR2
+- `SIGRTMIN` 到 `SIGRTMAX` - 实时信号，更安全
+
+**示例程序**：参考 `example/custom_signal.cpp` 查看详细用法。
+
 ## ⚙️ 配置说明
 
 ### 环境变量
@@ -348,6 +383,8 @@ cd vcpkg
 4. **生产环境**: 谨慎使用，建议在开发/测试环境中使用
 5. **并发限制**: 同一时间只能有一个 CPU profiling 请求
 6. **环境变量**: 使用 heap profiling 前必须设置 `TCMALLOC_SAMPLE_PARAMETER`
+7. **信号冲突**: 默认使用 SIGUSR1，如与你的程序冲突，请使用 `setStackCaptureSignal()` 配置其他信号
+8. **线程安全**: 线程堆栈捕获使用信号处理器，确保程序正确处理 SIGUSR1（或配置的信号）
 
 ## 🎨 与其他工具的对比
 
@@ -355,6 +392,7 @@ cd vcpkg
 |------|---------|-----------|---------------------|
 | CPU Profiling | ✓ | ✓ | ✓ |
 | Heap Profiling | ✓ | ✓ | ✓ |
+| Thread Stack Capturing | ✓ | ✗ | ✓ |
 | 标准接口 | ✓ | ✓ | ✓ (兼容 brpc) |
 | Web 界面 | ✓ | ✗ | ✓ |
 | 一键分析 SVG | ✗ | ✗ | ✓ |

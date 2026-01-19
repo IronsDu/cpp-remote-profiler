@@ -211,6 +211,13 @@ static const char INDEX_PAGE[] = R"HTML(
         </div>
 
         <div class="section">
+            <h2>Thread Stacks</h2>
+            <div>
+                <button class="view-btn" onclick="getThreadStacks()">🧵 获取所有线程堆栈</button>
+            </div>
+        </div>
+
+        <div class="section">
             <h2>输出</h2>
             <div id="output" class="output">等待操作...</div>
         </div>
@@ -447,6 +454,24 @@ static const char INDEX_PAGE[] = R"HTML(
                     btn.disabled = false;
                     btn.textContent = originalText;
                     log(`❌ Growth ${chartTypeName} 下载失败: ${error.message}`);
+                });
+        }
+
+        function getThreadStacks() {
+            log('🚀 正在获取所有线程堆栈...');
+
+            fetch('/api/thread/stacks')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.text();
+                })
+                .then(text => {
+                    log('✅ 线程堆栈获取成功:\n\n' + text);
+                })
+                .catch(error => {
+                    log(`❌ 获取线程堆栈失败: ${error.message}`);
                 });
         }
     </script>

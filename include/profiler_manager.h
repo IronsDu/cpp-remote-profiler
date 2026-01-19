@@ -6,6 +6,8 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
+#include <unordered_map>
+#include <signal.h>
 #include "symbolize.h"
 
 namespace profiler {
@@ -21,6 +23,23 @@ struct ProfilerState {
     std::string output_path;
     uint64_t start_time;
     uint64_t duration;
+};
+
+// Structure to hold captured stack trace for a thread
+struct ThreadStackTrace {
+    pid_t tid;
+    void* addresses[64];  // Fixed-size array for signal-safety
+    int depth;
+    bool captured;
+};
+
+// Shared memory structure for inter-thread communication
+struct SharedStackTrace {
+    std::atomic<bool> ready;             // Set by thread after capturing
+    char padding[64 - sizeof(std::atomic<bool>)];  // To avoid false sharing
+    pid_t tid;
+    int depth;
+    void* addresses[64];
 };
 
 class ProfilerManager {
@@ -71,6 +90,26 @@ public:
     // Returns heap growth stacks in text format (compatible with pprof)
     std::string getRawHeapGrowthStacks();
 
+    // Get all thread stacks (for /api/thread/stacks endpoint)
+    // Returns thread stacks in text format
+    std::string getThreadStacks();
+
+    // Get thread callstack with full backtrace using signal handler
+    std::string getThreadCallStacks();
+
+    // Set the signal to use for stack capture (must be called before first use)
+    // Default is SIGUSR1, but can be changed if needed
+    static void setStackCaptureSignal(int signal);
+
+    // Get the current signal being used for stack capture
+    static int getStackCaptureSignal();
+
+    // Enable/disable signal chaining (call old handler after ours)
+    static void setSignalChaining(bool enable);
+
+    // Signal handler for capturing stack traces (signal-safe)
+    static void signalHandler(int signum, siginfo_t* info, void* context);
+
     // Helper methods (public for use in HTTP handlers)
     bool executeCommand(const std::string& cmd, std::string& output);
     std::string getExecutablePath();
@@ -88,6 +127,18 @@ private:
         const std::string& collapsed_file,
         const std::string& title);
 
+    // Capture stack traces from all threads using signals
+    std::vector<ThreadStackTrace> captureAllThreadStacks();
+
+    // Symbolize addresses using abseil
+    std::string symbolizeAddress(void* addr);
+
+    // Install signal handler (saves old handler)
+    void installSignalHandler();
+
+    // Restore old signal handler
+    void restoreSignalHandler();
+
     std::string profile_dir_;
     std::map<ProfilerType, ProfilerState> profiler_states_;
     mutable std::mutex mutex_;
@@ -97,6 +148,35 @@ private:
 
     // Symbolizer (backward-cpp)
     std::unique_ptr<Symbolizer> symbolizer_;
+
+    // Flag to indicate stack capture is in progress (atomic for signal-safety)
+    static std::atomic<bool> capture_in_progress_;
+
+    // Dynamically allocated stack array (indexed by thread ID)
+    static SharedStackTrace* shared_stacks_;
+    static int stack_array_size_;  // Actual size of the array
+
+    // Thread ID to exclude (the one handling HTTP request)
+    static std::atomic<pid_t> excluded_tid_;
+
+    // Counter for threads that have completed stack capture
+    static std::atomic<int> completed_count_;
+
+    // Expected number of threads to capture
+    static int expected_count_;
+
+    // PID of main thread
+    static pid_t main_thread_id_;
+
+    // Signal configuration (runtime configurable)
+    static int stack_capture_signal_;
+
+    // Old signal handler (saved for restoration)
+    static struct sigaction old_action_;
+    static bool old_action_saved_;
+
+    // Enable signal chaining (call old handler after ours)
+    static bool enable_signal_chaining_;
 };
 
 } // namespace profiler

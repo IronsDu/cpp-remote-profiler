@@ -56,6 +56,10 @@ target_link_libraries(profiler_lib
     ${GPERFTOOLS_LIBRARIES}
     Backward::Backward
     absl::symbolize
+    absl::stacktrace
+    absl::debugging_internal
+    absl::demangle_internal
+    pthread
     ${CMAKE_DL_LIBS}
 )
 
