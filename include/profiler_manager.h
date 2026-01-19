@@ -35,9 +35,8 @@ struct ThreadStackTrace {
 
 // Shared memory structure for inter-thread communication
 struct SharedStackTrace {
-    std::atomic<bool> signal_received;  // Set by signal handler
     std::atomic<bool> ready;             // Set by thread after capturing
-    char padding[64];                     // To avoid false sharing
+    char padding[64 - sizeof(std::atomic<bool>)];  // To avoid false sharing
     pid_t tid;
     int depth;
     void* addresses[64];
@@ -98,8 +97,15 @@ public:
     // Get thread callstack with full backtrace using signal handler
     std::string getThreadCallStacks();
 
-    // Signal to use for stack capture (SIGUSR1 - Drogon may use SIGUSR2)
-    static constexpr int STACK_CAPTURE_SIGNAL = SIGUSR1;
+    // Set the signal to use for stack capture (must be called before first use)
+    // Default is SIGUSR1, but can be changed if needed
+    static void setStackCaptureSignal(int signal);
+
+    // Get the current signal being used for stack capture
+    static int getStackCaptureSignal();
+
+    // Enable/disable signal chaining (call old handler after ours)
+    static void setSignalChaining(bool enable);
 
     // Signal handler for capturing stack traces (signal-safe)
     static void signalHandler(int signum, siginfo_t* info, void* context);
@@ -127,6 +133,12 @@ private:
     // Symbolize addresses using abseil
     std::string symbolizeAddress(void* addr);
 
+    // Install signal handler (saves old handler)
+    void installSignalHandler();
+
+    // Restore old signal handler
+    void restoreSignalHandler();
+
     std::string profile_dir_;
     std::map<ProfilerType, ProfilerState> profiler_states_;
     mutable std::mutex mutex_;
@@ -140,12 +152,31 @@ private:
     // Flag to indicate stack capture is in progress (atomic for signal-safety)
     static std::atomic<bool> capture_in_progress_;
 
-    // Shared memory for stack traces (accessible by all threads)
+    // Dynamically allocated stack array (indexed by thread ID)
     static SharedStackTrace* shared_stacks_;
-    static int max_threads_;
+    static int stack_array_size_;  // Actual size of the array
+
+    // Thread ID to exclude (the one handling HTTP request)
+    static std::atomic<pid_t> excluded_tid_;
+
+    // Counter for threads that have completed stack capture
+    static std::atomic<int> completed_count_;
+
+    // Expected number of threads to capture
+    static int expected_count_;
 
     // PID of main thread
     static pid_t main_thread_id_;
+
+    // Signal configuration (runtime configurable)
+    static int stack_capture_signal_;
+
+    // Old signal handler (saved for restoration)
+    static struct sigaction old_action_;
+    static bool old_action_saved_;
+
+    // Enable signal chaining (call old handler after ours)
+    static bool enable_signal_chaining_;
 };
 
 } // namespace profiler
