@@ -14,7 +14,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Status endpoint - 获取 profiler 状态
     app().registerHandler(
         "/api/status",
-        [&profiler](const HttpRequestPtr& req,
+        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
             Json::Value root;
             root["cpu"]["running"] = profiler.isProfilerRunning(profiler::ProfilerType::CPU);
@@ -43,7 +43,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Index page - 主页面
     app().registerHandler(
         "/",
-        [](const HttpRequestPtr& req,
+        []([[maybe_unused]] const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string html = WebResources::getIndexPage();
             auto resp = HttpResponse::newHttpResponse();
@@ -57,7 +57,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // CPU SVG flame graph viewer page
     app().registerHandler(
         "/show_svg.html",
-        [](const HttpRequestPtr& req,
+        []([[maybe_unused]] const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string html = WebResources::getCpuSvgViewerPage();
             auto resp = HttpResponse::newHttpResponse();
@@ -71,7 +71,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Heap SVG flame graph viewer page
     app().registerHandler(
         "/show_heap_svg.html",
-        [](const HttpRequestPtr& req,
+        []([[maybe_unused]] const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string html = WebResources::getHeapSvgViewerPage();
             auto resp = HttpResponse::newHttpResponse();
@@ -85,7 +85,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Growth SVG flame graph viewer page
     app().registerHandler(
         "/show_growth_svg.html",
-        [](const HttpRequestPtr& req,
+        []([[maybe_unused]] const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string html = WebResources::getGrowthSvgViewerPage();
             auto resp = HttpResponse::newHttpResponse();
@@ -557,7 +557,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Heap raw SVG endpoint - 返回pprof生成的原始SVG（不做任何修改）
     app().registerHandler(
         "/api/heap/svg_raw",
-        [&profiler](const HttpRequestPtr& req,
+        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
             std::cout << "Starting Heap raw SVG generation..." << std::endl;
 
@@ -622,7 +622,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Heap FlameGraph raw SVG endpoint - 返回 FlameGraph 生成的原始 SVG
     app().registerHandler(
         "/api/heap/flamegraph_raw",
-        [&profiler](const HttpRequestPtr& req,
+        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
             std::cout << "Starting Heap FlameGraph generation..." << std::endl;
 
@@ -729,7 +729,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Growth raw SVG endpoint - 返回pprof生成的原始SVG（不做任何修改）
     app().registerHandler(
         "/api/growth/svg_raw",
-        [&profiler](const HttpRequestPtr& req,
+        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
             std::cout << "Starting Growth raw SVG generation..." << std::endl;
 
@@ -794,7 +794,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Growth FlameGraph raw SVG endpoint - 返回 FlameGraph 生成的原始 SVG
     app().registerHandler(
         "/api/growth/flamegraph_raw",
-        [&profiler](const HttpRequestPtr& req,
+        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
             std::cout << "Starting Growth FlameGraph generation..." << std::endl;
 
@@ -1005,7 +1005,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Compatible with Go pprof tool
     app().registerHandler(
         "/pprof/heap",
-        [&profiler](const HttpRequestPtr& req,
+        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
             std::cout << "Received /pprof/heap request" << std::endl;
 
@@ -1034,7 +1034,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Compatible with Go pprof tool - returns heap growth stacks
     app().registerHandler(
         "/pprof/growth",
-        [&profiler](const HttpRequestPtr& req,
+        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
             std::cout << "Received /pprof/growth request" << std::endl;
 
@@ -1063,7 +1063,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Returns all thread stacks with full backtrace in text format
     app().registerHandler(
         "/api/thread/stacks",
-        [&profiler](const HttpRequestPtr& req,
+        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
                     std::function<void(const HttpResponsePtr&)>&& callback) {
             std::cout << "Received /api/thread/stacks request" << std::endl;
 
