@@ -48,6 +48,7 @@ jobs:
           git clone https://github.com/Microsoft/vcpkg.git
           cd vcpkg
           ./bootstrap-vcpkg.sh
+          cd ..
         fi
 
     - name: Install vcpkg dependencies
@@ -120,6 +121,7 @@ jobs:
           git clone https://github.com/Microsoft/vcpkg.git
           cd vcpkg
           ./bootstrap-vcpkg.sh
+          cd ..
         fi
 
     - name: Install vcpkg dependencies
