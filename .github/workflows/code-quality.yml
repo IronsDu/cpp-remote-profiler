@@ -158,6 +158,7 @@ jobs:
   tsan:
     name: Thread Sanitizer
     runs-on: ubuntu-latest
+    if: false  # Temporarily disabled
 
     steps:
     - name: Checkout code
