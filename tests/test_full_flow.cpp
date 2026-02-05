@@ -153,7 +153,7 @@ TEST(FullFlowTest, ConcurrentProfilingRequests) {
     // 尝试启动第二个（应该失败或返回 false）
     // 注意：根据实现，这可能不会阻止第二次启动
     // 这里我们只是确保不会有崩溃
-    bool second_start = profiler.startCPUProfiler("/tmp/test_second.prof");
+    [[maybe_unused]] bool second_start = profiler.startCPUProfiler("/tmp/test_second.prof");
 
     // 停止 profiler
     ASSERT_TRUE(profiler.stopCPUProfiler());
