@@ -1,0 +1,329 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  BUILD_TYPE: Debug
+
+jobs:
+  # Address Sanitizer
+  asan:
+    name: Address Sanitizer
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          build-essential \
+          git \
+          pkg-config \
+          libgoogle-perftools-dev
+
+    - name: Cache vcpkg packages
+      id: cache-vcpkg
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg
+          ~/.vcpkg/archives
+          ~/.vcpkg/git
+        key: ${{ runner.os }}-vcpkg-asan-${{ hashFiles('vcpkg.json') }}
+
+    - name: Install vcpkg
+      run: |
+        # Clone vcpkg if it doesn't exist or is incomplete (not cached)
+        if [ ! -f "vcpkg/vcpkg" ]; then
+          echo "vcpkg not found or incomplete, cloning..."
+          rm -rf vcpkg
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+        else
+          echo "Using cached vcpkg"
+        fi
+
+    - name: Install vcpkg dependencies
+      run: |
+        cd vcpkg
+        ./vcpkg install --triplet=x64-linux-release
+
+    - name: Configure CMake with ASan
+      run: |
+        mkdir build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+          -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
+          -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address" \
+          -DCMAKE_MODULE_LINKER_FLAGS="-fsanitize=address"
+
+    - name: Build
+      run: |
+        cd build
+        make -j$(nproc)
+
+    - name: Run tests with ASan
+      working-directory: build
+      run: |
+        ctest --output-on-failure --verbose
+      env:
+        ASAN_OPTIONS: detect_leaks=1:halt_on_error=0
+
+  # Undefined Behavior Sanitizer
+  ubsan:
+    name: Undefined Behavior Sanitizer
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          build-essential \
+          git \
+          pkg-config \
+          libgoogle-perftools-dev
+
+    - name: Cache vcpkg packages
+      id: cache-vcpkg
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg
+          ~/.vcpkg/archives
+          ~/.vcpkg/git
+        key: ${{ runner.os }}-vcpkg-ubsan-${{ hashFiles('vcpkg.json') }}
+
+    - name: Install vcpkg
+      run: |
+        # Clone vcpkg if it doesn't exist or is incomplete (not cached)
+        if [ ! -f "vcpkg/vcpkg" ]; then
+          echo "vcpkg not found or incomplete, cloning..."
+          rm -rf vcpkg
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+        else
+          echo "Using cached vcpkg"
+        fi
+
+    - name: Install vcpkg dependencies
+      run: |
+        cd vcpkg
+        ./vcpkg install --triplet=x64-linux-release
+
+    - name: Configure CMake with UBSan
+      run: |
+        mkdir build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+          -DCMAKE_CXX_FLAGS="-fsanitize=undefined -g" \
+          -DCMAKE_C_FLAGS="-fsanitize=undefined -g" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=undefined" \
+          -DCMAKE_MODULE_LINKER_FLAGS="-fsanitize=undefined"
+
+    - name: Build
+      run: |
+        cd build
+        make -j$(nproc)
+
+    - name: Run tests with UBSan
+      working-directory: build
+      run: |
+        ctest --output-on-failure --verbose
+      env:
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=0
+
+  # Thread Sanitizer
+  tsan:
+    name: Thread Sanitizer
+    runs-on: ubuntu-latest
+    if: false  # Temporarily disabled
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          build-essential \
+          git \
+          pkg-config \
+          libgoogle-perftools-dev
+
+    - name: Cache vcpkg packages
+      id: cache-vcpkg
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg
+          ~/.vcpkg/archives
+          ~/.vcpkg/git
+        key: ${{ runner.os }}-vcpkg-tsan-${{ hashFiles('vcpkg.json') }}
+
+    - name: Install vcpkg
+      run: |
+        # Clone vcpkg if it doesn't exist or is incomplete (not cached)
+        if [ ! -f "vcpkg/vcpkg" ]; then
+          echo "vcpkg not found or incomplete, cloning..."
+          rm -rf vcpkg
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+        else
+          echo "Using cached vcpkg"
+        fi
+
+    - name: Install vcpkg dependencies
+      run: |
+        cd vcpkg
+        ./vcpkg install --triplet=x64-linux-release
+
+    - name: Configure CMake with TSan
+      run: |
+        mkdir build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -g" \
+          -DCMAKE_C_FLAGS="-fsanitize=thread -g" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+          -DCMAKE_MODULE_LINKER_FLAGS="-fsanitize=thread"
+
+    - name: Build
+      run: |
+        cd build
+        make -j$(nproc)
+
+    - name: Run tests with TSan
+      working-directory: build
+      run: |
+        ctest --output-on-failure --verbose
+      env:
+        TSAN_OPTIONS: halt_on_error=0
+
+  # Static Analysis with clang-tidy
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          clang-tidy \
+          build-essential \
+          git \
+          pkg-config \
+          libgoogle-perftools-dev
+
+    - name: Run clang-tidy
+      run: |
+        clang-tidy \
+          --warnings-as-errors='' \
+          src/*.cpp \
+          include/*.h \
+          -- \
+          -I./include \
+          -std=c++20 \
+          2>&1 | tee clang-tidy-output.txt || true
+
+    - name: Upload clang-tidy results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: clang-tidy-results
+        path: clang-tidy-output.txt
+
+  # Build with all warnings as errors
+  warnings-check:
+    name: Warnings Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          build-essential \
+          git \
+          pkg-config \
+          libgoogle-perftools-dev
+
+    - name: Cache vcpkg packages
+      id: cache-vcpkg
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg
+          ~/.vcpkg/archives
+          ~/.vcpkg/git
+        key: ${{ runner.os }}-vcpkg-warnings-${{ hashFiles('vcpkg.json') }}
+
+    - name: Install vcpkg
+      run: |
+        # Clone vcpkg if it doesn't exist or is incomplete (not cached)
+        if [ ! -f "vcpkg/vcpkg" ]; then
+          echo "vcpkg not found or incomplete, cloning..."
+          rm -rf vcpkg
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+        else
+          echo "Using cached vcpkg"
+        fi
+
+    - name: Install vcpkg dependencies
+      run: |
+        cd vcpkg
+        ./vcpkg install --triplet=x64-linux-release
+
+    - name: Configure with all warnings as errors
+      run: |
+        mkdir build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+          -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror" \
+          -DCMAKE_C_FLAGS="-Wall -Wextra -Werror"
+
+    - name: Build
+      run: |
+        cd build
+        make -j$(nproc)

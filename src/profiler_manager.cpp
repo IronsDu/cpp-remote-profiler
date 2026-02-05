@@ -188,7 +188,7 @@ bool ProfilerManager::startCPUProfiler(const std::string& output_path) {
             now.time_since_epoch()).count();
 
         profiler_states_[ProfilerType::CPU] = ProfilerState{
-            true, full_path, timestamp, 0
+            true, full_path, static_cast<uint64_t>(timestamp), 0
         };
 
         // 不再使用 StackCollector，gperftools 会直接写入文件
@@ -244,7 +244,7 @@ bool ProfilerManager::startHeapProfiler(const std::string& output_path) {
             now.time_since_epoch()).count();
 
         profiler_states_[ProfilerType::HEAP] = ProfilerState{
-            true, full_path, timestamp, 0
+            true, full_path, static_cast<uint64_t>(timestamp), 0
         };
         return true;
     }
@@ -443,7 +443,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
                 now.time_since_epoch()).count();
 
             profiler_states_[ProfilerType::CPU] = ProfilerState{
-                true, profile_path, timestamp, 0
+                true, profile_path, static_cast<uint64_t>(timestamp), 0
             };
         } else {
             return R"({"error": "Failed to start CPU profiler"})";
@@ -620,7 +620,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
             now.time_since_epoch()).count();
 
         profiler_states_[ProfilerType::HEAP] = ProfilerState{
-            true, profile_prefix + ".prof", timestamp, 0
+            true, profile_prefix + ".prof", static_cast<uint64_t>(timestamp), 0
         };
     }
 
@@ -886,7 +886,7 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
     auto now = std::chrono::system_clock::now();
     auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()).count();
-    profiler_states_[ProfilerType::CPU] = ProfilerState{true, profile_path, timestamp, 0};
+    profiler_states_[ProfilerType::CPU] = ProfilerState{true, profile_path, static_cast<uint64_t>(timestamp), 0};
 
     // Wait for specified duration
     sleep(seconds);

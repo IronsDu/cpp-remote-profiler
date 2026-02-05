@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  # Ubuntu with GCC
+  build-gcc:
+    name: Ubuntu (GCC)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          build-essential \
+          git \
+          pkg-config \
+          libgoogle-perftools-dev \
+          wget
+
+    - name: Cache vcpkg packages
+      id: cache-vcpkg
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg
+          ~/.vcpkg/archives
+          ~/.vcpkg/git
+        key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          ${{ runner.os }}-vcpkg-
+
+    - name: Install vcpkg
+      run: |
+        # Clone vcpkg if it doesn't exist or is incomplete (not cached)
+        if [ ! -f "vcpkg/vcpkg" ]; then
+          echo "vcpkg not found or incomplete, cloning..."
+          rm -rf vcpkg
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+        else
+          echo "Using cached vcpkg"
+        fi
+
+    - name: Install vcpkg dependencies
+      run: |
+        cd vcpkg
+        ./vcpkg install --triplet=x64-linux-release
+
+    - name: Configure CMake
+      run: |
+        mkdir build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+          -DBUILD_SHARED_LIBS=ON
+
+    - name: Build
+      run: |
+        cd build
+        make -j$(nproc)
+
+    - name: Run tests
+      working-directory: build
+      run: |
+        ctest --output-on-failure --verbose
+
+    - name: Check library linking
+      working-directory: build
+      run: |
+        ldd profiler_example
+        ldd libprofiler_lib.so
+
+  # Ubuntu with Clang
+  build-clang:
+    name: Ubuntu (Clang)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          clang \
+          build-essential \
+          git \
+          pkg-config \
+          libgoogle-perftools-dev \
+          wget
+
+    - name: Cache vcpkg packages
+      id: cache-vcpkg-clang
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg
+          ~/.vcpkg/archives
+          ~/.vcpkg/git
+        key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          ${{ runner.os }}-vcpkg-
+
+    - name: Install vcpkg
+      run: |
+        # Clone vcpkg if it doesn't exist or is incomplete (not cached)
+        if [ ! -f "vcpkg/vcpkg" ]; then
+          echo "vcpkg not found or incomplete, cloning..."
+          rm -rf vcpkg
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+        else
+          echo "Using cached vcpkg"
+        fi
+
+    - name: Install vcpkg dependencies
+      run: |
+        cd vcpkg
+        ./vcpkg install --triplet=x64-linux-release
+
+    - name: Configure CMake with Clang
+      run: |
+        mkdir build
+        cd build
+        CC=clang CXX=clang++ cmake .. \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+          -DBUILD_SHARED_LIBS=ON
+
+    - name: Build
+      run: |
+        cd build
+        make -j$(nproc)
+
+    - name: Run tests
+      working-directory: build
+      run: |
+        ctest --output-on-failure --verbose
+
+    - name: Check library linking
+      working-directory: build
+      run: |
+        ldd profiler_example
+        ldd libprofiler_lib.so

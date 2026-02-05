@@ -998,15 +998,34 @@ MAJOR.MINOR.PATCH
 - `docs/user_guide/05_installation.md` - 安装指南
 - `docs/user_guide/06_using_find_package.md` - find_package 使用指南
 
-#### 5. CI/CD 流水线 ⏳ 待完成
-**实施计划**:
-1. 添加 GitHub Actions 工作流
-2. 自动化测试（单元测试、集成测试）
-3. 代码覆盖率检查
-4. 内存泄漏检测（valgrind、ASan）
-5. 多平台构建测试
+#### 5. CI/CD 流水线 ✅ 已完成
+**实施内容**:
+1. ✅ 基础 CI 工作流（`.github/workflows/ci.yml`）
+   - Ubuntu + GCC 编译和测试
+   - Ubuntu + Clang 编译和测试
+   - vcpkg 依赖缓存
 
-#### 6. 错误处理规范
+2. ✅ 代码质量工作流（`.github/workflows/code-quality.yml`）
+   - Address Sanitizer (ASan) 检测内存错误
+   - Undefined Behavior Sanitizer (UBSan) 检测未定义行为
+   - Thread Sanitizer (TSan) 检测线程竞争
+   - clang-tidy 静态分析
+   - Warnings as errors 检查
+
+**生成的文件**:
+- `.github/workflows/ci.yml` - 基础 CI 工作流
+- `.github/workflows/code-quality.yml` - 代码质量检查
+
+**测试覆盖**:
+- GCC 编译（Release）
+- Clang 编译（Release）
+- ASan 运行时检测
+- UBSan 运行时检测
+- TSan 线程安全检测
+- 静态代码分析
+- 编译警告检查
+
+#### 6. 错误处理规范 ⏳ 待完成
 **实施计划**:
 1. 定义错误码规范
 2. 统一异常处理策略
@@ -1173,13 +1192,48 @@ docs/README.md
 - 覆盖所有主要使用场景
 
 **下一步计划**:
-- P1.2: CI/CD 流水线（GitHub Actions）
 - P1.3: 错误处理规范
 - P2: 性能基准测试、多平台支持
 
 ---
 
-### 2026-01-14
+### 2026-02-05 - CI/CD 完善
+**版本**: v0.1.0
+
+#### P1.2: CI/CD 流水线 ✅
+**实施内容**:
+1. **基础 CI 工作流** (`.github/workflows/ci.yml`)
+   - Ubuntu + GCC 编译和测试
+   - Ubuntu + Clang 编译和测试
+   - 自动化运行所有单元测试
+   - vcpkg 依赖缓存优化
+
+2. **代码质量工作流** (`.github/workflows/code-quality.yml`)
+   - Address Sanitizer (ASan) - 检测内存错误
+   - Undefined Behavior Sanitizer (UBSan) - 检测未定义行为
+   - Thread Sanitizer (TSan) - 检测线程竞争
+   - clang-tidy 静态分析
+   - Warnings as errors 检查
+
+**测试矩阵**:
+- 编译器: GCC, Clang
+- 配置: Debug (sanitizers), Release (CI)
+- 检测工具: ASan, UBSan, TSan, clang-tidy
+
+**GitHub Actions 特性**:
+- vcpkg 二进制缓存加速构建
+- 并行运行多个测试任务
+- 自动上传分析结果
+
+**新增文件**:
+```
+.github/workflows/ci.yml
+.github/workflows/code-quality.yml
+```
+
+---
+
+### 2026-02-05 - Major Release: 库可复用性完善 ⭐
 - ✅ **实现 Heap Growth Profiler**
   - **核心 API**: 使用 `MallocExtension::GetHeapGrowthStacks()` 获取堆增长数据
   - **新增接口**:
