@@ -18,6 +18,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: true
 
     - name: Install system dependencies
       run: |
@@ -70,6 +72,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: true
 
     - name: Install system dependencies
       run: |
