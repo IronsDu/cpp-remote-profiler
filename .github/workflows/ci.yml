@@ -30,25 +30,25 @@ jobs:
           libgoogle-perftools-dev \
           wget
 
-    - name: Cache vcpkg
+    - name: Cache vcpkg archives
       id: cache-vcpkg
       uses: actions/cache@v3
       with:
         path: |
-          vcpkg
           ~/.vcpkg/archives
+          ~/.vcpkg/git
         key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
         restore-keys: |
           ${{ runner.os }}-vcpkg-
 
     - name: Install vcpkg
-      if: steps.cache-vcpkg.outputs.cache-hit != 'true'
       run: |
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
-          cd vcpkg
+        fi
+        cd vcpkg
+        if [ ! -f "vcpkg" ]; then
           ./bootstrap-vcpkg.sh
-          cd ..
         fi
 
     - name: Install vcpkg dependencies
@@ -103,25 +103,25 @@ jobs:
           libgoogle-perftools-dev \
           wget
 
-    - name: Cache vcpkg
+    - name: Cache vcpkg archives
       id: cache-vcpkg-clang
       uses: actions/cache@v3
       with:
         path: |
-          vcpkg
           ~/.vcpkg/archives
+          ~/.vcpkg/git
         key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
         restore-keys: |
           ${{ runner.os }}-vcpkg-
 
     - name: Install vcpkg
-      if: steps.cache-vcpkg-clang.outputs.cache-hit != 'true'
       run: |
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
-          cd vcpkg
+        fi
+        cd vcpkg
+        if [ ! -f "vcpkg" ]; then
           ./bootstrap-vcpkg.sh
-          cd ..
         fi
 
     - name: Install vcpkg dependencies

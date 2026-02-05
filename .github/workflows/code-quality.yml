@@ -34,18 +34,19 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          vcpkg
           ~/.vcpkg/archives
+
+          ~/.vcpkg/git
         key: ${{ runner.os }}-vcpkg-asan-${{ hashFiles('vcpkg.json') }}
 
     - name: Install vcpkg
-      if: steps.cache-vcpkg.outputs.cache-hit != 'true'
       run: |
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
-          cd vcpkg
+        fi
+        cd vcpkg
+        if [ ! -f "vcpkg" ]; then
           ./bootstrap-vcpkg.sh
-          cd ..
         fi
 
     - name: Install vcpkg dependencies
@@ -102,18 +103,19 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          vcpkg
           ~/.vcpkg/archives
+
+          ~/.vcpkg/git
         key: ${{ runner.os }}-vcpkg-ubsan-${{ hashFiles('vcpkg.json') }}
 
     - name: Install vcpkg
-      if: steps.cache-vcpkg.outputs.cache-hit != 'true'
       run: |
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
-          cd vcpkg
+        fi
+        cd vcpkg
+        if [ ! -f "vcpkg" ]; then
           ./bootstrap-vcpkg.sh
-          cd ..
         fi
 
     - name: Install vcpkg dependencies
@@ -170,18 +172,19 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          vcpkg
           ~/.vcpkg/archives
+
+          ~/.vcpkg/git
         key: ${{ runner.os }}-vcpkg-tsan-${{ hashFiles('vcpkg.json') }}
 
     - name: Install vcpkg
-      if: steps.cache-vcpkg.outputs.cache-hit != 'true'
       run: |
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
-          cd vcpkg
+        fi
+        cd vcpkg
+        if [ ! -f "vcpkg" ]; then
           ./bootstrap-vcpkg.sh
-          cd ..
         fi
 
     - name: Install vcpkg dependencies
@@ -276,18 +279,19 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          vcpkg
           ~/.vcpkg/archives
+
+          ~/.vcpkg/git
         key: ${{ runner.os }}-vcpkg-warnings-${{ hashFiles('vcpkg.json') }}
 
     - name: Install vcpkg
-      if: steps.cache-vcpkg.outputs.cache-hit != 'true'
       run: |
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
-          cd vcpkg
+        fi
+        cd vcpkg
+        if [ ! -f "vcpkg" ]; then
           ./bootstrap-vcpkg.sh
-          cd ..
         fi
 
     - name: Install vcpkg dependencies
