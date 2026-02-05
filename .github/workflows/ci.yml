@@ -46,6 +46,11 @@ jobs:
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
         fi
+        if [ ! -f "vcpkg/bootstrap-vcpkg.sh" ]; then
+          echo "ERROR: bootstrap-vcpkg.sh not found in vcpkg directory"
+          ls -la vcpkg/
+          exit 1
+        fi
         cd vcpkg
         if [ ! -f "vcpkg" ]; then
           ./bootstrap-vcpkg.sh
@@ -118,6 +123,11 @@ jobs:
       run: |
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
+        fi
+        if [ ! -f "vcpkg/bootstrap-vcpkg.sh" ]; then
+          echo "ERROR: bootstrap-vcpkg.sh not found in vcpkg directory"
+          ls -la vcpkg/
+          exit 1
         fi
         cd vcpkg
         if [ ! -f "vcpkg" ]; then
