@@ -1,0 +1,106 @@
+@PACKAGE_INIT@
+
+# ----------------------------------------------------------------------------
+# CMake Config File for cpp-remote-profiler
+# ----------------------------------------------------------------------------
+
+include(CMakeFindDependencyMacro)
+
+# Find required dependencies
+# Note: gperftools and backward-cpp should be found by pkg-config or system paths
+find_dependency(PkgConfig REQUIRED)
+
+# Try to find gperftools
+pkg_check_modules(GPERFTOOLS REQUIRED libprofiler libtcmalloc)
+
+# Try to find Backward (optional, for symbolization)
+find_package(Backward QUIET)
+if(NOT Backward_FOUND)
+    message(STATUS "cpp-remote-profiler: Backward not found, symbolization may be limited")
+endif()
+
+# Try to find abseil (optional, for symbolization)
+# Try multiple methods to find abseil
+find_package(absl QUIET)
+
+if(NOT absl_FOUND)
+    # Try to find via PkgConfig
+    pkg_check_modules(absl QUIET abseil-cpp absl_base absl_symbolize)
+    if(NOT absl_FOUND)
+        message(STATUS "cpp-remote-profiler: abseil not found, trying to find system libraries")
+    endif()
+endif()
+
+# If still not found, it's OK - the library may still work if symbols are in the binary
+if(NOT absl_FOUND)
+    message(STATUS "cpp-remote-profiler: abseil CMake package not found, assuming symbols are linked")
+endif()
+
+# ----------------------------------------------------------------------------
+# Include targets
+# ----------------------------------------------------------------------------
+
+# Check if we're building as part of the same build tree
+if(CMAKE_CURRENT_LIST_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    # Not building as part of this project
+    include("${CMAKE_CURRENT_LIST_DIR}/cpp-remote-profiler-targets.cmake")
+else()
+    # Building as part of this project
+    include("${CMAKE_CURRENT_LIST_DIR}/cpp-remote-profiler-targets.cmake")
+endif()
+
+# ----------------------------------------------------------------------------
+# Set up imported targets
+# ----------------------------------------------------------------------------
+
+# Add alias for backward compatibility
+if(NOT TARGET cpp-remote-profiler::profiler_lib AND TARGET profiler_lib)
+    add_library(cpp-remote-profiler::profiler_lib ALIAS profiler_lib)
+endif()
+
+# ----------------------------------------------------------------------------
+# Set variables for compatibility
+# ----------------------------------------------------------------------------
+
+set(CPP_REMOTE_PROFILER_VERSION @PROJECT_VERSION@)
+set(CPP_REMOTE_PROFILER_FOUND TRUE)
+set(CPP_REMOTE_PROFILER_INSTALL_PREFIX "@CMAKE_INSTALL_PREFIX@")
+
+# Get the installation prefix
+if(NOT CMAKE_INSTALL_PREFIX)
+    set(CMAKE_INSTALL_PREFIX "@CMAKE_INSTALL_PREFIX@")
+endif()
+
+# ----------------------------------------------------------------------------
+# Check required components
+# ----------------------------------------------------------------------------
+
+# Validate that all required dependencies are available
+if(NOT GPERFTOOLS_FOUND)
+    set(CPP_REMOTE_PROFILER_FOUND FALSE)
+    set(CPP_REMOTE_PROFILER_NOT_FOUND_MESSAGE "gperftools is required but not found")
+endif()
+
+# ----------------------------------------------------------------------------
+# Print configuration information (optional)
+# ----------------------------------------------------------------------------
+
+if(NOT cpp-remote-profiler_FIND_QUIETLY)
+    message(STATUS "Found cpp-remote-profiler: ${CPP_REMOTE_PROFILER_VERSION}")
+    message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")
+    message(STATUS "  Include directories: ${CMAKE_INSTALL_PREFIX}/include/cpp-remote-profiler")
+    message(STATUS "  Library directories: ${CMAKE_INSTALL_PREFIX}/lib")
+endif()
+
+# ----------------------------------------------------------------------------
+# Compatibility check
+# ----------------------------------------------------------------------------
+
+# Check if requested version is compatible
+if(@PROJECT_VERSION@ VERSION_LESS cpp-remote-profiler_FIND_VERSION)
+    set(CPP_REMOTE_PROFILER_FOUND FALSE)
+    set(CPP_REMOTE_PROFILER_NOT_FOUND_MESSAGE
+        "Requested version ${cpp-remote-profiler_FIND_VERSION} but found @PROJECT_VERSION@")
+endif()
+
+check_required_components(cpp-remote-profiler)
