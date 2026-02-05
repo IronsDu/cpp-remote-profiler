@@ -41,11 +41,18 @@ jobs:
 
     - name: Install vcpkg
       run: |
+        # Remove existing empty vcpkg directory if it exists
+        if [ -d "vcpkg" ] && [ -z "$(ls -A vcpkg)" ]; then
+          rm -rf vcpkg
+        fi
+        # Clone vcpkg if it doesn't exist
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
         fi
+        # Verify clone was successful
         if [ ! -f "vcpkg/bootstrap-vcpkg.sh" ]; then
           echo "ERROR: bootstrap-vcpkg.sh not found in vcpkg directory"
+          echo "vcpkg directory contents:"
           ls -la vcpkg/
           exit 1
         fi
@@ -115,11 +122,18 @@ jobs:
 
     - name: Install vcpkg
       run: |
+        # Remove existing empty vcpkg directory if it exists
+        if [ -d "vcpkg" ] && [ -z "$(ls -A vcpkg)" ]; then
+          rm -rf vcpkg
+        fi
+        # Clone vcpkg if it doesn't exist
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
         fi
+        # Verify clone was successful
         if [ ! -f "vcpkg/bootstrap-vcpkg.sh" ]; then
           echo "ERROR: bootstrap-vcpkg.sh not found in vcpkg directory"
+          echo "vcpkg directory contents:"
           ls -la vcpkg/
           exit 1
         fi
@@ -189,11 +203,18 @@ jobs:
 
     - name: Install vcpkg
       run: |
+        # Remove existing empty vcpkg directory if it exists
+        if [ -d "vcpkg" ] && [ -z "$(ls -A vcpkg)" ]; then
+          rm -rf vcpkg
+        fi
+        # Clone vcpkg if it doesn't exist
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
         fi
+        # Verify clone was successful
         if [ ! -f "vcpkg/bootstrap-vcpkg.sh" ]; then
           echo "ERROR: bootstrap-vcpkg.sh not found in vcpkg directory"
+          echo "vcpkg directory contents:"
           ls -la vcpkg/
           exit 1
         fi
@@ -301,11 +322,18 @@ jobs:
 
     - name: Install vcpkg
       run: |
+        # Remove existing empty vcpkg directory if it exists
+        if [ -d "vcpkg" ] && [ -z "$(ls -A vcpkg)" ]; then
+          rm -rf vcpkg
+        fi
+        # Clone vcpkg if it doesn't exist
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
         fi
+        # Verify clone was successful
         if [ ! -f "vcpkg/bootstrap-vcpkg.sh" ]; then
           echo "ERROR: bootstrap-vcpkg.sh not found in vcpkg directory"
+          echo "vcpkg directory contents:"
           ls -la vcpkg/
           exit 1
         fi
