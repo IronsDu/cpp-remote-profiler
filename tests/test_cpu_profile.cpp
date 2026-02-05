@@ -119,6 +119,9 @@ TEST(ProfilerManagerTest, GetProfilerState) {
     EXPECT_EQ(state.output_path, profile_path);
     EXPECT_GT(state.start_time, 0);
 
+    // 等待一小段时间，确保 profiler 运行了至少几毫秒
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
     // 停止 profiler
     profiler.stopCPUProfiler();
 
