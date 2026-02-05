@@ -44,17 +44,14 @@ jobs:
 
     - name: Install vcpkg
       run: |
-        # Clone vcpkg if it doesn't exist (not cached)
-        if [ ! -d "vcpkg" ]; then
+        # Clone vcpkg if it doesn't exist or is incomplete (not cached)
+        if [ ! -f "vcpkg/vcpkg" ]; then
+          echo "vcpkg not found or incomplete, cloning..."
+          rm -rf vcpkg
           git clone https://github.com/Microsoft/vcpkg.git
           cd vcpkg
           ./bootstrap-vcpkg.sh
         else
-          # vcpkg directory exists from cache, verify it's valid
-          if [ ! -f "vcpkg/vcpkg" ]; then
-            echo "ERROR: vcpkg executable not found in cached directory"
-            exit 1
-          fi
           echo "Using cached vcpkg"
         fi
 
@@ -124,17 +121,14 @@ jobs:
 
     - name: Install vcpkg
       run: |
-        # Clone vcpkg if it doesn't exist (not cached)
-        if [ ! -d "vcpkg" ]; then
+        # Clone vcpkg if it doesn't exist or is incomplete (not cached)
+        if [ ! -f "vcpkg/vcpkg" ]; then
+          echo "vcpkg not found or incomplete, cloning..."
+          rm -rf vcpkg
           git clone https://github.com/Microsoft/vcpkg.git
           cd vcpkg
           ./bootstrap-vcpkg.sh
         else
-          # vcpkg directory exists from cache, verify it's valid
-          if [ ! -f "vcpkg/vcpkg" ]; then
-            echo "ERROR: vcpkg executable not found in cached directory"
-            exit 1
-          fi
           echo "Using cached vcpkg"
         fi
 
