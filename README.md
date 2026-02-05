@@ -2,6 +2,39 @@
 
 类似 Go pprof 和 brpc pprof service 的 C++ 远程性能分析工具，基于 gperftools 和 Drogon 框架实现。
 
+**当前版本**: v0.1.0 (开发阶段)
+
+> ⚠️ **注意**: 当前项目处于开发阶段（v0.x.x），API 可能随时变化。不建议用于生产环境。
+
+## 📋 版本说明
+
+### 当前版本: v0.1.0
+
+本项目使用语义化版本号 (Semantic Versioning)：`MAJOR.MINOR.PATCH`
+
+- **当前阶段**: v0.x.x (开发阶段)
+  - API 可能随时变化
+  - 不保证向后兼容
+  - 欢迎反馈和建议
+
+- **稳定版本**: v1.0.0 (未来)
+  - 承诺 API 向后兼容
+  - 推荐用于生产环境
+
+### 版本检查
+
+```cpp
+#include "version.h"
+
+#if REMOTE_PROFILER_VERSION_AT_LEAST(0, 2, 0)
+    // 使用新 API
+#else
+    // 使用旧 API
+#endif
+```
+
+详见 `plan.md` 中的 [API 稳定性策略](#api-稳定性策略)。
+
 ## 🎯 功能特性
 
 - ✅ **CPU Profiling**: 使用 gperftools 进行 CPU 性能分析

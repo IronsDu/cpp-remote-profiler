@@ -1,0 +1,9 @@
+{
+  "default-registry": {
+    "kind": "builtin",
+    "baseline": ""
+  },
+  "overlay-triplets": [
+    "triplets"
+  ]
+}
