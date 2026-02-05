@@ -30,11 +30,12 @@ jobs:
           libgoogle-perftools-dev \
           wget
 
-    - name: Cache vcpkg archives
+    - name: Cache vcpkg packages
       id: cache-vcpkg
       uses: actions/cache@v3
       with:
         path: |
+          vcpkg
           ~/.vcpkg/archives
           ~/.vcpkg/git
         key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
@@ -43,24 +44,18 @@ jobs:
 
     - name: Install vcpkg
       run: |
-        # Remove existing empty vcpkg directory if it exists
-        if [ -d "vcpkg" ] && [ -z "$(ls -A vcpkg)" ]; then
-          rm -rf vcpkg
-        fi
-        # Clone vcpkg if it doesn't exist
+        # Clone vcpkg if it doesn't exist (not cached)
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
-        fi
-        # Verify clone was successful
-        if [ ! -f "vcpkg/bootstrap-vcpkg.sh" ]; then
-          echo "ERROR: bootstrap-vcpkg.sh not found in vcpkg directory"
-          echo "vcpkg directory contents:"
-          ls -la vcpkg/
-          exit 1
-        fi
-        cd vcpkg
-        if [ ! -f "vcpkg" ]; then
+          cd vcpkg
           ./bootstrap-vcpkg.sh
+        else
+          # vcpkg directory exists from cache, verify it's valid
+          if [ ! -f "vcpkg/vcpkg" ]; then
+            echo "ERROR: vcpkg executable not found in cached directory"
+            exit 1
+          fi
+          echo "Using cached vcpkg"
         fi
 
     - name: Install vcpkg dependencies
@@ -115,11 +110,12 @@ jobs:
           libgoogle-perftools-dev \
           wget
 
-    - name: Cache vcpkg archives
+    - name: Cache vcpkg packages
       id: cache-vcpkg-clang
       uses: actions/cache@v3
       with:
         path: |
+          vcpkg
           ~/.vcpkg/archives
           ~/.vcpkg/git
         key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
@@ -128,24 +124,18 @@ jobs:
 
     - name: Install vcpkg
       run: |
-        # Remove existing empty vcpkg directory if it exists
-        if [ -d "vcpkg" ] && [ -z "$(ls -A vcpkg)" ]; then
-          rm -rf vcpkg
-        fi
-        # Clone vcpkg if it doesn't exist
+        # Clone vcpkg if it doesn't exist (not cached)
         if [ ! -d "vcpkg" ]; then
           git clone https://github.com/Microsoft/vcpkg.git
-        fi
-        # Verify clone was successful
-        if [ ! -f "vcpkg/bootstrap-vcpkg.sh" ]; then
-          echo "ERROR: bootstrap-vcpkg.sh not found in vcpkg directory"
-          echo "vcpkg directory contents:"
-          ls -la vcpkg/
-          exit 1
-        fi
-        cd vcpkg
-        if [ ! -f "vcpkg" ]; then
+          cd vcpkg
           ./bootstrap-vcpkg.sh
+        else
+          # vcpkg directory exists from cache, verify it's valid
+          if [ ! -f "vcpkg/vcpkg" ]; then
+            echo "ERROR: vcpkg executable not found in cached directory"
+            exit 1
+          fi
+          echo "Using cached vcpkg"
         fi
 
     - name: Install vcpkg dependencies
