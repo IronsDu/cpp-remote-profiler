@@ -32,7 +32,7 @@ jobs:
 
     - name: Cache vcpkg packages
       id: cache-vcpkg
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           vcpkg
@@ -109,7 +109,7 @@ jobs:
 
     - name: Cache vcpkg packages
       id: cache-vcpkg-clang
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           vcpkg

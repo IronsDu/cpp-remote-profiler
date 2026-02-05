@@ -31,7 +31,7 @@ jobs:
 
     - name: Cache vcpkg packages
       id: cache-vcpkg
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           vcpkg
@@ -103,7 +103,7 @@ jobs:
 
     - name: Cache vcpkg packages
       id: cache-vcpkg
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           vcpkg
@@ -175,7 +175,7 @@ jobs:
 
     - name: Cache vcpkg packages
       id: cache-vcpkg
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           vcpkg
@@ -259,7 +259,7 @@ jobs:
 
     - name: Upload clang-tidy results
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: clang-tidy-results
         path: clang-tidy-output.txt
@@ -285,7 +285,7 @@ jobs:
 
     - name: Cache vcpkg packages
       id: cache-vcpkg
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           vcpkg
