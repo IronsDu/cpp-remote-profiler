@@ -15,9 +15,6 @@ jobs:
     name: Ubuntu (GCC)
     runs-on: ubuntu-latest
 
-    env:
-      VCPKG_DEFAULT_TRIPLET: x64-linux-release
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -52,7 +49,6 @@ jobs:
         cmake .. \
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
           -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
-          -DVCPKG_TARGET_TRIPLET=x64-linux-release \
           -DBUILD_SHARED_LIBS=ON
 
     - name: Build
@@ -75,9 +71,6 @@ jobs:
   build-clang:
     name: Ubuntu (Clang)
     runs-on: ubuntu-latest
-
-    env:
-      VCPKG_DEFAULT_TRIPLET: x64-linux-release
 
     steps:
     - name: Checkout code
