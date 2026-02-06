@@ -34,8 +34,6 @@ jobs:
 
     - name: Setup vcpkg with binary caching
       uses: lukka/run-vcpkg@v11
-      env:
-        VCPKG_DEFAULT_TRIPLET: x64-linux
       with:
         vcpkgDirectory: '${{ github.workspace }}/vcpkg'
         vcpkgGitCommitId: '2cf2bcc60add50f79b2c418487d9cd1b6c7c1fec'
@@ -43,6 +41,7 @@ jobs:
         doNotCache: false
         vcpkgJsonGlob: vcpkg.json
         vcpkgJsonIgnores: ['**/vcpkg/**']
+        runVcpkgFormatString: [`install`, `--recurse`, `--clean-after-build`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--triplet`, `x64-linux`]
 
     - name: Configure CMake
       run: |
@@ -94,8 +93,6 @@ jobs:
 
     - name: Setup vcpkg with binary caching
       uses: lukka/run-vcpkg@v11
-      env:
-        VCPKG_DEFAULT_TRIPLET: x64-linux
       with:
         vcpkgDirectory: '${{ github.workspace }}/vcpkg'
         vcpkgGitCommitId: '2cf2bcc60add50f79b2c418487d9cd1b6c7c1fec'
@@ -103,6 +100,7 @@ jobs:
         doNotCache: false
         vcpkgJsonGlob: vcpkg.json
         vcpkgJsonIgnores: ['**/vcpkg/**']
+        runVcpkgFormatString: [`install`, `--recurse`, `--clean-after-build`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--triplet`, `x64-linux`]
 
     - name: Configure CMake with Clang
       run: |
