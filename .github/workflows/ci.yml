@@ -39,6 +39,8 @@ jobs:
         vcpkgGitCommitId: '2cf2bcc60add50f79b2c418487d9cd1b6c7c1fec'
         runVcpkgInstall: true
         doNotCache: false
+        vcpkgJsonGlob: vcpkg.json
+        vcpkgJsonIgnores: ['**/vcpkg/**']
 
     - name: Configure CMake
       run: |
@@ -96,6 +98,8 @@ jobs:
         vcpkgGitCommitId: '2cf2bcc60add50f79b2c418487d9cd1b6c7c1fec'
         runVcpkgInstall: true
         doNotCache: false
+        vcpkgJsonGlob: vcpkg.json
+        vcpkgJsonIgnores: ['**/vcpkg/**']
 
     - name: Configure CMake with Clang
       run: |
