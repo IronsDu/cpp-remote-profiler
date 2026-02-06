@@ -37,6 +37,8 @@ jobs:
       with:
         vcpkgDirectory: '${{ github.workspace }}/vcpkg'
         vcpkgGitCommitId: '2cf2bcc60add50f79b2c418487d9cd1b6c7c1fec'
+        runVcpkgInstall: true
+        doNotCache: false
 
     - name: Configure CMake
       run: |
@@ -92,6 +94,8 @@ jobs:
       with:
         vcpkgDirectory: '${{ github.workspace }}/vcpkg'
         vcpkgGitCommitId: '2cf2bcc60add50f79b2c418487d9cd1b6c7c1fec'
+        runVcpkgInstall: true
+        doNotCache: false
 
     - name: Configure CMake with Clang
       run: |
