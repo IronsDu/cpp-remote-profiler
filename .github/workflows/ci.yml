@@ -43,6 +43,17 @@ jobs:
         vcpkgJsonIgnores: ['**/vcpkg/**']
         runVcpkgFormatString: [`install`, `--recurse`, `--clean-after-build`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--triplet`, `x64-linux`]
 
+    - name: Debug vcpkg environment
+      run: |
+        echo "=== VCPKG Environment Variables ==="
+        env | grep VCPKG || echo "No VCPKG environment variables found"
+        echo ""
+        echo "=== VCPKG Binary Cache Directory ==="
+        ls -la ~/.cache/vcpkg/archives/ 2>/dev/null || echo "Cache directory not found"
+        echo ""
+        echo "=== VCPKG Version ==="
+        ${{ github.workspace }}/vcpkg/vcpkg version
+
     - name: Configure CMake
       run: |
         mkdir build
@@ -101,6 +112,17 @@ jobs:
         vcpkgJsonGlob: vcpkg.json
         vcpkgJsonIgnores: ['**/vcpkg/**']
         runVcpkgFormatString: [`install`, `--recurse`, `--clean-after-build`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--triplet`, `x64-linux`]
+
+    - name: Debug vcpkg environment
+      run: |
+        echo "=== VCPKG Environment Variables ==="
+        env | grep VCPKG || echo "No VCPKG environment variables found"
+        echo ""
+        echo "=== VCPKG Binary Cache Directory ==="
+        ls -la ~/.cache/vcpkg/archives/ 2>/dev/null || echo "Cache directory not found"
+        echo ""
+        echo "=== VCPKG Version ==="
+        ${{ github.workspace }}/vcpkg/vcpkg version
 
     - name: Configure CMake with Clang
       run: |
