@@ -109,7 +109,6 @@ jobs:
         CC=clang CXX=clang++ cmake .. \
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
           -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
-          -DVCPKG_TARGET_TRIPLET=x64-linux-release \
           -DBUILD_SHARED_LIBS=ON
 
     - name: Build
