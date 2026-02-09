@@ -582,14 +582,33 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler);
 
 **说明**:
 - 注册以下端点：
-  - `/pprof/profile` - CPU profile
-  - `/pprof/heap` - Heap profile
-  - `/pprof/growth` - Heap growth profile
-  - `/api/cpu/analyze` - CPU 火焰图
-  - `/api/heap/analyze` - Heap 火焰图
-  - `/api/growth/analyze` - Growth 火焰图
+
+**标准 pprof 接口**：
+  - `/pprof/profile` - CPU profile（返回原始文件，兼容 Go pprof）
+  - `/pprof/heap` - Heap profile（返回原始文件，兼容 Go pprof）
+  - `/pprof/growth` - Heap growth profile（返回原始文件，兼容 Go pprof）
+  - `/pprof/symbol` - 符号化接口（POST，兼容 Go pprof）
+
+**一键分析接口**：
+  - `/api/cpu/analyze` - CPU 火焰图 SVG（浏览器显示）
+  - `/api/heap/analyze` - Heap 火焰图 SVG（浏览器显示）
+  - `/api/growth/analyze` - Growth 火焰图 SVG（浏览器显示）
+
+**原始 SVG 下载接口**：
+  - `/api/cpu/svg_raw` - CPU 原始 SVG（pprof 生成，触发下载）
+  - `/api/heap/svg_raw` - Heap 原始 SVG（pprof 生成，触发下载）
+  - `/api/growth/svg_raw` - Growth 原始 SVG（pprof 生成，触发下载）
+  - `/api/cpu/flamegraph_raw` - CPU FlameGraph 原始 SVG（触发下载）
+  - `/api/heap/flamegraph_raw` - Heap FlameGraph 原始 SVG（触发下载）
+  - `/api/growth/flamegraph_raw` - Growth FlameGraph 原始 SVG（触发下载）
+
+**其他接口**：
   - `/api/thread/stacks` - 线程堆栈
+  - `/api/status` - 全局状态
   - `/` - Web 主界面
+  - `/show_svg.html` - CPU 火焰图查看器
+  - `/show_heap_svg.html` - Heap 火焰图查看器
+  - `/show_growth_svg.html` - Growth 火焰图查看器
 
 **示例**:
 ```cpp
