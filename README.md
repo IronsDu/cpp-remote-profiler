@@ -40,7 +40,7 @@
 - ✅ **CPU Profiling**: 使用 gperftools 进行 CPU 性能分析
 - ✅ **Heap Profiling**: 内存使用分析和内存泄漏检测（调用 tcmalloc sample）
 - ✅ **线程堆栈捕获**: 获取所有线程的调用堆栈，支持动态线程数
-- ✅ **标准 pprof 接口**: 兼容 brpc pprof service，支持 Go pprof 工具直接访问
+- ✅ **标准 pprof 接口**: 支持 Go pprof 工具直接访问
 - ✅ **Web 界面**: 美观的 Web 控制面板，支持一键式火焰图分析
 - ✅ **RESTful API**: 完整的 HTTP API 接口
 - ✅ **依赖管理**: 使用 vcpkg 管理所有依赖
@@ -224,18 +224,26 @@ go tool pprof -http=:8081 cpu.prof
 | 端点 | 方法 | 描述 | 状态 |
 |------|------|------|------|
 | **标准 pprof 接口** ||||
-| `/pprof/profile` | GET | CPU profile（兼容 Go pprof） | ⏳ |
-| `/pprof/heap` | GET | Heap profile（兼容 Go pprof） | ⏳ |
-| `/pprof/growth` | GET | Heap growth stacks（兼容 Go pprof） | ⏳ |
+| `/pprof/profile` | GET | CPU profile（兼容 Go pprof） | ✅ |
+| `/pprof/heap` | GET | Heap profile（兼容 Go pprof） | ✅ |
+| `/pprof/growth` | GET | Heap growth stacks（兼容 Go pprof） | ✅ |
+| `/pprof/symbol` | POST | 符号化接口（兼容 Go pprof） | ✅ |
 | **一键分析接口** ||||
 | `/api/cpu/analyze` | GET | 采样并返回 CPU 火焰图 SVG | ✅ |
 | `/api/heap/analyze` | GET | 采样并返回 Heap 火焰图 SVG | ✅ |
+| `/api/growth/analyze` | GET | Heap Growth 火焰图 SVG | ✅ |
+| **原始 SVG 下载接口** ||||
+| `/api/cpu/svg_raw` | GET | CPU 原始 SVG（pprof 生成，下载） | ✅ |
+| `/api/heap/svg_raw` | GET | Heap 原始 SVG（pprof 生成，下载） | ✅ |
+| `/api/growth/svg_raw` | GET | Growth 原始 SVG（pprof 生成，下载） | ✅ |
+| `/api/cpu/flamegraph_raw` | GET | CPU FlameGraph 原始 SVG（下载） | ✅ |
+| `/api/heap/flamegraph_raw` | GET | Heap FlameGraph 原始 SVG（下载） | ✅ |
+| `/api/growth/flamegraph_raw` | GET | Growth FlameGraph 原始 SVG（下载） | ✅ |
 | **线程分析接口** ||||
 | `/api/thread/stacks` | GET | 获取所有线程的调用堆栈 | ✅ |
 | **辅助接口** ||||
 | `/` | GET | Web 主界面 | ✅ |
 | `/api/status` | GET | 获取全局状态 | ✅ |
-| `/api/list` | GET | 列出所有 profile 文件 | ✅ |
 
 ### 使用示例
 
@@ -266,23 +274,36 @@ curl http://localhost:8080/api/thread/stacks
 cpp-remote-profiler/
 ├── CMakeLists.txt              # 构建配置
 ├── README.md                   # 项目文档
-├── vcpkg.json                  # vcpkg 依赖配置
 ├── build.sh                    # 构建脚本
 ├── start.sh                    # 启动脚本
 ├── include/
 │   ├── profiler_manager.h      # Profiler 管理器
-│   └── profiler_controller.h   # HTTP 控制器
+│   ├── symbolize.h             # 符号化引擎
+│   ├── web_resources.h         # Web 资源（嵌入的 HTML）
+│   ├── web_server.h            # HTTP 服务器
+│   └── version.h               # 版本信息
 ├── src/
 │   ├── profiler_manager.cpp
-│   └── profiler_controller.cpp
+│   ├── symbolize.cpp
+│   ├── web_resources.cpp       # 嵌入的 Web 资源
+│   └── web_server.cpp          # HTTP 路由处理
 ├── example/
-│   └── main.cpp                # 示例程序
+│   ├── main.cpp                # 示例程序主入口
+│   ├── workload.cpp            # 工作负载示例
+│   ├── workload.h
+│   └── custom_signal.cpp       # 自定义信号示例
 ├── tests/
-│   ├── profiler_test.cpp       # 单元测试
-│   └── test_flamegraph.sh      # 火焰图测试脚本
-├── web/
-│   ├── index.html              # Web 界面
-│   └── flamegraph.html         # 火焰图查看器
+│   ├── test_cpu_profile.cpp
+│   └── test_full_flow.cpp
+├── docs/                       # 用户文档
+│   ├── README.md               # 文档索引
+│   └── user_guide/             # 用户指南
+│       ├── 01_quick_start.md
+│       ├── 02_api_reference.md
+│       ├── 03_integration_examples.md
+│       ├── 04_troubleshooting.md
+│       ├── 05_installation.md
+│       └── 06_using_find_package.md
 └── vcpkg/                      # vcpkg 包管理器
 ```
 
@@ -290,7 +311,8 @@ cpp-remote-profiler/
 
 ```bash
 cd build
-./profiler_test
+./test_cpu_profile
+./test_full_flow
 ```
 
 运行完整的火焰图测试：
@@ -299,8 +321,8 @@ cd build
 # 确保服务正在运行
 ./start.sh
 
-# 在另一个终端运行测试
-./tests/test_flamegraph.sh
+# 在浏览器访问
+http://localhost:8080
 ```
 
 ## 💡 集成到你的项目
@@ -426,12 +448,12 @@ cd vcpkg
 | CPU Profiling | ✓ | ✓ | ✓ |
 | Heap Profiling | ✓ | ✓ | ✓ |
 | Thread Stack Capturing | ✓ | ✗ | ✓ |
-| 标准接口 | ✓ | ✓ | ✓ (兼容 brpc) |
+| 标准接口 | ✓ | ✓ | ✓ |
 | Web 界面 | ✓ | ✗ | ✓ |
 | 一键分析 SVG | ✗ | ✗ | ✓ |
 | 远程分析 | ✓ | ✓ | ✓ |
 | Goroutine Profiling | ✓ | ✗ | ✗ |
-| Growth Profiling | ✓ | ✓ | 📋 |
+| Growth Profiling | ✓ | ✓ | ✓ |
 
 ## 📝 许可证
 

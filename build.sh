@@ -33,7 +33,7 @@ if [ $? -eq 0 ]; then
     echo "✅ 编译成功！"
     echo ""
     echo "运行测试..."
-    ./profiler_test 2>&1 | tee test_debug.log
+    ./test_cpu_profile 2>&1 | tee test_debug.log
     echo ""
     echo "运行服务："
     echo "  ./start.sh"
