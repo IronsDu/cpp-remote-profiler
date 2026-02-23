@@ -273,22 +273,28 @@ make
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
-    cmake build-essential git pkg-config \
+    cmake build-essential git pkg-config graphviz \
     libgoogle-perftools-dev libssl-dev zlib1g-dev
 ```
 
-#### CentOS/RHEL
+#### CentOS/RHEL/Fedora
 
 ```bash
+# Fedora
+sudo dnf install -y \
+    cmake gcc-c++ git pkg-config graphviz \
+    gperftools-devel openssl-devel zlib-devel
+
+# CentOS/RHEL
 sudo yum install -y \
-    cmake gcc-c++ git pkgconfig \
+    cmake gcc-c++ git pkgconfig graphviz \
     gperftools-devel openssl-devel zlib-devel
 ```
 
 #### macOS
 
 ```bash
-brew install cmake gperftools openssl pkg-config
+brew install cmake gperftools openssl pkg-config graphviz
 ```
 
 ### 步骤 2: 克隆并编译

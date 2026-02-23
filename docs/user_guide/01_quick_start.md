@@ -29,7 +29,7 @@
 ```bash
 # 1. 安装系统依赖
 sudo apt-get update
-sudo apt-get install -y cmake build-essential git pkg-config libgoogle-perftools-dev
+sudo apt-get install -y cmake build-essential git pkg-config graphviz libgoogle-perftools-dev
 
 # 2. 克隆项目
 git clone https://github.com/your-org/cpp-remote-profiler.git

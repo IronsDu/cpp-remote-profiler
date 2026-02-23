@@ -76,7 +76,20 @@ sudo apt-get install -y \
     build-essential \
     git \
     pkg-config \
+    graphviz \
     libgoogle-perftools-dev
+```
+
+```bash
+# Fedora/RHEL/CentOS
+sudo dnf install -y \
+    cmake \
+    gcc-c++ \
+    make \
+    git \
+    pkg-config \
+    graphviz \
+    gperftools-devel
 ```
 
 ### 2. 初始化 vcpkg
