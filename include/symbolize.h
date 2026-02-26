@@ -16,7 +16,7 @@ struct SymbolizedFrame {
 
 // 符号化器接口
 class Symbolizer {
-  public:
+public:
     virtual ~Symbolizer() = default;
 
     // 符号化单个地址
@@ -28,14 +28,14 @@ class Symbolizer {
 
 // Backward-cpp 符号化器实现
 class BackwardSymbolizer : public Symbolizer {
-  public:
+public:
     BackwardSymbolizer();
     ~BackwardSymbolizer() override;
 
     std::vector<SymbolizedFrame> symbolize(void* address) override;
     std::vector<std::vector<SymbolizedFrame>> symbolizeBatch(const std::vector<void*>& addresses) override;
 
-  private:
+private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

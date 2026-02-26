@@ -12,7 +12,11 @@
 
 namespace profiler {
 
-enum class ProfilerType { CPU, HEAP, HEAP_GROWTH };
+enum class ProfilerType {
+    CPU,
+    HEAP,
+    HEAP_GROWTH
+};
 
 struct ProfilerState {
     bool is_running;
@@ -39,7 +43,7 @@ struct SharedStackTrace {
 };
 
 class ProfilerManager {
-  public:
+public:
     static ProfilerManager& getInstance();
 
     // Start CPU profiler
@@ -110,7 +114,7 @@ class ProfilerManager {
     bool executeCommand(const std::string& cmd, std::string& output);
     std::string getExecutablePath();
 
-  private:
+private:
     ProfilerManager();
     ~ProfilerManager();
     ProfilerManager(const ProfilerManager&) = delete;

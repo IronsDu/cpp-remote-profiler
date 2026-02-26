@@ -10,7 +10,7 @@ namespace profiler {
 
 // BackwardSymbolizer 的内部实现
 class BackwardSymbolizer::Impl {
-  public:
+public:
     backward::TraceResolver resolver_;
 
     Impl() : resolver_() {

@@ -7,7 +7,7 @@
 
 // 数据处理类 - 用于生成 CPU 火焰图中的数据处理分支
 class DataProcessor {
-  public:
+public:
     void sortData(std::vector<int>& data);
     void reverseData(std::vector<int>& data);
     void shuffleData(std::vector<int>& data);
@@ -16,7 +16,7 @@ class DataProcessor {
 
 // Fibonacci 计算类 - 用于生成递归和迭代调用的火焰图
 class FibonacciCalculator {
-  public:
+public:
     int recursive(int n);
     int iterative(int n);
     int memoized(int n, std::map<int, int>& cache);
@@ -24,7 +24,7 @@ class FibonacciCalculator {
 
 // 矩阵运算类 - 用于生成矩阵操作的火焰图
 class MatrixOperations {
-  public:
+public:
     std::vector<std::vector<int>> createMatrix(int rows, int cols);
     std::vector<std::vector<int>> transposeMatrix(const std::vector<std::vector<int>>& matrix);
     std::vector<std::vector<int>> multiplyMatrices(const std::vector<std::vector<int>>& a,
@@ -33,7 +33,7 @@ class MatrixOperations {
 
 // Hash 计算类 - 用于生成 hash 计算的火焰图
 class HashCalculator {
-  public:
+public:
     size_t simpleHash(const std::string& str);
     std::map<std::string, size_t> batchHash(const std::vector<std::string>& strings);
     std::vector<size_t> parallelHash(const std::vector<std::string>& strings);

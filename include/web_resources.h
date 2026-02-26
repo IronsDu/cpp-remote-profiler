@@ -6,7 +6,7 @@ namespace profiler {
 
 // Web 资源管理类 - 提供嵌入的 HTML 页面内容
 class WebResources {
-  public:
+public:
     // 获取主页面 HTML
     static std::string getIndexPage();
 
