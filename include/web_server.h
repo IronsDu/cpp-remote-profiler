@@ -1,7 +1,7 @@
 #pragma once
 
-#include <drogon/drogon.h>
 #include "profiler_manager.h"
+#include <drogon/drogon.h>
 
 namespace profiler {
 

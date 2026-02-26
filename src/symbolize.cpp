@@ -1,16 +1,16 @@
 #include "symbolize.h"
-#include <backward.hpp>
 #include <absl/debugging/symbolize.h>
-#include <sstream>
 #include <algorithm>
-#include <dlfcn.h>
+#include <backward.hpp>
 #include <cxxabi.h>
+#include <dlfcn.h>
+#include <sstream>
 
 namespace profiler {
 
 // BackwardSymbolizer 的内部实现
 class BackwardSymbolizer::Impl {
-public:
+  public:
     backward::TraceResolver resolver_;
 
     Impl() : resolver_() {
@@ -18,9 +18,7 @@ public:
     }
 };
 
-BackwardSymbolizer::BackwardSymbolizer()
-    : impl_(std::make_unique<Impl>()) {
-}
+BackwardSymbolizer::BackwardSymbolizer() : impl_(std::make_unique<Impl>()) {}
 
 BackwardSymbolizer::~BackwardSymbolizer() = default;
 
@@ -112,8 +110,7 @@ std::vector<SymbolizedFrame> BackwardSymbolizer::symbolize(void* address) {
     return frames;
 }
 
-std::vector<std::vector<SymbolizedFrame>> BackwardSymbolizer::symbolizeBatch(
-    const std::vector<void*>& addresses) {
+std::vector<std::vector<SymbolizedFrame>> BackwardSymbolizer::symbolizeBatch(const std::vector<void*>& addresses) {
     std::vector<std::vector<SymbolizedFrame>> results;
     results.reserve(addresses.size());
 

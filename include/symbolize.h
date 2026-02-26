@@ -1,22 +1,22 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
 namespace profiler {
 
 // 符号化结果
 struct SymbolizedFrame {
-    std::string function_name;      // 函数名
-    std::string source_file;         // 源文件路径
-    unsigned int line = 0;          // 行号
-    bool is_inlined = false;        // 是否是内联函数
+    std::string function_name; // 函数名
+    std::string source_file;   // 源文件路径
+    unsigned int line = 0;     // 行号
+    bool is_inlined = false;   // 是否是内联函数
 };
 
 // 符号化器接口
 class Symbolizer {
-public:
+  public:
     virtual ~Symbolizer() = default;
 
     // 符号化单个地址
@@ -28,14 +28,14 @@ public:
 
 // Backward-cpp 符号化器实现
 class BackwardSymbolizer : public Symbolizer {
-public:
+  public:
     BackwardSymbolizer();
     ~BackwardSymbolizer() override;
 
     std::vector<SymbolizedFrame> symbolize(void* address) override;
     std::vector<std::vector<SymbolizedFrame>> symbolizeBatch(const std::vector<void*>& addresses) override;
 
-private:
+  private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

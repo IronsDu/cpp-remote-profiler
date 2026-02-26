@@ -6,9 +6,9 @@
  */
 
 #include "profiler_manager.h"
+#include <chrono>
 #include <iostream>
 #include <thread>
-#include <chrono>
 
 void doWork() {
     double result = 0;

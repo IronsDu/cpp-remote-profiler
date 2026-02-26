@@ -1004,7 +1004,6 @@ static const char GROWTH_SVG_VIEWER_PAGE[] = R"HTML(
 </html>
 )HTML";
 
-
 std::string WebResources::getIndexPage() {
     return std::string(INDEX_PAGE);
 }

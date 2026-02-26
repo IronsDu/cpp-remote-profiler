@@ -1,10 +1,10 @@
-#include <drogon/drogon.h>
 #include "profiler_manager.h"
 #include "web_server.h"
 #include "workload.h"
-#include <thread>
 #include <chrono>
+#include <drogon/drogon.h>
 #include <iostream>
+#include <thread>
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     std::cout << "C++ Remote Profiler Example\n";

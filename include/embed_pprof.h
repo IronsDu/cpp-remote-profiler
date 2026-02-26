@@ -1,8 +1,8 @@
 #pragma once
 
-#include <string>
 #include <fstream>
 #include <iostream>
+#include <string>
 #include <sys/stat.h>
 
 namespace profiler {
