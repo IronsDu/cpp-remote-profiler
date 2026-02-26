@@ -6,14 +6,17 @@
 # Options:
 #   --fix    Automatically fix formatting issues
 #
-# This script uses Docker/Podman to ensure clang-format version consistency with CI.
-# If no container runtime is available, it falls back to local clang-format.
+# This script prefers local clang-format if version matches CI.
+# Otherwise, it falls back to Docker/Podman container.
 #
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Required clang-format major version (must match CI)
+REQUIRED_VERSION=18
 
 # clang-format Docker image (must match CI)
 CLANG_FORMAT_IMAGE="docker.io/silkeh/clang:18"
@@ -78,30 +81,50 @@ if [[ -z "$SOURCE_FILES" ]]; then
     exit 0
 fi
 
-# Detect container runtime (docker or podman)
-CONTAINER_RUNTIME=""
-if command -v docker &> /dev/null; then
-    CONTAINER_RUNTIME="docker"
-elif command -v podman &> /dev/null; then
-    CONTAINER_RUNTIME="podman"
+# Check local clang-format version
+USE_CONTAINER=false
+LOCAL_VERSION=""
+
+if command -v clang-format &> /dev/null; then
+    VERSION_OUTPUT=$(clang-format --version 2>/dev/null || echo "")
+    # Extract major version (e.g., "18" from "clang-format version 18.1.8")
+    LOCAL_VERSION=$(echo "$VERSION_OUTPUT" | grep -oP 'version \K\d+' | head -1)
+
+    if [[ "$LOCAL_VERSION" == "$REQUIRED_VERSION" ]]; then
+        echo "Using local clang-format (version $LOCAL_VERSION)"
+        echo ""
+    else
+        echo -e "${YELLOW}Local clang-format version: ${LOCAL_VERSION:-unknown}${NC}"
+        echo -e "${YELLOW}Required version: $REQUIRED_VERSION${NC}"
+        echo ""
+        USE_CONTAINER=true
+    fi
+else
+    echo -e "${YELLOW}clang-format not found locally${NC}"
+    echo ""
+    USE_CONTAINER=true
 fi
 
-# Function to run clang-format
-run_clang_format() {
-    local args="$1"
-    if [[ -n "$CONTAINER_RUNTIME" ]]; then
-        $CONTAINER_RUNTIME run --rm --privileged \
-            -v "$PROJECT_ROOT:/workspace" \
-            -w /workspace \
-            "$CLANG_FORMAT_IMAGE" \
-            clang-format $args
-    else
-        clang-format $args
+# Setup container if needed
+CONTAINER_RUNTIME=""
+if [[ "$USE_CONTAINER" == true ]]; then
+    # Detect container runtime (docker or podman)
+    if command -v docker &> /dev/null; then
+        CONTAINER_RUNTIME="docker"
+    elif command -v podman &> /dev/null; then
+        CONTAINER_RUNTIME="podman"
     fi
-}
 
-# Setup clang-format command
-if [[ -n "$CONTAINER_RUNTIME" ]]; then
+    if [[ -z "$CONTAINER_RUNTIME" ]]; then
+        echo -e "${RED}Error: clang-format version mismatch and no container runtime found${NC}"
+        echo ""
+        echo "Please install one of the following:"
+        echo "  - clang-format $REQUIRED_VERSION: ensures version consistency"
+        echo "  - Docker: https://docs.docker.com/get-docker/"
+        echo "  - Podman: https://podman.io/getting-started/installation"
+        exit 1
+    fi
+
     echo "Using container runtime: $CONTAINER_RUNTIME"
     echo "clang-format image: $CLANG_FORMAT_IMAGE"
 
@@ -111,29 +134,25 @@ if [[ -n "$CONTAINER_RUNTIME" ]]; then
 
     # Show version
     echo "clang-format version:"
-    run_clang_format "--version"
-    echo ""
-else
-    # Fall back to local clang-format
-    if ! command -v clang-format &> /dev/null; then
-        echo -e "${RED}Error: clang-format is not installed and no container runtime found${NC}"
-        echo ""
-        echo "Please install one of the following:"
-        echo "  - Docker: https://docs.docker.com/get-docker/"
-        echo "  - Podman: https://podman.io/getting-started/installation"
-        echo "  - clang-format: apt-get install clang-format / dnf install clang-tools-extra"
-        exit 1
-    fi
-
-    echo -e "${YELLOW}Warning: No container runtime found, using local clang-format${NC}"
-    echo -e "${YELLOW}Warning: Version mismatch may cause CI failures!${NC}"
-    echo ""
-    echo "Local clang-format version:"
-    clang-format --version
-    echo ""
-    echo -e "${YELLOW}Consider installing Docker or Podman for consistent formatting.${NC}"
+    $CONTAINER_RUNTIME run --rm "$CLANG_FORMAT_IMAGE" clang-format --version
     echo ""
 fi
+
+# Function to run clang-format
+run_clang_format() {
+    local file="$1"
+    local args="$2"
+
+    if [[ -n "$CONTAINER_RUNTIME" ]]; then
+        $CONTAINER_RUNTIME run --rm --privileged \
+            -v "$PROJECT_ROOT:/workspace" \
+            -w /workspace \
+            "$CLANG_FORMAT_IMAGE" \
+            clang-format $args /workspace/"$file"
+    else
+        clang-format $args "$PROJECT_ROOT/$file"
+    fi
+}
 
 echo "Checking format for $(echo "$SOURCE_FILES" | wc -w) files..."
 echo ""
@@ -146,11 +165,7 @@ if [[ "$FIX_MODE" == true ]]; then
 
     for FILE in $SOURCE_FILES; do
         REL_PATH="${FILE#$PROJECT_ROOT/}"
-        if [[ -n "$CONTAINER_RUNTIME" ]]; then
-            run_clang_format "-i /workspace/$REL_PATH"
-        else
-            clang-format -i "$FILE"
-        fi
+        run_clang_format "$REL_PATH" "-i"
         echo -e "  Fixed: ${GREEN}$REL_PATH${NC}"
     done
 
@@ -164,11 +179,7 @@ for FILE in $SOURCE_FILES; do
     REL_PATH="${FILE#$PROJECT_ROOT/}"
 
     # Get the formatted version
-    if [[ -n "$CONTAINER_RUNTIME" ]]; then
-        FORMATTED=$(run_clang_format "/workspace/$REL_PATH" 2>/dev/null)
-    else
-        FORMATTED=$(clang-format "$FILE" 2>/dev/null)
-    fi
+    FORMATTED=$(run_clang_format "$REL_PATH" "" 2>/dev/null)
     ORIGINAL=$(cat "$FILE" 2>/dev/null)
 
     # Compare
