@@ -6,11 +6,17 @@
 # Options:
 #   --fix    Automatically fix formatting issues
 #
+# This script uses Docker/Podman to ensure clang-format version consistency with CI.
+# If no container runtime is available, it falls back to local clang-format.
+#
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# clang-format Docker image (must match CI)
+CLANG_FORMAT_IMAGE="docker.io/silkeh/clang:18"
 
 # Colors for output
 RED='\033[0;31m'
@@ -33,16 +39,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-# Check if clang-format is installed
-if ! command -v clang-format &> /dev/null; then
-    echo -e "${RED}Error: clang-format is not installed${NC}"
-    echo "Please install clang-format:"
-    echo "  Ubuntu/Debian: sudo apt-get install clang-format"
-    echo "  Fedora: sudo dnf install clang-tools-extra"
-    echo "  macOS: brew install clang-format"
-    exit 1
-fi
 
 # Check if .clang-format exists
 if [[ ! -f "$PROJECT_ROOT/.clang-format" ]]; then
@@ -82,6 +78,63 @@ if [[ -z "$SOURCE_FILES" ]]; then
     exit 0
 fi
 
+# Detect container runtime (docker or podman)
+CONTAINER_RUNTIME=""
+if command -v docker &> /dev/null; then
+    CONTAINER_RUNTIME="docker"
+elif command -v podman &> /dev/null; then
+    CONTAINER_RUNTIME="podman"
+fi
+
+# Function to run clang-format
+run_clang_format() {
+    local args="$1"
+    if [[ -n "$CONTAINER_RUNTIME" ]]; then
+        $CONTAINER_RUNTIME run --rm --privileged \
+            -v "$PROJECT_ROOT:/workspace" \
+            -w /workspace \
+            "$CLANG_FORMAT_IMAGE" \
+            clang-format $args
+    else
+        clang-format $args
+    fi
+}
+
+# Setup clang-format command
+if [[ -n "$CONTAINER_RUNTIME" ]]; then
+    echo "Using container runtime: $CONTAINER_RUNTIME"
+    echo "clang-format image: $CLANG_FORMAT_IMAGE"
+
+    # Pull image if not exists
+    echo "Ensuring image is available..."
+    $CONTAINER_RUNTIME pull "$CLANG_FORMAT_IMAGE" 2>/dev/null || true
+
+    # Show version
+    echo "clang-format version:"
+    run_clang_format "--version"
+    echo ""
+else
+    # Fall back to local clang-format
+    if ! command -v clang-format &> /dev/null; then
+        echo -e "${RED}Error: clang-format is not installed and no container runtime found${NC}"
+        echo ""
+        echo "Please install one of the following:"
+        echo "  - Docker: https://docs.docker.com/get-docker/"
+        echo "  - Podman: https://podman.io/getting-started/installation"
+        echo "  - clang-format: apt-get install clang-format / dnf install clang-tools-extra"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}Warning: No container runtime found, using local clang-format${NC}"
+    echo -e "${YELLOW}Warning: Version mismatch may cause CI failures!${NC}"
+    echo ""
+    echo "Local clang-format version:"
+    clang-format --version
+    echo ""
+    echo -e "${YELLOW}Consider installing Docker or Podman for consistent formatting.${NC}"
+    echo ""
+fi
+
 echo "Checking format for $(echo "$SOURCE_FILES" | wc -w) files..."
 echo ""
 
@@ -90,10 +143,17 @@ HAS_ISSUES=false
 if [[ "$FIX_MODE" == true ]]; then
     echo -e "${YELLOW}Fix mode enabled - modifying files in place${NC}"
     echo ""
+
     for FILE in $SOURCE_FILES; do
-        clang-format -i "$FILE"
-        echo -e "  Fixed: ${GREEN}$FILE${NC}"
+        REL_PATH="${FILE#$PROJECT_ROOT/}"
+        if [[ -n "$CONTAINER_RUNTIME" ]]; then
+            run_clang_format "-i /workspace/$REL_PATH"
+        else
+            clang-format -i "$FILE"
+        fi
+        echo -e "  Fixed: ${GREEN}$REL_PATH${NC}"
     done
+
     echo ""
     echo -e "${GREEN}All files have been formatted${NC}"
     exit 0
@@ -101,8 +161,14 @@ fi
 
 # Check each file
 for FILE in $SOURCE_FILES; do
+    REL_PATH="${FILE#$PROJECT_ROOT/}"
+
     # Get the formatted version
-    FORMATTED=$(clang-format "$FILE" 2>/dev/null)
+    if [[ -n "$CONTAINER_RUNTIME" ]]; then
+        FORMATTED=$(run_clang_format "/workspace/$REL_PATH" 2>/dev/null)
+    else
+        FORMATTED=$(clang-format "$FILE" 2>/dev/null)
+    fi
     ORIGINAL=$(cat "$FILE" 2>/dev/null)
 
     # Compare
@@ -113,7 +179,6 @@ for FILE in $SOURCE_FILES; do
             HAS_ISSUES=true
         fi
 
-        REL_PATH="${FILE#$PROJECT_ROOT/}"
         echo -e "${RED}File: $REL_PATH${NC}"
         echo "----------------------------------------"
 
@@ -143,9 +208,6 @@ if [[ "$HAS_ISSUES" == true ]]; then
     echo ""
     echo "To fix formatting issues, run:"
     echo -e "  ${GREEN}./scripts/check-format.sh --fix${NC}"
-    echo ""
-    echo "Or format specific files with:"
-    echo -e "  ${GREEN}clang-format -i <file>${NC}"
     echo ""
     exit 1
 else
