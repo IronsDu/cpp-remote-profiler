@@ -63,8 +63,7 @@ jobs:
       env:
         VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
       run: |
-        cd vcpkg
-        ./vcpkg install --triplet=x64-linux-release
+        ./vcpkg/vcpkg install --triplet=x64-linux-release
 
     - name: Configure CMake with ASan
       run: |
@@ -144,8 +143,7 @@ jobs:
       env:
         VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
       run: |
-        cd vcpkg
-        ./vcpkg install --triplet=x64-linux-release
+        ./vcpkg/vcpkg install --triplet=x64-linux-release
 
     - name: Configure CMake with UBSan
       run: |
@@ -226,8 +224,7 @@ jobs:
       env:
         VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
       run: |
-        cd vcpkg
-        ./vcpkg install --triplet=x64-linux-release
+        ./vcpkg/vcpkg install --triplet=x64-linux-release
 
     - name: Configure CMake with TSan
       run: |
@@ -345,8 +342,7 @@ jobs:
       env:
         VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
       run: |
-        cd vcpkg
-        ./vcpkg install --triplet=x64-linux-release
+        ./vcpkg/vcpkg install --triplet=x64-linux-release
 
     - name: Configure with all warnings as errors
       run: |
