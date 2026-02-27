@@ -17,7 +17,7 @@ TEST(FullFlowTest, GperftoolsGeneratesValidProfile) {
 
     // 运行足够的工作负载
     std::cout << "Running workload...\n";
-    volatile int result = 0;
+    volatile long long result = 0;
     for (int i = 0; i < 10000; ++i) {
         result += i * i;
         // 一些函数调用
