@@ -665,7 +665,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     if (latest_heap_file.empty()) {
         std::cout << "No .heap file found. Listing all files in directory:" << std::endl;
         std::string ls_cmd = "ls -la " + profile_dir_ + "/";
-        system(ls_cmd.c_str());
+        [[maybe_unused]] int result = system(ls_cmd.c_str());
 
         std::cout << "\nWARNING: gperftools heap profiler requires special configuration." << std::endl;
         std::cout << "Heap profiling needs to be enabled at program startup via HEAPPROFILE environment variable."
