@@ -10,6 +10,25 @@ env:
   BUILD_TYPE: Debug
 
 jobs:
+  # Format Check with clang-format
+  format-check:
+    name: Format Check
+    runs-on: ubuntu-latest
+    container:
+      image: silkeh/clang:18
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Show clang-format version
+      run: clang-format --version
+
+    - name: Run format check
+      run: |
+        chmod +x ./scripts/check-format.sh
+        ./scripts/check-format.sh
+
   # Address Sanitizer
   asan:
     name: Address Sanitizer

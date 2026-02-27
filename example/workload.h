@@ -1,9 +1,9 @@
 #pragma once
 
-#include <vector>
-#include <map>
 #include <list>
+#include <map>
 #include <string>
+#include <vector>
 
 // 数据处理类 - 用于生成 CPU 火焰图中的数据处理分支
 class DataProcessor {

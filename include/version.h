@@ -21,10 +21,8 @@
 #define REMOTE_PROFILER_VERSION "0.1.0"
 
 // Version as integer for comparison (e.g., 00100 for 0.1.0)
-#define REMOTE_PROFILER_VERSION_INT \
-    ((REMOTE_PROFILER_VERSION_MAJOR * 10000) + \
-     (REMOTE_PROFILER_VERSION_MINOR * 100) + \
-     (REMOTE_PROFILER_VERSION_PATCH))
+#define REMOTE_PROFILER_VERSION_INT                                                                                    \
+    ((REMOTE_PROFILER_VERSION_MAJOR * 10000) + (REMOTE_PROFILER_VERSION_MINOR * 100) + (REMOTE_PROFILER_VERSION_PATCH))
 
 // API Stability Notice
 // ---------------------
@@ -38,16 +36,14 @@
 // - Deprecated features will be marked for at least one minor version
 // - Breaking changes will require major version bump
 
-#define REMOTE_PROFILER_API_STABILITY \
-    "Development phase - API subject to change"
+#define REMOTE_PROFILER_API_STABILITY "Development phase - API subject to change"
 
 // Version checking helper macros
-#define REMOTE_PROFILER_VERSION_AT_LEAST(major, minor, patch) \
-    ((REMOTE_PROFILER_VERSION_MAJOR) > (major) || \
-     ((REMOTE_PROFILER_VERSION_MAJOR) == (major) && \
-      ((REMOTE_PROFILER_VERSION_MINOR) > (minor) || \
-       ((REMOTE_PROFILER_VERSION_MINOR) == (minor) && \
-        (REMOTE_PROFILER_VERSION_PATCH) >= (patch)))))
+#define REMOTE_PROFILER_VERSION_AT_LEAST(major, minor, patch)                                                          \
+    ((REMOTE_PROFILER_VERSION_MAJOR) > (major) ||                                                                      \
+     ((REMOTE_PROFILER_VERSION_MAJOR) == (major) &&                                                                    \
+      ((REMOTE_PROFILER_VERSION_MINOR) > (minor) ||                                                                    \
+       ((REMOTE_PROFILER_VERSION_MINOR) == (minor) && (REMOTE_PROFILER_VERSION_PATCH) >= (patch)))))
 
 // Example usage:
 // #if REMOTE_PROFILER_VERSION_AT_LEAST(0, 2, 0)

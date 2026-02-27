@@ -1,11 +1,11 @@
-#include <gtest/gtest.h>
+#include "../include/profiler_manager.h"
+#include <chrono>
+#include <cstring>
 #include <fstream>
 #include <gperftools/profiler.h>
-#include <thread>
-#include <chrono>
+#include <gtest/gtest.h>
 #include <iostream>
-#include <cstring>
-#include "../include/profiler_manager.h"
+#include <thread>
 
 // 测试1: 验证 gperftools 生成的 profile 文件格式
 TEST(FullFlowTest, GperftoolsGeneratesValidProfile) {
@@ -42,8 +42,7 @@ TEST(FullFlowTest, GperftoolsGeneratesValidProfile) {
 
     // 读取并验证文件内容
     file.open(profile_path, std::ios::binary);
-    std::vector<char> buffer((std::istreambuf_iterator<char>(file)),
-                             std::istreambuf_iterator<char>());
+    std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
 
     // 检查 header
@@ -77,8 +76,7 @@ TEST(FullFlowTest, CompleteCPUProfilingFlow) {
     std::string profile_path = "/tmp/test_flow_cpu.prof";
     std::remove(profile_path.c_str());
 
-    ASSERT_TRUE(profiler.startCPUProfiler(profile_path))
-        << "Failed to start CPU profiler";
+    ASSERT_TRUE(profiler.startCPUProfiler(profile_path)) << "Failed to start CPU profiler";
 
     // 2. 运行工作负载
     std::cout << "Running profiling workload...\n";
@@ -93,8 +91,7 @@ TEST(FullFlowTest, CompleteCPUProfilingFlow) {
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
     // 3. 停止 profiler
-    ASSERT_TRUE(profiler.stopCPUProfiler())
-        << "Failed to stop CPU profiler";
+    ASSERT_TRUE(profiler.stopCPUProfiler()) << "Failed to stop CPU profiler";
 
     // 4. 验证文件已生成
     std::ifstream file(profile_path, std::ios::binary | std::ios::ate);
@@ -117,8 +114,7 @@ TEST(FullFlowTest, MultipleStartStopCycles) {
         std::remove(profile_path.c_str());
 
         // 启动
-        ASSERT_TRUE(profiler.startCPUProfiler(profile_path))
-            << "Failed to start profiler in cycle " << cycle;
+        ASSERT_TRUE(profiler.startCPUProfiler(profile_path)) << "Failed to start profiler in cycle " << cycle;
 
         // 短暂运行
         std::vector<int> data(1000);
@@ -127,8 +123,7 @@ TEST(FullFlowTest, MultipleStartStopCycles) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // 停止
-        ASSERT_TRUE(profiler.stopCPUProfiler())
-            << "Failed to stop profiler in cycle " << cycle;
+        ASSERT_TRUE(profiler.stopCPUProfiler()) << "Failed to stop profiler in cycle " << cycle;
 
         // 验证文件存在
         std::ifstream file(profile_path);
@@ -147,8 +142,7 @@ TEST(FullFlowTest, ConcurrentProfilingRequests) {
     std::string profile_path = "/tmp/test_concurrent.prof";
     std::remove(profile_path.c_str());
 
-    ASSERT_TRUE(profiler.startCPUProfiler(profile_path))
-        << "Failed to start first profiler";
+    ASSERT_TRUE(profiler.startCPUProfiler(profile_path)) << "Failed to start first profiler";
 
     // 尝试启动第二个（应该失败或返回 false）
     // 注意：根据实现，这可能不会阻止第二次启动
@@ -200,8 +194,7 @@ TEST(FullFlowTest, BasicHeapProfilingFlow) {
     std::string heap_path = "/tmp/test_heap.prof";
     std::remove(heap_path.c_str());
 
-    ASSERT_TRUE(profiler.startHeapProfiler(heap_path))
-        << "Failed to start heap profiler";
+    ASSERT_TRUE(profiler.startHeapProfiler(heap_path)) << "Failed to start heap profiler";
 
     // 进行一些内存分配
     {
@@ -214,8 +207,7 @@ TEST(FullFlowTest, BasicHeapProfilingFlow) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // 停止 heap profiler
-    ASSERT_TRUE(profiler.stopHeapProfiler())
-        << "Failed to stop heap profiler";
+    ASSERT_TRUE(profiler.stopHeapProfiler()) << "Failed to stop heap profiler";
 
     // 验证文件已生成
     std::ifstream file(heap_path);

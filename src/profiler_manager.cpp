@@ -1,35 +1,35 @@
 #include "profiler_manager.h"
-#include "embed_pprof.h"
-#include "embed_flamegraph.h"
-#include <gperftools/profiler.h>
-#include <gperftools/heap-profiler.h>
-#include <gperftools/malloc_extension.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/mman.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-#include <signal.h>
-#include <limits.h>
-#include <dirent.h>
-#include <chrono>
-#include <thread>
-#include <atomic>
-#include <fstream>
-#include <sstream>
-#include <cstdio>
-#include <algorithm>
-#include <iostream>
-#include <vector>
-#include <dlfcn.h>
-#include <cstdint>
-#include <execinfo.h>
-#include <cxxabi.h>
-#include <fcntl.h>
-#include <ucontext.h>
-#include <unwind.h>
 #include "absl/debugging/stacktrace.h"
 #include "absl/debugging/symbolize.h"
+#include "embed_flamegraph.h"
+#include "embed_pprof.h"
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cxxabi.h>
+#include <dirent.h>
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <fcntl.h>
+#include <fstream>
+#include <gperftools/heap-profiler.h>
+#include <gperftools/malloc_extension.h>
+#include <gperftools/profiler.h>
+#include <iostream>
+#include <limits.h>
+#include <signal.h>
+#include <sstream>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <thread>
+#include <ucontext.h>
+#include <unistd.h>
+#include <unwind.h>
+#include <vector>
 
 namespace profiler {
 
@@ -43,7 +43,7 @@ int ProfilerManager::expected_count_ = 0;
 pid_t ProfilerManager::main_thread_id_ = 0;
 
 // Signal configuration
-int ProfilerManager::stack_capture_signal_ = SIGUSR1;  // Default: SIGUSR1
+int ProfilerManager::stack_capture_signal_ = SIGUSR1; // Default: SIGUSR1
 struct sigaction ProfilerManager::old_action_;
 bool ProfilerManager::old_action_saved_ = false;
 bool ProfilerManager::enable_signal_chaining_ = false;
@@ -114,8 +114,8 @@ void ProfilerManager::setStackCaptureSignal(int signal) {
 
     // If handler is already installed, restore old one first
     if (old_action_saved_) {
-        std::cerr << "Warning: Signal handler already installed for signal "
-                  << stack_capture_signal_ << ". Restoring before changing." << std::endl;
+        std::cerr << "Warning: Signal handler already installed for signal " << stack_capture_signal_
+                  << ". Restoring before changing." << std::endl;
         // Note: This won't work correctly if multiple instances exist,
         // but it's a best-effort attempt
         ProfilerManager::getInstance().restoreSignalHandler();
@@ -143,22 +143,19 @@ void ProfilerManager::installSignalHandler() {
     // Save old signal handler
     if (sigaction(stack_capture_signal_, &sa, &old_action_) == 0) {
         old_action_saved_ = true;
-        std::cout << "Registered signal handler for signal "
-                  << stack_capture_signal_ << std::endl;
+        std::cout << "Registered signal handler for signal " << stack_capture_signal_ << std::endl;
     } else {
-        std::cerr << "Failed to register signal handler for signal "
-                  << stack_capture_signal_ << ": " << strerror(errno) << std::endl;
+        std::cerr << "Failed to register signal handler for signal " << stack_capture_signal_ << ": " << strerror(errno)
+                  << std::endl;
     }
 }
 
 void ProfilerManager::restoreSignalHandler() {
     if (old_action_saved_) {
         if (sigaction(stack_capture_signal_, &old_action_, nullptr) == 0) {
-            std::cout << "Restored old signal handler for signal "
-                      << stack_capture_signal_ << std::endl;
+            std::cout << "Restored old signal handler for signal " << stack_capture_signal_ << std::endl;
         } else {
-            std::cerr << "Failed to restore old signal handler: "
-                      << strerror(errno) << std::endl;
+            std::cerr << "Failed to restore old signal handler: " << strerror(errno) << std::endl;
         }
         old_action_saved_ = false;
     }
@@ -171,8 +168,7 @@ bool ProfilerManager::startCPUProfiler(const std::string& output_path) {
         return false; // Already running
     }
 
-    std::string full_path = output_path.empty() ?
-        profile_dir_ + "/cpu.prof" : output_path;
+    std::string full_path = output_path.empty() ? profile_dir_ + "/cpu.prof" : output_path;
 
     // 如果是相对路径，转换为绝对路径
     if (full_path[0] != '/') {
@@ -184,12 +180,9 @@ bool ProfilerManager::startCPUProfiler(const std::string& output_path) {
 
     if (ProfilerStart(full_path.c_str())) {
         auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
-        profiler_states_[ProfilerType::CPU] = ProfilerState{
-            true, full_path, static_cast<uint64_t>(timestamp), 0
-        };
+        profiler_states_[ProfilerType::CPU] = ProfilerState{true, full_path, static_cast<uint64_t>(timestamp), 0};
 
         // 不再使用 StackCollector，gperftools 会直接写入文件
         return true;
@@ -209,12 +202,10 @@ bool ProfilerManager::stopCPUProfiler() {
     // 不再使用 StackCollector
 
     auto now = std::chrono::system_clock::now();
-    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()).count();
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
     profiler_states_[ProfilerType::CPU].is_running = false;
-    profiler_states_[ProfilerType::CPU].duration =
-        timestamp - profiler_states_[ProfilerType::CPU].start_time;
+    profiler_states_[ProfilerType::CPU].duration = timestamp - profiler_states_[ProfilerType::CPU].start_time;
 
     return true;
 }
@@ -226,8 +217,7 @@ bool ProfilerManager::startHeapProfiler(const std::string& output_path) {
         return false; // Already running
     }
 
-    std::string full_path = output_path.empty() ?
-        profile_dir_ + "/heap.prof" : output_path;
+    std::string full_path = output_path.empty() ? profile_dir_ + "/heap.prof" : output_path;
 
     // 如果是相对路径，转换为绝对路径
     if (full_path[0] != '/') {
@@ -240,12 +230,9 @@ bool ProfilerManager::startHeapProfiler(const std::string& output_path) {
     if (!IsHeapProfilerRunning()) {
         HeapProfilerStart(full_path.c_str());
         auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
-        profiler_states_[ProfilerType::HEAP] = ProfilerState{
-            true, full_path, static_cast<uint64_t>(timestamp), 0
-        };
+        profiler_states_[ProfilerType::HEAP] = ProfilerState{true, full_path, static_cast<uint64_t>(timestamp), 0};
         return true;
     }
     return false;
@@ -271,12 +258,10 @@ bool ProfilerManager::stopHeapProfiler() {
 
         HeapProfilerStop();
         auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
         profiler_states_[ProfilerType::HEAP].is_running = false;
-        profiler_states_[ProfilerType::HEAP].duration =
-            timestamp - profiler_states_[ProfilerType::HEAP].start_time;
+        profiler_states_[ProfilerType::HEAP].duration = timestamp - profiler_states_[ProfilerType::HEAP].start_time;
 
         return true;
     }
@@ -292,8 +277,6 @@ bool ProfilerManager::isProfilerRunning(ProfilerType type) const {
     std::lock_guard<std::mutex> lock(mutex_);
     return profiler_states_.at(type).is_running;
 }
-
-
 
 // 获取当前可执行文件的绝对路径
 std::string ProfilerManager::getExecutablePath() {
@@ -327,10 +310,7 @@ bool ProfilerManager::executeCommand(const std::string& cmd, std::string& output
 }
 
 // Generate flame graph from collapsed format using flamegraph.pl
-std::string ProfilerManager::generateFlameGraph(
-    const std::string& collapsed_file,
-    const std::string& title) {
-
+std::string ProfilerManager::generateFlameGraph(const std::string& collapsed_file, const std::string& title) {
     std::string svg_output;
 
     // Build flamegraph.pl command
@@ -339,8 +319,7 @@ std::string ProfilerManager::generateFlameGraph(
     cmd << "perl ./flamegraph.pl"
         << " --title=\"" << title << "\""
         << " --width=1200"
-        << " " << collapsed_file
-        << " 2>/dev/null";
+        << " " << collapsed_file << " 2>/dev/null";
 
     std::cout << "Generating FlameGraph: " << cmd.str() << std::endl;
 
@@ -350,15 +329,13 @@ std::string ProfilerManager::generateFlameGraph(
     }
 
     // Validate output
-    if (svg_output.find("<?xml") == std::string::npos &&
-        svg_output.find("<svg") == std::string::npos) {
+    if (svg_output.find("<?xml") == std::string::npos && svg_output.find("<svg") == std::string::npos) {
         std::cerr << "flamegraph.pl did not generate valid SVG" << std::endl;
         return R"({"error": "flamegraph.pl did not generate valid SVG"})";
     }
 
     return svg_output;
 }
-
 
 std::string ProfilerManager::resolveSymbolWithBackward(void* address) {
     // 如果 symbolizer 不可用，返回地址
@@ -396,8 +373,7 @@ std::string ProfilerManager::resolveSymbolWithBackward(void* address) {
         }
 
         std::ostringstream cmd;
-        cmd << "addr2line -e /proc/self/exe -f -C 0x"
-            << std::hex << relative_addr;
+        cmd << "addr2line -e /proc/self/exe -f -C 0x" << std::hex << relative_addr;
 
         std::string output;
         if (executeCommand(cmd.str(), output) && !output.empty()) {
@@ -439,12 +415,10 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         std::lock_guard<std::mutex> lock(mutex_);
         if (ProfilerStart(profile_path.c_str())) {
             auto now = std::chrono::system_clock::now();
-            auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now.time_since_epoch()).count();
+            auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
-            profiler_states_[ProfilerType::CPU] = ProfilerState{
-                true, profile_path, static_cast<uint64_t>(timestamp), 0
-            };
+            profiler_states_[ProfilerType::CPU] =
+                ProfilerState{true, profile_path, static_cast<uint64_t>(timestamp), 0};
         } else {
             return R"({"error": "Failed to start CPU profiler"})";
         }
@@ -460,12 +434,10 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         ProfilerStop();
 
         auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
         profiler_states_[ProfilerType::CPU].is_running = false;
-        profiler_states_[ProfilerType::CPU].duration =
-            timestamp - profiler_states_[ProfilerType::CPU].start_time;
+        profiler_states_[ProfilerType::CPU].duration = timestamp - profiler_states_[ProfilerType::CPU].start_time;
     }
 
     // Wait for file to be flushed
@@ -483,8 +455,8 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         // Step 5a: Generate collapsed format using pprof --collapsed
         std::string collapsed_file = "/tmp/cpu_collapsed.prof";
         std::ostringstream collapsed_cmd;
-        collapsed_cmd << "./pprof --collapsed " << exe_path << " " << profile_path
-                      << " > " << collapsed_file << " 2>&1";
+        collapsed_cmd << "./pprof --collapsed " << exe_path << " " << profile_path << " > " << collapsed_file
+                      << " 2>&1";
 
         std::cout << "Running collapsed command: " << collapsed_cmd.str() << std::endl;
 
@@ -540,8 +512,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
 
         // Check if SVG was generated (should start with <?xml or <svg)
         // 更精确的错误检查：只检查是否包含SVG标记
-        if (svg_output.find("<?xml") == std::string::npos &&
-            svg_output.find("<svg") == std::string::npos) {
+        if (svg_output.find("<?xml") == std::string::npos && svg_output.find("<svg") == std::string::npos) {
             return R"({"error": "pprof did not generate valid SVG. Output: )" + svg_output + R"("})";
         }
 
@@ -549,8 +520,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         // 但要排除SVG中的JavaScript代码
         if (svg_output.size() < 100) {
             // 输出太短，可能是错误消息
-            if (svg_output.find("error") != std::string::npos ||
-                svg_output.find("Error") != std::string::npos) {
+            if (svg_output.find("error") != std::string::npos || svg_output.find("Error") != std::string::npos) {
                 return R"({"error": "pprof error: )" + svg_output + R"("})";
             }
         }
@@ -603,7 +573,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
 
     setenv("HEAPPROFILE", profile_prefix.c_str(), 1);
     setenv("HEAP_PROFILE_ALLOCATION_INTERVAL", "1048576", 1); // 1MB
-    setenv("HEAP_PROFILE_INUSE_INTERVAL", "524288", 1); // 512KB
+    setenv("HEAP_PROFILE_INUSE_INTERVAL", "524288", 1);       // 512KB
 
     std::cout << "Environment variables set" << std::endl;
 
@@ -616,12 +586,10 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
-        profiler_states_[ProfilerType::HEAP] = ProfilerState{
-            true, profile_prefix + ".prof", static_cast<uint64_t>(timestamp), 0
-        };
+        profiler_states_[ProfilerType::HEAP] =
+            ProfilerState{true, profile_prefix + ".prof", static_cast<uint64_t>(timestamp), 0};
     }
 
     // Step 4: 启动后台线程进行内存分配
@@ -652,8 +620,8 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
             iteration++;
 
             if (iteration % 10 == 0) {
-                std::cout << "Memory thread: " << iteration << " iterations, "
-                         << allocations_count << " allocations" << std::endl;
+                std::cout << "Memory thread: " << iteration << " iterations, " << allocations_count << " allocations"
+                          << std::endl;
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -677,12 +645,10 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
         std::cout << "HeapProfilerStop() completed" << std::endl;
 
         auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
         profiler_states_[ProfilerType::HEAP].is_running = false;
-        profiler_states_[ProfilerType::HEAP].duration =
-            timestamp - profiler_states_[ProfilerType::HEAP].start_time;
+        profiler_states_[ProfilerType::HEAP].duration = timestamp - profiler_states_[ProfilerType::HEAP].start_time;
     }
 
     // 等待内存分配线程结束
@@ -699,10 +665,11 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     if (latest_heap_file.empty()) {
         std::cout << "No .heap file found. Listing all files in directory:" << std::endl;
         std::string ls_cmd = "ls -la " + profile_dir_ + "/";
-        system(ls_cmd.c_str());
+        [[maybe_unused]] int result = system(ls_cmd.c_str());
 
         std::cout << "\nWARNING: gperftools heap profiler requires special configuration." << std::endl;
-        std::cout << "Heap profiling needs to be enabled at program startup via HEAPPROFILE environment variable." << std::endl;
+        std::cout << "Heap profiling needs to be enabled at program startup via HEAPPROFILE environment variable."
+                  << std::endl;
         std::cout << "\nFor now, returning a helpful error message." << std::endl;
 
         return R"({"error": "Heap profiling requires the program to be started with HEAPPROFILE environment variable set. Please restart the program with: HEAPPROFILE=/tmp/cpp_profiler/heap ./profiler_example. Alternatively, use CPU profiling which works without special configuration."})";
@@ -722,8 +689,8 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
         // Step 9a: Generate collapsed format using pprof --collapsed
         std::string collapsed_file = "/tmp/heap_collapsed.prof";
         std::ostringstream collapsed_cmd;
-        collapsed_cmd << "./pprof --collapsed " << exe_path << " " << latest_heap_file
-                      << " > " << collapsed_file << " 2>&1";
+        collapsed_cmd << "./pprof --collapsed " << exe_path << " " << latest_heap_file << " > " << collapsed_file
+                      << " 2>&1";
 
         std::cout << "Running collapsed command: " << collapsed_cmd.str() << std::endl;
 
@@ -783,8 +750,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
         }
 
         // Check if SVG was generated
-        if (svg_output.find("<?xml") == std::string::npos &&
-            svg_output.find("<svg") == std::string::npos) {
+        if (svg_output.find("<?xml") == std::string::npos && svg_output.find("<svg") == std::string::npos) {
             std::cout << "pprof did not return SVG. Output: " << svg_output.substr(0, 200) << std::endl;
             return R"({"error": "pprof did not generate valid SVG. Output: )" + svg_output + R"("})";
         }
@@ -845,8 +811,7 @@ std::string ProfilerManager::findLatestHeapProfile(const std::string& dir) {
 std::string ProfilerManager::getRawCPUProfile(int seconds) {
     // Validate seconds parameter
     if (seconds < 1 || seconds > 300) {
-        std::cerr << "Invalid seconds parameter: " << seconds
-                  << ". Must be between 1 and 300." << std::endl;
+        std::cerr << "Invalid seconds parameter: " << seconds << ". Must be between 1 and 300." << std::endl;
         return "";
     }
 
@@ -860,7 +825,9 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
     // Use RAII to ensure flag is reset even if exception occurs
     struct FlagGuard {
         std::atomic<bool>& flag;
-        ~FlagGuard() { flag.store(false); }
+        ~FlagGuard() {
+            flag.store(false);
+        }
     };
     FlagGuard guard{cpu_profiling_in_progress_};
 
@@ -884,8 +851,7 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
 
     // Update state
     auto now = std::chrono::system_clock::now();
-    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()).count();
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
     profiler_states_[ProfilerType::CPU] = ProfilerState{true, profile_path, static_cast<uint64_t>(timestamp), 0};
 
     // Wait for specified duration
@@ -896,11 +862,9 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
     ProfilerStop();
 
     now = std::chrono::system_clock::now();
-    timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()).count();
+    timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
     profiler_states_[ProfilerType::CPU].is_running = false;
-    profiler_states_[ProfilerType::CPU].duration =
-        timestamp - profiler_states_[ProfilerType::CPU].start_time;
+    profiler_states_[ProfilerType::CPU].duration = timestamp - profiler_states_[ProfilerType::CPU].start_time;
 
     // Wait for file to be flushed
     usleep(200000); // 200ms
@@ -939,8 +903,7 @@ std::string ProfilerManager::getRawHeapSample() {
 
     if (heap_sample.empty()) {
         std::cerr << "Failed to get heap sample. "
-                  << "Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set."
-                  << std::endl;
+                  << "Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set." << std::endl;
         return "";
     }
 
@@ -958,8 +921,7 @@ std::string ProfilerManager::getRawHeapGrowthStacks() {
 
     if (heap_growth_stacks.empty()) {
         std::cerr << "Failed to get heap growth stacks. "
-                  << "No heap growth data available."
-                  << std::endl;
+                  << "No heap growth data available." << std::endl;
         return "";
     }
 
@@ -1021,17 +983,39 @@ std::string ProfilerManager::getThreadStacks() {
                         // Convert state to readable format
                         const char* state_str = "Unknown";
                         switch (state) {
-                            case 'R': state_str = "Running"; break;
-                            case 'S': state_str = "Sleeping"; break;
-                            case 'D': state_str = "Disk sleep"; break;
-                            case 'Z': state_str = "Zombie"; break;
-                            case 'T': state_str = "Stopped"; break;
-                            case 't': state_str = "Tracing stop"; break;
-                            case 'X': state_str = "Dead"; break;
-                            case 'x': state_str = "Dead"; break;
-                            case 'K': state_str = "Wakekill"; break;
-                            case 'W': state_str = "Waking"; break;
-                            case 'P': state_str = "Parked"; break;
+                        case 'R':
+                            state_str = "Running";
+                            break;
+                        case 'S':
+                            state_str = "Sleeping";
+                            break;
+                        case 'D':
+                            state_str = "Disk sleep";
+                            break;
+                        case 'Z':
+                            state_str = "Zombie";
+                            break;
+                        case 'T':
+                            state_str = "Stopped";
+                            break;
+                        case 't':
+                            state_str = "Tracing stop";
+                            break;
+                        case 'X':
+                            state_str = "Dead";
+                            break;
+                        case 'x':
+                            state_str = "Dead";
+                            break;
+                        case 'K':
+                            state_str = "Wakekill";
+                            break;
+                        case 'W':
+                            state_str = "Waking";
+                            break;
+                        case 'P':
+                            state_str = "Parked";
+                            break;
                         }
 
                         result << "  Name: " << name << "\n";
@@ -1072,8 +1056,7 @@ void ProfilerManager::signalHandler(int signum, siginfo_t* info, void* context) 
     // Check if this is our configured signal
     if (signum != stack_capture_signal_) {
         // If signal chaining is enabled, call the old handler
-        if (enable_signal_chaining_ && old_action_saved_
-            && old_action_.sa_sigaction) {
+        if (enable_signal_chaining_ && old_action_saved_ && old_action_.sa_sigaction) {
             old_action_.sa_sigaction(signum, info, context);
         }
         return;
@@ -1082,8 +1065,7 @@ void ProfilerManager::signalHandler(int signum, siginfo_t* info, void* context) 
     // Check if we should capture
     if (!capture_in_progress_.load(std::memory_order_relaxed)) {
         // If signal chaining is enabled, call the old handler
-        if (enable_signal_chaining_ && old_action_saved_
-            && old_action_.sa_sigaction) {
+        if (enable_signal_chaining_ && old_action_saved_ && old_action_.sa_sigaction) {
             old_action_.sa_sigaction(signum, info, context);
         }
         return;
@@ -1152,7 +1134,8 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
 
     struct dirent* entry;
     while ((entry = readdir(task_dir)) != nullptr) {
-        if (entry->d_name[0] == '.') continue;
+        if (entry->d_name[0] == '.')
+            continue;
         pid_t tid = atoi(entry->d_name);
         if (tid > 0) {
             tids.push_back(tid);
@@ -1169,12 +1152,8 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
     int array_size = max_tid + 1;
     size_t shared_size = sizeof(SharedStackTrace) * array_size;
 
-    SharedStackTrace* temp_stacks = (SharedStackTrace*)mmap(
-        nullptr, shared_size,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS,
-        -1, 0
-    );
+    SharedStackTrace* temp_stacks =
+        (SharedStackTrace*)mmap(nullptr, shared_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
     if (temp_stacks == MAP_FAILED) {
         std::cerr << "Failed to allocate shared memory for stack traces" << std::endl;
@@ -1233,8 +1212,7 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
         }
     }
 
-    std::cout << "Sent signal to " << signals_sent << " threads ("
-              << signals_failed << " failed)" << std::endl;
+    std::cout << "Sent signal to " << signals_sent << " threads (" << signals_failed << " failed)" << std::endl;
 
     // Set expected count based on ACTUAL signals sent (not original thread count)
     // This handles the case where threads exit between enumerating and sending signals
@@ -1253,8 +1231,8 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
 
     // 5. Wait for all signal handlers to complete
     // Use a counter-based approach instead of fixed sleep
-    const int MAX_WAIT_MS = 2000;  // Maximum wait time
-    const int CHECK_INTERVAL_MS = 10;  // Check interval
+    const int MAX_WAIT_MS = 2000;     // Maximum wait time
+    const int CHECK_INTERVAL_MS = 10; // Check interval
     int elapsed = 0;
 
     while (elapsed < MAX_WAIT_MS) {
@@ -1302,8 +1280,8 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
         }
     }
 
-    std::cout << "Collected " << collected << " thread stacks from " << array_size
-              << " slots (" << tids.size() << " threads total)" << std::endl;
+    std::cout << "Collected " << collected << " thread stacks from " << array_size << " slots (" << tids.size()
+              << " threads total)" << std::endl;
 
     // 7. Clean up
     munmap(temp_stacks, shared_size);
@@ -1337,8 +1315,7 @@ std::string ProfilerManager::getThreadCallStacks() {
             result << "    #" << i << " ";
 
             if (symbolized.empty() || symbolized[0] == '0') {
-                result << "0x" << std::hex << reinterpret_cast<uintptr_t>(addr)
-                       << std::dec << "\n";
+                result << "0x" << std::hex << reinterpret_cast<uintptr_t>(addr) << std::dec << "\n";
             } else {
                 result << symbolized << "\n";
             }
@@ -1354,4 +1331,3 @@ std::string ProfilerManager::getThreadCallStacks() {
 }
 
 } // namespace profiler
-

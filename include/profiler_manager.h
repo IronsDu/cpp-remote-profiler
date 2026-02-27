@@ -1,14 +1,14 @@
 #pragma once
 
-#include <string>
+#include "symbolize.h"
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <vector>
-#include <atomic>
-#include <unordered_map>
 #include <signal.h>
-#include "symbolize.h"
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace profiler {
 
@@ -28,15 +28,15 @@ struct ProfilerState {
 // Structure to hold captured stack trace for a thread
 struct ThreadStackTrace {
     pid_t tid;
-    void* addresses[64];  // Fixed-size array for signal-safety
+    void* addresses[64]; // Fixed-size array for signal-safety
     int depth;
     bool captured;
 };
 
 // Shared memory structure for inter-thread communication
 struct SharedStackTrace {
-    std::atomic<bool> ready;             // Set by thread after capturing
-    char padding[64 - sizeof(std::atomic<bool>)];  // To avoid false sharing
+    std::atomic<bool> ready;                      // Set by thread after capturing
+    char padding[64 - sizeof(std::atomic<bool>)]; // To avoid false sharing
     pid_t tid;
     int depth;
     void* addresses[64];
@@ -123,9 +123,7 @@ private:
     std::string findLatestHeapProfile(const std::string& dir);
 
     // Generate flame graph from collapsed format using flamegraph.pl
-    std::string generateFlameGraph(
-        const std::string& collapsed_file,
-        const std::string& title);
+    std::string generateFlameGraph(const std::string& collapsed_file, const std::string& title);
 
     // Capture stack traces from all threads using signals
     std::vector<ThreadStackTrace> captureAllThreadStacks();
@@ -154,7 +152,7 @@ private:
 
     // Dynamically allocated stack array (indexed by thread ID)
     static SharedStackTrace* shared_stacks_;
-    static int stack_array_size_;  // Actual size of the array
+    static int stack_array_size_; // Actual size of the array
 
     // Thread ID to exclude (the one handling HTTP request)
     static std::atomic<pid_t> excluded_tid_;

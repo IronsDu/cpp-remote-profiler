@@ -1,10 +1,10 @@
-#include <gtest/gtest.h>
+#include "../include/profiler_manager.h"
+#include <chrono>
 #include <fstream>
 #include <gperftools/profiler.h>
-#include <thread>
-#include <chrono>
+#include <gtest/gtest.h>
 #include <iostream>
-#include "../include/profiler_manager.h"
+#include <thread>
 
 // 测试 gperftools CPU profile 解析
 TEST(CPUProfileTest, GperftoolsGeneratesValidProfile) {
@@ -42,8 +42,7 @@ TEST(CPUProfileTest, GperftoolsGeneratesValidProfile) {
 
     // 读取文件内容
     file.open(profile_path, std::ios::binary);
-    std::vector<char> buffer((std::istreambuf_iterator<char>(file)),
-                             std::istreambuf_iterator<char>());
+    std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
 
     // gperftools profile 文件应该至少有 header (16 bytes)
@@ -142,8 +141,7 @@ TEST(ProfilerManagerTest, AnalyzeCPUProfile) {
     std::string svg_result = profiler.analyzeCPUProfile(1, "flamegraph");
 
     // 应该返回 SVG 内容（以 <svg 或 <?xml 开头）
-    bool is_svg = (svg_result.find("<svg") != std::string::npos ||
-                  svg_result.find("<?xml") != std::string::npos);
+    bool is_svg = (svg_result.find("<svg") != std::string::npos || svg_result.find("<?xml") != std::string::npos);
 
     if (!is_svg) {
         // 如果出错，应该包含错误信息

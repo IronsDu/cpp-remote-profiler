@@ -1,6 +1,7 @@
 #pragma once
-#include <string>
 #include <fstream>
+#include <iostream>
+#include <string>
 #include <sys/stat.h>
 
 namespace profiler {
@@ -1317,7 +1318,6 @@ if ($palette) {
 
 # vim: ts=8 sts=8 sw=8 noexpandtab
     )perl";
-
 }
 
 // Write the embedded flamegraph.pl script to a file

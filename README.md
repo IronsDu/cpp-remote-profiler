@@ -338,6 +338,43 @@ cd build
 http://localhost:8080
 ```
 
+## 🎨 代码格式检查
+
+项目使用 `clang-format` 进行代码格式检查。提供的脚本会自动检测本地 clang-format 版本，如果版本匹配 CI（版本 18）则使用本地版本，否则使用 Docker 容器确保版本一致。
+
+### 检查代码格式
+
+检查所有源文件是否符合格式规范：
+
+```bash
+./scripts/check-format.sh
+```
+
+如果代码格式不符合规范，脚本会显示差异并提示修复方法。
+
+### 自动格式化代码
+
+如果代码格式有问题，可以自动修复所有文件：
+
+```bash
+./scripts/check-format.sh --fix
+```
+
+这会原地修改 `src/`、`include/`、`tests/`、`example/` 目录下的所有 `.cpp`、`.h`、`.hpp`、`.cc`、`.cxx` 文件。
+
+### 格式检查范围
+
+脚本会检查以下目录中的 C/C++ 源文件：
+- `src/`
+- `include/`
+- `tests/`
+- `example/`
+- `cmake/examples/`
+
+### CI 集成
+
+代码格式检查已集成到 CI 流程中，提交代码前请确保格式正确，否则 CI 会失败。
+
 ## 💡 集成到你的项目
 
 ### 选项 1: 作为 HTTP 服务集成（推荐）

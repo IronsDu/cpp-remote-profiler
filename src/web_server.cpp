@@ -1,10 +1,10 @@
 #include "web_server.h"
-#include "web_resources.h"
 #include "profiler_manager.h"
+#include "web_resources.h"
 #include <drogon/drogon.h>
-#include <sstream>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 using namespace drogon;
 
@@ -12,106 +12,98 @@ namespace profiler {
 
 void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Status endpoint - 获取 profiler 状态
-    app().registerHandler(
-        "/api/status",
-        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            Json::Value root;
-            root["cpu"]["running"] = profiler.isProfilerRunning(profiler::ProfilerType::CPU);
-            root["heap"]["running"] = profiler.isProfilerRunning(profiler::ProfilerType::HEAP);
-            root["growth"]["running"] = profiler.isProfilerRunning(profiler::ProfilerType::HEAP_GROWTH);
+    app().registerHandler("/api/status",
+                          [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
+                                      std::function<void(const HttpResponsePtr&)>&& callback) {
+                              Json::Value root;
+                              root["cpu"]["running"] = profiler.isProfilerRunning(profiler::ProfilerType::CPU);
+                              root["heap"]["running"] = profiler.isProfilerRunning(profiler::ProfilerType::HEAP);
+                              root["growth"]["running"] =
+                                  profiler.isProfilerRunning(profiler::ProfilerType::HEAP_GROWTH);
 
-            auto cpuState = profiler.getProfilerState(profiler::ProfilerType::CPU);
-            auto heapState = profiler.getProfilerState(profiler::ProfilerType::HEAP);
-            auto growthState = profiler.getProfilerState(profiler::ProfilerType::HEAP_GROWTH);
+                              auto cpuState = profiler.getProfilerState(profiler::ProfilerType::CPU);
+                              auto heapState = profiler.getProfilerState(profiler::ProfilerType::HEAP);
+                              auto growthState = profiler.getProfilerState(profiler::ProfilerType::HEAP_GROWTH);
 
-            root["cpu"]["output_path"] = cpuState.output_path;
-            root["cpu"]["duration_ms"] = static_cast<Json::Int64>(cpuState.duration);
+                              root["cpu"]["output_path"] = cpuState.output_path;
+                              root["cpu"]["duration_ms"] = static_cast<Json::Int64>(cpuState.duration);
 
-            root["heap"]["output_path"] = heapState.output_path;
-            root["heap"]["duration_ms"] = static_cast<Json::Int64>(heapState.duration);
+                              root["heap"]["output_path"] = heapState.output_path;
+                              root["heap"]["duration_ms"] = static_cast<Json::Int64>(heapState.duration);
 
-            root["growth"]["output_path"] = growthState.output_path;
-            root["growth"]["duration_ms"] = static_cast<Json::Int64>(growthState.duration);
+                              root["growth"]["output_path"] = growthState.output_path;
+                              root["growth"]["duration_ms"] = static_cast<Json::Int64>(growthState.duration);
 
-            auto resp = HttpResponse::newHttpJsonResponse(root);
-            callback(resp);
-        },
-        {Get}
-    );
+                              auto resp = HttpResponse::newHttpJsonResponse(root);
+                              callback(resp);
+                          },
+                          {Get});
 
     // Index page - 主页面
     app().registerHandler(
         "/",
-        []([[maybe_unused]] const HttpRequestPtr& req,
-           std::function<void(const HttpResponsePtr&)>&& callback) {
+        []([[maybe_unused]] const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string html = WebResources::getIndexPage();
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(html);
             resp->setContentTypeCode(CT_TEXT_HTML);
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // CPU SVG flame graph viewer page
     app().registerHandler(
         "/show_svg.html",
-        []([[maybe_unused]] const HttpRequestPtr& req,
-           std::function<void(const HttpResponsePtr&)>&& callback) {
+        []([[maybe_unused]] const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string html = WebResources::getCpuSvgViewerPage();
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(html);
             resp->setContentTypeCode(CT_TEXT_HTML);
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // Heap SVG flame graph viewer page
     app().registerHandler(
         "/show_heap_svg.html",
-        []([[maybe_unused]] const HttpRequestPtr& req,
-           std::function<void(const HttpResponsePtr&)>&& callback) {
+        []([[maybe_unused]] const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string html = WebResources::getHeapSvgViewerPage();
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(html);
             resp->setContentTypeCode(CT_TEXT_HTML);
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // Growth SVG flame graph viewer page
     app().registerHandler(
         "/show_growth_svg.html",
-        []([[maybe_unused]] const HttpRequestPtr& req,
-           std::function<void(const HttpResponsePtr&)>&& callback) {
+        []([[maybe_unused]] const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             std::string html = WebResources::getGrowthSvgViewerPage();
             auto resp = HttpResponse::newHttpResponse();
             resp->setBody(html);
             resp->setContentTypeCode(CT_TEXT_HTML);
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // CPU analyze endpoint - 一键式CPU分析（使用pprof生成SVG火焰图）
     app().registerHandler(
         "/api/cpu/analyze",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
+        [&profiler](const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             // 获取参数
             auto duration_param = req->getParameter("duration");
             auto output_type_param = req->getParameter("output_type");
 
             // 默认值
-            int duration = 10;  // 默认10秒
+            int duration = 10; // 默认10秒
             if (!duration_param.empty()) {
                 try {
                     duration = std::stoi(duration_param);
-                    if (duration < 1) duration = 1;
-                    if (duration > 300) duration = 300;  // 最多5分钟
+                    if (duration < 1)
+                        duration = 1;
+                    if (duration > 300)
+                        duration = 300; // 最多5分钟
                 } catch (const std::exception& e) {
                     Json::Value root;
                     root["error"] = "Invalid duration parameter";
@@ -122,7 +114,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
                 }
             }
 
-            std::string output_type = "pprof";  // 默认使用 pprof（向后兼容）
+            std::string output_type = "pprof"; // 默认使用 pprof（向后兼容）
             if (!output_type_param.empty()) {
                 output_type = output_type_param;
             }
@@ -137,8 +129,8 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
                 return;
             }
 
-            std::cout << "Starting CPU analysis: duration=" << duration
-                      << "s, output_type=" << output_type << std::endl;
+            std::cout << "Starting CPU analysis: duration=" << duration << "s, output_type=" << output_type
+                      << std::endl;
 
             // 调用 analyzeCPUProfile（这是阻塞调用，会等待整个profiling过程完成）
             std::string svg_content = profiler.analyzeCPUProfile(duration, output_type);
@@ -158,19 +150,17 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->addHeader("Content-Type", "image/svg+xml");
             callback(resp);
         },
-        {Get, Post}
-    );
+        {Get, Post});
 
     // Heap analyze endpoint - 一键式Heap分析（使用pprof生成SVG火焰图）
     app().registerHandler(
         "/api/heap/analyze",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
+        [&profiler](const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             std::cout << "Starting Heap analysis..." << std::endl;
 
             // Get output_type parameter
             auto output_type_param = req->getParameter("output_type");
-            std::string output_type = "pprof";  // 默认使用 pprof（向后兼容）
+            std::string output_type = "pprof"; // 默认使用 pprof（向后兼容）
             if (!output_type_param.empty()) {
                 output_type = output_type_param;
             }
@@ -205,19 +195,17 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->addHeader("Content-Type", "image/svg+xml");
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // Growth analyze endpoint - 一键式Growth分析（使用pprof生成SVG火焰图）
     app().registerHandler(
         "/api/growth/analyze",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
+        [&profiler](const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             std::cout << "Starting Heap Growth analysis..." << std::endl;
 
             // Get output_type parameter
             auto output_type_param = req->getParameter("output_type");
-            std::string output_type = "pprof";  // 默认使用 pprof（向后兼容）
+            std::string output_type = "pprof"; // 默认使用 pprof（向后兼容）
             if (!output_type_param.empty()) {
                 output_type = output_type_param;
             }
@@ -260,8 +248,8 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
                 // Step 1: Generate collapsed format
                 std::string collapsed_file = "/tmp/growth_collapsed.prof";
                 std::ostringstream collapsed_cmd;
-                collapsed_cmd << "./pprof --collapsed " << exe_path << " " << temp_file
-                              << " > " << collapsed_file << " 2>/dev/null";
+                collapsed_cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file
+                              << " 2>/dev/null";
 
                 std::string collapsed_output;
                 if (!profiler.executeCommand(collapsed_cmd.str(), collapsed_output)) {
@@ -276,10 +264,9 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
                 // Step 2: Generate FlameGraph using flamegraph.pl
                 std::ostringstream flamegraph_cmd;
                 flamegraph_cmd << "perl ./flamegraph.pl"
-                              << " --title=\"Heap Growth Flame Graph\""
-                              << " --width=1200"
-                              << " " << collapsed_file
-                              << " 2>/dev/null";
+                               << " --title=\"Heap Growth Flame Graph\""
+                               << " --width=1200"
+                               << " " << collapsed_file << " 2>/dev/null";
 
                 if (!profiler.executeCommand(flamegraph_cmd.str(), svg_output)) {
                     Json::Value root;
@@ -291,8 +278,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
                 }
 
                 // Validate output
-                if (svg_output.find("<?xml") == std::string::npos &&
-                    svg_output.find("<svg") == std::string::npos) {
+                if (svg_output.find("<?xml") == std::string::npos && svg_output.find("<svg") == std::string::npos) {
                     Json::Value root;
                     root["error"] = "flamegraph.pl did not generate valid SVG";
                     auto resp = HttpResponse::newHttpJsonResponse(root);
@@ -339,24 +325,24 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->addHeader("Content-Type", "image/svg+xml");
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // CPU raw SVG endpoint - 返回pprof生成的原始SVG（不做任何修改）
     app().registerHandler(
         "/api/cpu/svg_raw",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
+        [&profiler](const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             // 获取参数
             auto duration_param = req->getParameter("duration");
 
             // 默认值
-            int duration = 10;  // 默认10秒
+            int duration = 10; // 默认10秒
             if (!duration_param.empty()) {
                 try {
                     duration = std::stoi(duration_param);
-                    if (duration < 1) duration = 1;
-                    if (duration > 300) duration = 300;  // 最多5分钟
+                    if (duration < 1)
+                        duration = 1;
+                    if (duration > 300)
+                        duration = 300; // 最多5分钟
                 } catch (const std::exception& e) {
                     Json::Value root;
                     root["error"] = "Invalid duration parameter";
@@ -425,24 +411,24 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->addHeader("Content-Disposition", "attachment; filename=cpu_profile.svg");
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // CPU FlameGraph raw SVG endpoint - 返回 FlameGraph 生成的原始 SVG
     app().registerHandler(
         "/api/cpu/flamegraph_raw",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
+        [&profiler](const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             // 获取参数
             auto duration_param = req->getParameter("duration");
 
             // 默认值
-            int duration = 10;  // 默认10秒
+            int duration = 10; // 默认10秒
             if (!duration_param.empty()) {
                 try {
                     duration = std::stoi(duration_param);
-                    if (duration < 1) duration = 1;
-                    if (duration > 300) duration = 300;  // 最多5分钟
+                    if (duration < 1)
+                        duration = 1;
+                    if (duration > 300)
+                        duration = 300; // 最多5分钟
                 } catch (const std::exception& e) {
                     Json::Value root;
                     root["error"] = "Invalid duration parameter";
@@ -478,8 +464,8 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             // Step 1: Generate collapsed format using pprof --collapsed
             std::string collapsed_file = "/tmp/cpu_collapsed.prof";
             std::ostringstream collapsed_cmd;
-            collapsed_cmd << "./pprof --collapsed " << exe_path << " " << temp_file
-                          << " > " << collapsed_file << " 2>&1";
+            collapsed_cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file
+                          << " 2>&1";
 
             std::cout << "Running collapsed command: " << collapsed_cmd.str() << std::endl;
 
@@ -525,14 +511,14 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             }
 
             // Step 2: Generate FlameGraph from collapsed format
-            std::string cmd = "perl ./flamegraph.pl --title=\"CPU Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
+            std::string cmd =
+                "perl ./flamegraph.pl --title=\"CPU Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
             std::cout << "Executing: " << cmd << std::endl;
             std::string svg_content;
             profiler.executeCommand(cmd, svg_content);
 
             // Validate SVG output
-            if (svg_content.find("<?xml") == std::string::npos &&
-                svg_content.find("<svg") == std::string::npos) {
+            if (svg_content.find("<?xml") == std::string::npos && svg_content.find("<svg") == std::string::npos) {
                 Json::Value root;
                 root["error"] = "Failed to generate FlameGraph: insufficient CPU samples collected. "
                                 "Please try a longer sampling duration (at least 5 seconds recommended).";
@@ -548,11 +534,11 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->setContentTypeCode(CT_TEXT_XML);
             resp->addHeader("Content-Type", "image/svg+xml");
             // 添加 Content-Disposition 让浏览器下载文件
-            resp->addHeader("Content-Disposition", "attachment; filename=cpu_flamegraph_" + std::to_string(duration) + "s.svg");
+            resp->addHeader("Content-Disposition",
+                            "attachment; filename=cpu_flamegraph_" + std::to_string(duration) + "s.svg");
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // Heap raw SVG endpoint - 返回pprof生成的原始SVG（不做任何修改）
     app().registerHandler(
@@ -566,7 +552,8 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
 
             if (heap_sample.empty()) {
                 Json::Value root;
-                root["error"] = "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.";
+                root["error"] =
+                    "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.";
                 auto resp = HttpResponse::newHttpJsonResponse(root);
                 resp->setStatusCode(k500InternalServerError);
                 callback(resp);
@@ -616,8 +603,7 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->addHeader("Content-Disposition", "attachment; filename=heap_profile.svg");
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // Heap FlameGraph raw SVG endpoint - 返回 FlameGraph 生成的原始 SVG
     app().registerHandler(
@@ -631,7 +617,8 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
 
             if (heap_sample.empty()) {
                 Json::Value root;
-                root["error"] = "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.";
+                root["error"] =
+                    "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.";
                 auto resp = HttpResponse::newHttpJsonResponse(root);
                 resp->setStatusCode(k500InternalServerError);
                 callback(resp);
@@ -649,8 +636,8 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             // Step 1: Generate collapsed format using pprof --collapsed
             std::string collapsed_file = "/tmp/heap_collapsed.prof";
             std::ostringstream collapsed_cmd;
-            collapsed_cmd << "./pprof --collapsed " << exe_path << " " << temp_file
-                          << " > " << collapsed_file << " 2>&1";
+            collapsed_cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file
+                          << " 2>&1";
 
             std::cout << "Running collapsed command: " << collapsed_cmd.str() << std::endl;
 
@@ -696,14 +683,14 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             }
 
             // Step 2: Generate FlameGraph from collapsed format
-            std::string cmd = "perl ./flamegraph.pl --title=\"Heap Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
+            std::string cmd =
+                "perl ./flamegraph.pl --title=\"Heap Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
             std::cout << "Executing: " << cmd << std::endl;
             std::string svg_content;
             profiler.executeCommand(cmd, svg_content);
 
             // Validate SVG output
-            if (svg_content.find("<?xml") == std::string::npos &&
-                svg_content.find("<svg") == std::string::npos) {
+            if (svg_content.find("<?xml") == std::string::npos && svg_content.find("<svg") == std::string::npos) {
                 Json::Value root;
                 root["error"] = "Failed to generate FlameGraph";
                 auto resp = HttpResponse::newHttpJsonResponse(root);
@@ -718,78 +705,76 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->setContentTypeCode(CT_TEXT_XML);
             resp->addHeader("Content-Type", "image/svg+xml");
             // 添加 Content-Disposition 让浏览器下载文件
-            std::string timestamp = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
+            std::string timestamp = std::to_string(
+                std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                    .count());
             resp->addHeader("Content-Disposition", "attachment; filename=heap_flamegraph_" + timestamp + ".svg");
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // Growth raw SVG endpoint - 返回pprof生成的原始SVG（不做任何修改）
-    app().registerHandler(
-        "/api/growth/svg_raw",
-        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::cout << "Starting Growth raw SVG generation..." << std::endl;
+    app().registerHandler("/api/growth/svg_raw",
+                          [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
+                                      std::function<void(const HttpResponsePtr&)>&& callback) {
+                              std::cout << "Starting Growth raw SVG generation..." << std::endl;
 
-            // 直接获取 heap growth stacks
-            std::string heap_growth = profiler.getRawHeapGrowthStacks();
+                              // 直接获取 heap growth stacks
+                              std::string heap_growth = profiler.getRawHeapGrowthStacks();
 
-            if (heap_growth.empty()) {
-                Json::Value root;
-                root["error"] = "Failed to get heap growth stacks. No heap growth data available.";
-                auto resp = HttpResponse::newHttpJsonResponse(root);
-                resp->setStatusCode(k500InternalServerError);
-                callback(resp);
-                return;
-            }
+                              if (heap_growth.empty()) {
+                                  Json::Value root;
+                                  root["error"] = "Failed to get heap growth stacks. No heap growth data available.";
+                                  auto resp = HttpResponse::newHttpJsonResponse(root);
+                                  resp->setStatusCode(k500InternalServerError);
+                                  callback(resp);
+                                  return;
+                              }
 
-            // 保存到临时文件
-            std::string temp_file = "/tmp/growth_raw.prof";
-            std::ofstream out(temp_file);
-            out << heap_growth;
-            out.close();
+                              // 保存到临时文件
+                              std::string temp_file = "/tmp/growth_raw.prof";
+                              std::ofstream out(temp_file);
+                              out << heap_growth;
+                              out.close();
 
-            // 使用 pprof 生成原始 SVG（不做任何修改）
-            std::string exe_path = profiler.getExecutablePath();
-            std::string pprof_path = "./pprof";
-            std::string cmd = pprof_path + " --svg " + exe_path + " " + temp_file + " 2>/dev/null";
-            std::cout << "Executing: " << cmd << std::endl;
-            std::string svg_content;
-            profiler.executeCommand(cmd, svg_content);
+                              // 使用 pprof 生成原始 SVG（不做任何修改）
+                              std::string exe_path = profiler.getExecutablePath();
+                              std::string pprof_path = "./pprof";
+                              std::string cmd = pprof_path + " --svg " + exe_path + " " + temp_file + " 2>/dev/null";
+                              std::cout << "Executing: " << cmd << std::endl;
+                              std::string svg_content;
+                              profiler.executeCommand(cmd, svg_content);
 
-            // 去掉 pprof 的信息输出，只保留 SVG 内容
-            // pprof 会在 SVG 前输出一些信息，需要找到 SVG 的开始位置
-            size_t svg_start = svg_content.find("<?xml");
-            if (svg_start == std::string::npos) {
-                svg_start = svg_content.find("<svg");
-            }
-            if (svg_start != std::string::npos && svg_start > 0) {
-                svg_content = svg_content.substr(svg_start);
-            }
+                              // 去掉 pprof 的信息输出，只保留 SVG 内容
+                              // pprof 会在 SVG 前输出一些信息，需要找到 SVG 的开始位置
+                              size_t svg_start = svg_content.find("<?xml");
+                              if (svg_start == std::string::npos) {
+                                  svg_start = svg_content.find("<svg");
+                              }
+                              if (svg_start != std::string::npos && svg_start > 0) {
+                                  svg_content = svg_content.substr(svg_start);
+                              }
 
-            // 检查结果（检查是否有 SVG 标签）
-            if (svg_content.empty() || svg_content.find("<svg") == std::string::npos) {
-                Json::Value root;
-                root["error"] = "Failed to generate SVG";
-                auto resp = HttpResponse::newHttpJsonResponse(root);
-                resp->setStatusCode(k500InternalServerError);
-                callback(resp);
-                return;
-            }
+                              // 检查结果（检查是否有 SVG 标签）
+                              if (svg_content.empty() || svg_content.find("<svg") == std::string::npos) {
+                                  Json::Value root;
+                                  root["error"] = "Failed to generate SVG";
+                                  auto resp = HttpResponse::newHttpJsonResponse(root);
+                                  resp->setStatusCode(k500InternalServerError);
+                                  callback(resp);
+                                  return;
+                              }
 
-            // 返回原始SVG内容（不做任何修改）
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(svg_content);
-            resp->setContentTypeCode(CT_TEXT_XML);
-            resp->addHeader("Content-Type", "image/svg+xml");
-            // 添加 Content-Disposition 让浏览器下载文件
-            resp->addHeader("Content-Disposition", "attachment; filename=growth_profile.svg");
-            callback(resp);
-        },
-        {Get}
-    );
+                              // 返回原始SVG内容（不做任何修改）
+                              auto resp = HttpResponse::newHttpResponse();
+                              resp->setBody(svg_content);
+                              resp->setContentTypeCode(CT_TEXT_XML);
+                              resp->addHeader("Content-Type", "image/svg+xml");
+                              // 添加 Content-Disposition 让浏览器下载文件
+                              resp->addHeader("Content-Disposition", "attachment; filename=growth_profile.svg");
+                              callback(resp);
+                          },
+                          {Get});
 
     // Growth FlameGraph raw SVG endpoint - 返回 FlameGraph 生成的原始 SVG
     app().registerHandler(
@@ -821,8 +806,8 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             // Step 1: Generate collapsed format using pprof --collapsed
             std::string collapsed_file = "/tmp/growth_collapsed.prof";
             std::ostringstream collapsed_cmd;
-            collapsed_cmd << "./pprof --collapsed " << exe_path << " " << temp_file
-                          << " > " << collapsed_file << " 2>&1";
+            collapsed_cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file
+                          << " 2>&1";
 
             std::cout << "Running collapsed command: " << collapsed_cmd.str() << std::endl;
 
@@ -868,14 +853,14 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             }
 
             // Step 2: Generate FlameGraph from collapsed format
-            std::string cmd = "perl ./flamegraph.pl --title=\"Heap Growth Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
+            std::string cmd = "perl ./flamegraph.pl --title=\"Heap Growth Flame Graph\" --width=1200 " +
+                              collapsed_file + " 2>/dev/null";
             std::cout << "Executing: " << cmd << std::endl;
             std::string svg_content;
             profiler.executeCommand(cmd, svg_content);
 
             // Validate SVG output
-            if (svg_content.find("<?xml") == std::string::npos &&
-                svg_content.find("<svg") == std::string::npos) {
+            if (svg_content.find("<?xml") == std::string::npos && svg_content.find("<svg") == std::string::npos) {
                 Json::Value root;
                 root["error"] = "Failed to generate FlameGraph";
                 auto resp = HttpResponse::newHttpJsonResponse(root);
@@ -890,20 +875,19 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->setContentTypeCode(CT_TEXT_XML);
             resp->addHeader("Content-Type", "image/svg+xml");
             // 添加 Content-Disposition 让浏览器下载文件
-            std::string timestamp = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
+            std::string timestamp = std::to_string(
+                std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                    .count());
             resp->addHeader("Content-Disposition", "attachment; filename=growth_flamegraph_" + timestamp + ".svg");
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // Symbol resolution endpoint (类似 brpc pprof 的 /pprof/symbol)
     // 使用 backward-cpp 进行符号化，支持内联函数
     app().registerHandler(
         "/pprof/symbol",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
+        [&profiler](const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             // 只支持 POST 请求
             if (req->method() != Post) {
                 auto resp = HttpResponse::newHttpResponse();
@@ -952,23 +936,23 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->setContentTypeCode(CT_TEXT_PLAIN);
             callback(resp);
         },
-        {Post}
-    );
+        {Post});
 
     // Standard pprof endpoint: /pprof/profile
     // Compatible with Go pprof tool
     app().registerHandler(
         "/pprof/profile",
-        [&profiler](const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
+        [&profiler](const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
             // 获取 seconds 参数，默认 30 秒
             int seconds = 30;
             auto seconds_param = req->getParameter("seconds");
             if (!seconds_param.empty()) {
                 try {
                     seconds = std::stoi(seconds_param);
-                    if (seconds < 1) seconds = 1;
-                    if (seconds > 300) seconds = 300;  // 最多5分钟
+                    if (seconds < 1)
+                        seconds = 1;
+                    if (seconds > 300)
+                        seconds = 300; // 最多5分钟
                 } catch (const std::exception& e) {
                     auto resp = HttpResponse::newHttpResponse();
                     resp->setStatusCode(k400BadRequest);
@@ -998,95 +982,89 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
             resp->addHeader("Content-Disposition", "attachment; filename=profile");
             callback(resp);
         },
-        {Get}
-    );
+        {Get});
 
     // Standard pprof endpoint: /pprof/heap
     // Compatible with Go pprof tool
-    app().registerHandler(
-        "/pprof/heap",
-        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::cout << "Received /pprof/heap request" << std::endl;
+    app().registerHandler("/pprof/heap",
+                          [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
+                                      std::function<void(const HttpResponsePtr&)>&& callback) {
+                              std::cout << "Received /pprof/heap request" << std::endl;
 
-            // 调用 getRawHeapSample 获取 heap sample 数据
-            std::string heap_sample = profiler.getRawHeapSample();
+                              // 调用 getRawHeapSample 获取 heap sample 数据
+                              std::string heap_sample = profiler.getRawHeapSample();
 
-            if (heap_sample.empty()) {
-                auto resp = HttpResponse::newHttpResponse();
-                resp->setStatusCode(k500InternalServerError);
-                resp->setBody("Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set.");
-                callback(resp);
-                return;
-            }
+                              if (heap_sample.empty()) {
+                                  auto resp = HttpResponse::newHttpResponse();
+                                  resp->setStatusCode(k500InternalServerError);
+                                  resp->setBody(
+                                      "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set.");
+                                  callback(resp);
+                                  return;
+                              }
 
-            // 返回 heap sample 数据（文本格式）
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(heap_sample);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            resp->addHeader("Content-Disposition", "attachment; filename=heap");
-            callback(resp);
-        },
-        {Get}
-    );
+                              // 返回 heap sample 数据（文本格式）
+                              auto resp = HttpResponse::newHttpResponse();
+                              resp->setBody(heap_sample);
+                              resp->setContentTypeCode(CT_TEXT_PLAIN);
+                              resp->addHeader("Content-Disposition", "attachment; filename=heap");
+                              callback(resp);
+                          },
+                          {Get});
 
     // Standard pprof endpoint: /pprof/growth
     // Compatible with Go pprof tool - returns heap growth stacks
-    app().registerHandler(
-        "/pprof/growth",
-        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::cout << "Received /pprof/growth request" << std::endl;
+    app().registerHandler("/pprof/growth",
+                          [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
+                                      std::function<void(const HttpResponsePtr&)>&& callback) {
+                              std::cout << "Received /pprof/growth request" << std::endl;
 
-            // 调用 getRawHeapGrowthStacks 获取 heap growth stacks 数据
-            std::string heap_growth = profiler.getRawHeapGrowthStacks();
+                              // 调用 getRawHeapGrowthStacks 获取 heap growth stacks 数据
+                              std::string heap_growth = profiler.getRawHeapGrowthStacks();
 
-            if (heap_growth.empty()) {
-                auto resp = HttpResponse::newHttpResponse();
-                resp->setStatusCode(k500InternalServerError);
-                resp->setBody("Failed to get heap growth stacks. No heap growth data available.");
-                callback(resp);
-                return;
-            }
+                              if (heap_growth.empty()) {
+                                  auto resp = HttpResponse::newHttpResponse();
+                                  resp->setStatusCode(k500InternalServerError);
+                                  resp->setBody("Failed to get heap growth stacks. No heap growth data available.");
+                                  callback(resp);
+                                  return;
+                              }
 
-            // 返回 heap growth stacks 数据（文本格式）
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(heap_growth);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            resp->addHeader("Content-Disposition", "attachment; filename=growth");
-            callback(resp);
-        },
-        {Get}
-    );
+                              // 返回 heap growth stacks 数据（文本格式）
+                              auto resp = HttpResponse::newHttpResponse();
+                              resp->setBody(heap_growth);
+                              resp->setContentTypeCode(CT_TEXT_PLAIN);
+                              resp->addHeader("Content-Disposition", "attachment; filename=growth");
+                              callback(resp);
+                          },
+                          {Get});
 
     // Thread stacks endpoint: /api/thread/stacks
     // Returns all thread stacks with full backtrace in text format
-    app().registerHandler(
-        "/api/thread/stacks",
-        [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
-                    std::function<void(const HttpResponsePtr&)>&& callback) {
-            std::cout << "Received /api/thread/stacks request" << std::endl;
+    app().registerHandler("/api/thread/stacks",
+                          [&profiler]([[maybe_unused]] const HttpRequestPtr& req,
+                                      std::function<void(const HttpResponsePtr&)>&& callback) {
+                              std::cout << "Received /api/thread/stacks request" << std::endl;
 
-            // 调用 getThreadCallStacks 获取线程调用堆栈数据
-            std::string thread_stacks = profiler.getThreadCallStacks();
+                              // 调用 getThreadCallStacks 获取线程调用堆栈数据
+                              std::string thread_stacks = profiler.getThreadCallStacks();
 
-            if (thread_stacks.empty()) {
-                Json::Value root;
-                root["error"] = "Failed to get thread call stacks";
-                auto resp = HttpResponse::newHttpJsonResponse(root);
-                resp->setStatusCode(k500InternalServerError);
-                callback(resp);
-                return;
-            }
+                              if (thread_stacks.empty()) {
+                                  Json::Value root;
+                                  root["error"] = "Failed to get thread call stacks";
+                                  auto resp = HttpResponse::newHttpJsonResponse(root);
+                                  resp->setStatusCode(k500InternalServerError);
+                                  callback(resp);
+                                  return;
+                              }
 
-            // 返回线程调用堆栈数据（文本格式）
-            auto resp = HttpResponse::newHttpResponse();
-            resp->setBody(thread_stacks);
-            resp->setContentTypeCode(CT_TEXT_PLAIN);
-            callback(resp);
-        },
-        {Get}
-    );
+                              // 返回线程调用堆栈数据（文本格式）
+                              auto resp = HttpResponse::newHttpResponse();
+                              resp->setBody(thread_stacks);
+                              resp->setContentTypeCode(CT_TEXT_PLAIN);
+                              callback(resp);
+                          },
+                          {Get});
 }
 
 } // namespace profiler

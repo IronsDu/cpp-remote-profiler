@@ -1,7 +1,7 @@
 #include "workload.h"
 #include <algorithm>
-#include <random>
 #include <cstring>
+#include <random>
 
 void DataProcessor::sortData(std::vector<int>& data) {
     std::sort(data.begin(), data.end());
@@ -23,12 +23,14 @@ void DataProcessor::processData(std::vector<int>& data) {
 }
 
 int FibonacciCalculator::recursive(int n) {
-    if (n <= 1) return n;
+    if (n <= 1)
+        return n;
     return recursive(n - 1) + recursive(n - 2);
 }
 
 int FibonacciCalculator::iterative(int n) {
-    if (n <= 1) return n;
+    if (n <= 1)
+        return n;
     int a = 0, b = 1;
     for (int i = 2; i <= n; ++i) {
         int temp = a + b;
@@ -39,8 +41,10 @@ int FibonacciCalculator::iterative(int n) {
 }
 
 int FibonacciCalculator::memoized(int n, std::map<int, int>& cache) {
-    if (n <= 1) return n;
-    if (cache.find(n) != cache.end()) return cache[n];
+    if (n <= 1)
+        return n;
+    if (cache.find(n) != cache.end())
+        return cache[n];
     cache[n] = memoized(n - 1, cache) + memoized(n - 2, cache);
     return cache[n];
 }
@@ -124,7 +128,8 @@ void cpuIntensiveTask() {
         // 2. Fibonacci计算分支
         volatile int result1 = fib.recursive(25);
         volatile int result2 = fib.iterative(30);
-        (void)result1; (void)result2;
+        (void)result1;
+        (void)result2;
 
         // 3. 矩阵运算分支
         auto matrix1 = matrixOps.createMatrix(10, 10);
