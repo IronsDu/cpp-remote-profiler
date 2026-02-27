@@ -18,12 +18,23 @@ option(BUILD_SHARED_LIBS "Build shared libraries (DLL)" ON)
 option(REMOTE_PROFILER_INSTALL "Generate install target" ON)
 option(REMOTE_PROFILER_BUILD_EXAMPLES "Build example programs" ON)
 option(REMOTE_PROFILER_BUILD_TESTS "Build test programs" ON)
+option(ENABLE_TSAN "Enable ThreadSanitizer for data race detection" OFF)
 
 message(STATUS "Build options:")
 message(STATUS "  BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
 message(STATUS "  REMOTE_PROFILER_INSTALL: ${REMOTE_PROFILER_INSTALL}")
 message(STATUS "  REMOTE_PROFILER_BUILD_EXAMPLES: ${REMOTE_PROFILER_BUILD_EXAMPLES}")
 message(STATUS "  REMOTE_PROFILER_BUILD_TESTS: ${REMOTE_PROFILER_BUILD_TESTS}")
+message(STATUS "  ENABLE_TSAN: ${ENABLE_TSAN}")
+
+# ThreadSanitizer configuration
+if(ENABLE_TSAN)
+    message(STATUS "ThreadSanitizer enabled")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread -g -O1")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread -g -O1")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -137,6 +148,18 @@ if(REMOTE_PROFILER_BUILD_TESTS)
     )
 
     add_test(NAME FullFlowTest COMMAND test_full_flow)
+
+    # Set TSAN environment for tests if enabled
+    if(ENABLE_TSAN)
+        set(TSAN_SUPPRESSIONS_FILE "${PROJECT_SOURCE_DIR}/tsan.supp")
+        set_tests_properties(CPUProfileTest PROPERTIES
+            ENVIRONMENT "TSAN_OPTIONS=suppressions=${TSAN_SUPPRESSIONS_FILE}:halt_on_error=0"
+        )
+        set_tests_properties(FullFlowTest PROPERTIES
+            ENVIRONMENT "TSAN_OPTIONS=suppressions=${TSAN_SUPPRESSIONS_FILE}:halt_on_error=0"
+        )
+    endif()
+
     message(STATUS "Tests will be built")
 else()
     message(STATUS "Tests disabled")

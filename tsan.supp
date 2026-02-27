@@ -1,0 +1,63 @@
+# ThreadSanitizer Suppressions for cpp-remote-profiler
+# These suppress known issues in third-party dependencies (trantor, drogon)
+# that are beyond our control.
+
+# =============================================================================
+# Trantor Library - Data Races
+# =============================================================================
+
+# Trantor EventLoop wakeup race condition
+race:trantor::EventLoop::wakeup
+
+# Trantor TimingWheel shared_ptr race
+race:std::_Sp_counted_base*
+
+# Trantor MpscQueue operations
+race:trantor::MpscQueue*
+
+# Trantor EventLoop internal
+race:trantor::EventLoop::loop
+race:trantor::EventLoop::updateChannel
+race:trantor::EventLoop::removeChannel
+race:trantor::EventLoop::queueInLoop
+
+# =============================================================================
+# Trantor Library - Signal-unsafe calls (known limitation)
+# =============================================================================
+
+# These occur when signal handlers interrupt trantor's event loop
+# The signal handler in profiler_manager.cpp is signal-safe,
+# but TSAN reports these because trantor was in the call stack
+
+signal:trantor::Date::toFormattedString
+signal:trantor::EpollPoller::poll
+signal:trantor::Logger::formatTime
+signal:trantor::MpscQueue*
+signal:trantor::EventLoop::wakeup
+
+# =============================================================================
+# Drogon Framework - Data Races
+# =============================================================================
+
+# Drogon HttpServer shared_ptr issues
+race:drogon::HttpServer
+race:drogon::HttpAppFrameworkImpl
+
+# =============================================================================
+# libstdc++ / libc - Known false positives with shared_ptr
+# =============================================================================
+
+# These are known issues with std::shared_ptr reference counting
+# under TSAN when used across threads
+race:std::__shared_count*
+race:std::_Sp_counted_base*
+
+# =============================================================================
+# gperftools / tcmalloc - Known TSAN issues
+# =============================================================================
+
+# gperftools has known TSAN issues that are by design
+race:ProfilerStart
+race:ProfilerStop
+race:HeapProfilerStart
+race:HeapProfilerStop

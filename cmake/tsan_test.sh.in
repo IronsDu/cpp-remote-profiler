@@ -1,0 +1,15 @@
+#!/bin/bash
+# TSAN Test Runner Script
+# This script runs tests with ThreadSanitizer and suppression file
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TSAN_OPTIONS="suppressions=@TSAN_SUPPRESSIONS_FILE@:halt_on_error=0:report_bugs=1"
+
+export TSAN_OPTIONS
+
+echo "Running tests with TSAN suppression file: @TSAN_SUPPRESSIONS_FILE@"
+echo "TSAN_OPTIONS: $TSAN_OPTIONS"
+echo ""
+
+# Run the test
+exec "$@"
