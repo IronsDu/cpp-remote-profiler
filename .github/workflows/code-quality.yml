@@ -1,5 +1,9 @@
 name: Code Quality
 
+# Test vcpkg binary cache effectiveness
+# Run 1: Initial run - should compile dependencies
+# Run 2: Should use cached binaries
+
 on:
   push:
     branches: [ main, develop ]
