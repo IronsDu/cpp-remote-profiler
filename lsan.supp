@@ -1,0 +1,8 @@
+# LSAN (LeakSanitizer) suppression file
+# suppresses known memory leaks from third-party libraries
+
+# tcmalloc library initialization allocates internal data structures
+# that are not freed on program exit, causing LSAN to report leaks.
+# This is expected behavior and not a real memory leak.
+# See: https://github.com/gperftools/gperftools
+leak:MallocExtension::Initialize
