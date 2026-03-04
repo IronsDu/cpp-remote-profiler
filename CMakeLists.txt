@@ -59,6 +59,24 @@ include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${GPERFTOOLS_INCLUDE_DIRS})
 
+# ============================================================================
+# Version Configuration
+# ============================================================================
+# Generate profiler_version.h with version information and namespace macros
+set(PROFILER_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
+set(PROFILER_VERSION_MINOR ${PROJECT_VERSION_MINOR})
+set(PROFILER_VERSION_PATCH ${PROJECT_VERSION_PATCH})
+set(PROFILER_VERSION_NAMESPACE v${PROJECT_VERSION_MAJOR}_${PROJECT_VERSION_MINOR}_${PROJECT_VERSION_PATCH})
+
+configure_file(
+    ${PROJECT_SOURCE_DIR}/include/profiler_version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/profiler_version.h
+    @ONLY
+)
+
+message(STATUS "Profiler version: ${PROJECT_VERSION}")
+message(STATUS "Profiler version namespace: ${PROFILER_VERSION_NAMESPACE}")
+
 # Source files
 set(PROFILER_SOURCES
     src/profiler_manager.cpp
@@ -168,6 +186,11 @@ if(REMOTE_PROFILER_INSTALL)
 
     # Install version header
     install(FILES include/version.h
+        DESTINATION include/cpp-remote-profiler
+    )
+
+    # Install generated profiler_version.h
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/profiler_version.h
         DESTINATION include/cpp-remote-profiler
     )
 

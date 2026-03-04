@@ -1,10 +1,11 @@
 #pragma once
 
+#include "profiler_version.h"
 #include <memory>
 #include <string>
 #include <vector>
 
-namespace profiler {
+PROFILER_NAMESPACE_BEGIN
 
 // 符号化结果
 struct SymbolizedFrame {
@@ -43,4 +44,4 @@ private:
 // 工厂函数
 std::unique_ptr<Symbolizer> createSymbolizer();
 
-} // namespace profiler
+PROFILER_NAMESPACE_END

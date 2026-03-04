@@ -1,7 +1,7 @@
 #include "web_resources.h"
 #include <string>
 
-namespace profiler {
+PROFILER_NAMESPACE_BEGIN
 
 static const char INDEX_PAGE[] = R"HTML(
 <!DOCTYPE html>
@@ -1020,4 +1020,4 @@ std::string WebResources::getGrowthSvgViewerPage() {
     return std::string(GROWTH_SVG_VIEWER_PAGE);
 }
 
-} // namespace profiler
+PROFILER_NAMESPACE_END

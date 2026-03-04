@@ -1,8 +1,9 @@
 #pragma once
 
+#include "profiler_version.h"
 #include <string>
 
-namespace profiler {
+PROFILER_NAMESPACE_BEGIN
 
 // Web 资源管理类 - 提供嵌入的 HTML 页面内容
 class WebResources {
@@ -20,4 +21,4 @@ public:
     static std::string getGrowthSvgViewerPage();
 };
 
-} // namespace profiler
+PROFILER_NAMESPACE_END
