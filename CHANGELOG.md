@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Code coverage reporting with Codecov integration
 - Add MIT LICENSE file
 - Add graphviz runtime dependency documentation
 

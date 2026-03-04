@@ -88,6 +88,88 @@ jobs:
         ldd profiler_example
         ldd libprofiler_lib.so
 
+  # Code Coverage
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          build-essential \
+          git \
+          pkg-config \
+          libgoogle-perftools-dev \
+          wget \
+          gcovr
+
+    - name: Export GitHub Actions cache environment variables
+      uses: actions/github-script@v7
+      with:
+        script: |
+          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+    - name: Setup vcpkg with binary caching
+      uses: lukka/run-vcpkg@v11
+      env:
+        VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      with:
+        vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+        vcpkgGitCommitId: '2cf2bcc60add50f79b2c418487d9cd1b6c7c1fec'
+        runVcpkgInstall: true
+        doNotCache: false
+        vcpkgJsonGlob: vcpkg.json
+        vcpkgJsonIgnores: ['**/vcpkg/**']
+        runVcpkgFormatString: ['install', '--recurse', '--clean-after-build', '--x-install-root', '$[env.VCPKG_INSTALLED_DIR]', '--triplet', 'x64-linux']
+
+    - name: Configure CMake with Coverage
+      run: |
+        mkdir build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+          -DBUILD_SHARED_LIBS=ON \
+          -DENABLE_COVERAGE=ON
+
+    - name: Build
+      run: |
+        cd build
+        make -j$(nproc)
+
+    - name: Run tests
+      working-directory: build
+      run: |
+        ctest --output-on-failure
+
+    - name: Generate coverage report
+      run: |
+        cd build
+        gcovr --xml-pretty --exclude-unreachable-branches --print-summary \
+          --output coverage.xml \
+          --root ${{ github.workspace }} \
+          --filter ${{ github.workspace }}/src \
+          --filter ${{ github.workspace }}/include
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: build/coverage.xml
+        flags: unittests
+        name: cpp-remote-profiler-coverage
+        fail_ci_if_error: false
+        verbose: true
+
   # Ubuntu with Clang
   build-clang:
     name: Ubuntu (Clang)
