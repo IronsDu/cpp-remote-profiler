@@ -1,5 +1,6 @@
 #pragma once
 
+#include "profiler_version.h"
 #include "symbolize.h"
 #include <atomic>
 #include <map>
@@ -10,7 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace profiler {
+PROFILER_NAMESPACE_BEGIN
 
 enum class ProfilerType {
     CPU,
@@ -177,4 +178,4 @@ private:
     static bool enable_signal_chaining_;
 };
 
-} // namespace profiler
+PROFILER_NAMESPACE_END

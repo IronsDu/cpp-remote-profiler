@@ -6,7 +6,7 @@
 #include <dlfcn.h>
 #include <sstream>
 
-namespace profiler {
+PROFILER_NAMESPACE_BEGIN
 
 // BackwardSymbolizer 的内部实现
 class BackwardSymbolizer::Impl {
@@ -126,4 +126,4 @@ std::unique_ptr<Symbolizer> createSymbolizer() {
     return std::make_unique<BackwardSymbolizer>();
 }
 
-} // namespace profiler
+PROFILER_NAMESPACE_END

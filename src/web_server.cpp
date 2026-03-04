@@ -8,7 +8,7 @@
 
 using namespace drogon;
 
-namespace profiler {
+PROFILER_NAMESPACE_BEGIN
 
 void registerHttpHandlers(profiler::ProfilerManager& profiler) {
     // Status endpoint - 获取 profiler 状态
@@ -1067,4 +1067,4 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler) {
                           {Get});
 }
 
-} // namespace profiler
+PROFILER_NAMESPACE_END

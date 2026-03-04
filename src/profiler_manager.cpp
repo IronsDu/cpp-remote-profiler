@@ -31,7 +31,7 @@
 #include <unwind.h>
 #include <vector>
 
-namespace profiler {
+PROFILER_NAMESPACE_BEGIN
 
 // Static member initialization
 std::atomic<bool> ProfilerManager::capture_in_progress_{false};
@@ -1330,4 +1330,4 @@ std::string ProfilerManager::getThreadCallStacks() {
     return output;
 }
 
-} // namespace profiler
+PROFILER_NAMESPACE_END
