@@ -1,0 +1,35 @@
+# Codecov configuration
+# https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  status:
+    project:
+      default:
+        target: 60%          # 目标覆盖率
+        threshold: 5%        # 允许的覆盖率下降幅度
+        if_ci_failed: error  # CI 失败时的行为
+    patch:
+      default:
+        target: 60%          # 新代码的目标覆盖率
+        threshold: 5%
+
+comment:
+  layout: "reach, diff, flags, files, footer"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+# 忽略测试文件和生成的文件
+ignore:
+  - "tests/**"
+  - "example/**"
+  - "build/**"
+  - "**/*.test.cpp"
+  - "**/*_test.cpp"
+
+# CI 配置
+ci:
+  notify:
+    after_n_builds: 1
+    wait_for_ci: true
