@@ -9,7 +9,7 @@
 | 现状 | 建议 | 状态 |
 |------|------|------|
 | CMake 3.15 | 升级到 **CMake 3.20+**，支持更多现代特性 | ⬜ 待做 |
-| 无 CMake Presets | 添加 **`CMakePresets.json`** | ⬜ 待做 |
+| 无 CMake Presets | 添加 **`CMakePresets.json`** | ✅ 完成 |
 | 无预编译头 | 添加 **PCH (Precompiled Headers)** | ⬜ 待做 |
 | 无 Unity Build | 添加 **Unity Build** 选项 | ⬜ 待做 |
 | 无 C++20 模块 | 考虑实验性支持 **C++20 Modules** | ⬜ 待做 |
@@ -117,7 +117,7 @@
 - [ ] 添加 `SECURITY.md` - 明确漏洞报告流程
 - [ ] 添加 `.gitattributes` - 统一换行符处理
 - [ ] 添加 `.editorconfig` - 统一编辑器配置
-- [ ] 添加 `CMakeUserPresets.json` 到 .gitignore
+- [x] 添加 `CMakeUserPresets.json` 到 .gitignore
 - [ ] vcpkg baseline pinning - 确保可重复构建
 - [ ] 添加 Conan lockfile
 
@@ -131,7 +131,7 @@
 | 🔴 高 | 代码覆盖率 | ✅ 完成 |
 | 🔴 高 | CONTRIBUTING.md | ⬜ 待做 |
 | 🔴 高 | Issue/PR 模板 | ⬜ 待做 |
-| 🟡 中 | CMakePresets.json | ⬜ 待做 |
+| 🟡 中 | CMakePresets.json | ✅ 完成 |
 | 🟡 中 | Doxygen API 文档 | ⬜ 待做 |
 | 🟡 中 | CHANGELOG.md | ✅ 完成 |
 | 🟡 中 | ccache | ⬜ 待做 |
@@ -147,6 +147,7 @@
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-06 | 添加 CMakePresets.json，CI 使用预设构建 |
 | 2026-03-04 | 添加代码覆盖率支持（Codecov）|
 | 2026-03-04 | 更新 CHANGELOG.md |
 | 2026-03-04 | 创建路线图文件 |
