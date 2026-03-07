@@ -1,0 +1,102 @@
+# ============================================================================
+# Doxygen Configuration for cpp-remote-profiler
+# ============================================================================
+# This file is processed by CMake to generate the final Doxyfile.
+# Variables like @PROJECT_SOURCE_DIR@ are substituted by CMake.
+# ============================================================================
+
+# Project information
+PROJECT_NAME           = "cpp-remote-profiler"
+PROJECT_NUMBER         = @PROJECT_VERSION@
+PROJECT_BRIEF          = "C++ Remote Profiler - pprof-compatible profiling service"
+PROJECT_LOGO           =
+
+# Output directory
+OUTPUT_DIRECTORY       = @CMAKE_CURRENT_BINARY_DIR@/docs
+
+# Input files
+INPUT                  = @PROJECT_SOURCE_DIR@/include \
+                         @PROJECT_SOURCE_DIR@/docs/mainpage.dox
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.hpp *.dox
+
+# Exclude patterns
+EXCLUDE_PATTERNS       = */build/* */.git/* */vcpkg/*
+
+# Output format
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+HTML_COLORSTYLE_HUE    = 220
+HTML_COLORSTYLE_SAT    = 100
+HTML_COLORSTYLE_GAMMA  = 80
+HTML_TIMESTAMP         = YES
+HTML_DYNAMIC_MENUS     = YES
+HTML_INDEX_NUM_ENTRIES = 100
+
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+
+# Source browsing
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = YES
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+# Extraction settings
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+
+# Preprocessing
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = "PROFILER_NAMESPACE_BEGIN=namespace profiler {" \
+                         "PROFILER_NAMESPACE_END=}" \
+                         "PROFILER_VERSION_MAJOR=@PROJECT_VERSION_MAJOR@" \
+                         "PROFILER_VERSION_MINOR=@PROJECT_VERSION_MINOR@" \
+                         "PROFILER_VERSION_PATCH=@PROJECT_VERSION_PATCH@" \
+                         PROFILER_NAMESPACE_BEGIN \
+                         PROFILER_NAMESPACE_END
+
+# C++ specific
+OPTIMIZE_OUTPUT_FOR_C  = NO
+OPTIMIZE_OUTPUT_JAVA   = NO
+LOOKUP_CACHE_SIZE      = 0
+
+# Miscellaneous
+TAB_SIZE               = 4
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = NO
+MULTILINE_CPP_IS_BRIEF = NO
+INHERIT_DOCS           = YES
+SEPARATE_MEMBER_PAGES  = NO
+SORT_MEMBER_DOCS       = YES
+SORT_BRIEF_DOCS        = YES
+SORT_MEMBERS_CTORS_1ST = YES
+
+# Warnings
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+
+# Graphs (requires Graphviz)
+HAVE_DOT               = @DOXYGEN_HAVE_DOT@
+CLASS_DIAGRAMS         = YES
+HIDE_UNDOC_RELATIONS   = YES
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+GROUP_GRAPHS           = YES
+UML_LOOK               = NO
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+GRAPHICAL_HIERARCHY    = YES
+DIRECTORY_GRAPH        = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
