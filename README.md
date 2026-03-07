@@ -377,7 +377,76 @@ http://localhost:8080
 
 ## 💡 集成到你的项目
 
-### 选项 1: 作为 HTTP 服务集成（推荐）
+### 选项 1: 使用 CPM.cmake（推荐）
+
+[CPM.cmake](https://github.com/cpm-cmake/CPM.cmake) 是一个轻量级的 CMake 包管理器，无需预安装即可使用：
+
+```cmake
+# 在你的 CMakeLists.txt 中
+
+# 1. 下载并包含 CPM.cmake
+set(CPM_DOWNLOAD_VERSION 0.40.2)
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/cpm/CPM.cmake")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/cpm")
+    file(DOWNLOAD
+        "https://github.com/cpm-cmake/CPM.cmake/releases/download/v${CPM_DOWNLOAD_VERSION}/CPM.cmake"
+        "${CMAKE_BINARY_DIR}/cpm/CPM.cmake"
+    )
+endif()
+include("${CMAKE_BINARY_DIR}/cpm/CPM.cmake")
+
+# 2. 添加 cpp-remote-profiler
+CPMAddPackage(
+    NAME cpp-remote-profiler
+    GITHUB_REPOSITORY your-org/cpp-remote-profiler
+    GIT_TAG v0.1.0
+    OPTIONS
+        "REMOTE_PROFILER_BUILD_EXAMPLES OFF"
+        "REMOTE_PROFILER_BUILD_TESTS OFF"
+        "REMOTE_PROFILER_INSTALL OFF"
+)
+
+# 3. 链接到你的目标
+target_link_libraries(your_target
+    cpp-remote-profiler::profiler_lib
+    Drogon::Drogon
+)
+```
+
+完整示例请参考 `cmake/examples/CPM_example.cmake` 和 `cmake/examples/CPM_CMakeLists.txt.example`。
+
+**CPM.cmake 优势**：
+- 零安装：无需预装包管理器
+- 缓存支持：依赖可跨项目共享
+- 简洁语法：比原生 FetchContent 更易用
+
+### 选项 2: 使用 FetchContent
+
+```cmake
+include(FetchContent)
+
+FetchContent_Declare(
+    cpp-remote-profiler
+    GIT_REPOSITORY https://github.com/your-org/cpp-remote-profiler.git
+    GIT_TAG v0.1.0
+    GIT_SHALLOW TRUE
+)
+
+set(REMOTE_PROFILER_BUILD_EXAMPLES OFF CACHE BOOL "")
+set(REMOTE_PROFILER_BUILD_TESTS OFF CACHE BOOL "")
+set(REMOTE_PROFILER_INSTALL OFF CACHE BOOL "")
+
+FetchContent_MakeAvailable(cpp-remote-profiler)
+
+target_link_libraries(your_target
+    cpp-remote-profiler::profiler_lib
+    Drogon::Drogon
+)
+```
+
+完整示例请参考 `cmake/examples/FetchContent_example.cmake`。
+
+### 选项 3: 作为 HTTP 服务集成
 
 将 profiler 作为一个独立的 HTTP 服务运行：
 
@@ -392,7 +461,7 @@ int main() {
 }
 ```
 
-### 选项 2: 使用 gperftools 直接集成
+### 选项 4: 使用 gperftools 直接集成
 
 ```cpp
 #include <gperftools/profiler.h>

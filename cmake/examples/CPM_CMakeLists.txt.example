@@ -1,0 +1,67 @@
+cmake_minimum_required(VERSION 3.15)
+
+project(CPMExample VERSION 1.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ============================================================================
+# Step 1: Setup CPM.cmake
+# ============================================================================
+
+set(CPM_DOWNLOAD_VERSION 0.40.2)
+
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/cpm/CPM.cmake")
+    message(STATUS "Downloading CPM.cmake v${CPM_DOWNLOAD_VERSION}...")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/cpm")
+    file(
+        DOWNLOAD
+        "https://github.com/cpm-cmake/CPM.cmake/releases/download/v${CPM_DOWNLOAD_VERSION}/CPM.cmake"
+        "${CMAKE_BINARY_DIR}/cpm/CPM.cmake"
+        SHOW_PROGRESS
+    )
+endif()
+
+include("${CMAKE_BINARY_DIR}/cpm/CPM.cmake")
+
+# ============================================================================
+# Step 2: Add dependencies using CPM
+# ============================================================================
+
+# Add cpp-remote-profiler
+CPMAddPackage(
+    NAME cpp-remote-profiler
+    GITHUB_REPOSITORY your-org/cpp-remote-profiler
+    GIT_TAG v0.1.0
+    OPTIONS
+        "REMOTE_PROFILER_BUILD_EXAMPLES OFF"
+        "REMOTE_PROFILER_BUILD_TESTS OFF"
+        "REMOTE_PROFILER_INSTALL OFF"
+)
+
+# Note: You still need to install system dependencies:
+# - gperftools (libgoogle-perftools-dev on Ubuntu)
+# - Drogon, OpenSSL, ZLIB (via vcpkg or system package manager)
+
+# Find system dependencies
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GPERFTOOLS REQUIRED libprofiler libtcmalloc)
+find_package(Drogon REQUIRED)
+
+# ============================================================================
+# Step 3: Build your application
+# ============================================================================
+
+add_executable(cpm_example
+    FetchContent_integration_example.cpp
+)
+
+target_include_directories(cpm_example PRIVATE
+    ${GPERFTOOLS_INCLUDE_DIRS}
+)
+
+target_link_libraries(cpm_example
+    cpp-remote-profiler::profiler_lib
+    Drogon::Drogon
+    ${GPERFTOOLS_LIBRARIES}
+)
