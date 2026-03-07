@@ -20,12 +20,15 @@ option(REMOTE_PROFILER_BUILD_EXAMPLES "Build example programs" ON)
 option(REMOTE_PROFILER_BUILD_TESTS "Build test programs" ON)
 option(ENABLE_COVERAGE "Enable code coverage reporting" OFF)
 
+option(BUILD_DOCS "Build API documentation" OFF)
+
 message(STATUS "Build options:")
 message(STATUS "  BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
 message(STATUS "  REMOTE_PROFILER_INSTALL: ${REMOTE_PROFILER_INSTALL}")
 message(STATUS "  REMOTE_PROFILER_BUILD_EXAMPLES: ${REMOTE_PROFILER_BUILD_EXAMPLES}")
 message(STATUS "  REMOTE_PROFILER_BUILD_TESTS: ${REMOTE_PROFILER_BUILD_TESTS}")
 message(STATUS "  ENABLE_COVERAGE: ${ENABLE_COVERAGE}")
+message(STATUS "  BUILD docs: ${BUILD_DOCS}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -245,5 +248,47 @@ if(REMOTE_PROFILER_INSTALL)
     message(STATUS "Install targets will be generated")
 else()
     message(STATUS "Install targets disabled")
+endif()
+
+# ============================================================================
+# Documentation
+# ============================================================================
+
+if(BUILD_DOCS)
+    find_package(Doxygen)
+
+    if(DOxygen_FOUND)
+        # Check for dot (Graphviz) for diagrams
+        find_program(DOT_EXECUTABLE)
+
+        if(DOT_EXECUTABLE)
+            set(DOXYGEN_HAVE_DOT "YES")
+        else()
+            set(DOXYGEN_HAVE_DOT "NO")
+        endif()
+
+        # Configure Doxyfile
+        configure_file(
+            ${PROJECT_SOURCE_DIR}/docs/Doxyfile.in
+            ${CMAKE_CURRENT_BINARY_DIR}/docs/Doxyfile
+            @ONLY
+        )
+
+        # Add docs target
+        add_custom_target(docs ALL
+            COMMAND ${DOxygen_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/docs/Doxyfile
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            COMMENT "Generating API documentation"
+        )
+
+        # Install docs (optional)
+        install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/docs/html
+            DESTINATION share/doc/cpp-remote-profiler
+        )
+
+        message(STATUS "Documentation will be generated")
+    else()
+        message(WARNING "Doxygen not found - documentation will not be generated")
+    endif()
 endif()
 
