@@ -1,0 +1,62 @@
+/**
+ * @mainpage cpp-remote-profiler Documentation
+ *
+ * @section intro Introduction
+ *
+ * cpp-remote-profiler is a C++ remote profiling tool similar to Go pprof
+ * and brpc pprof service. It is built on gperftools and the Drogon framework.
+ *
+ * @section features Features
+ *
+ * - @b CPU @b Profiling: CPU performance analysis using gperftools
+ * - @b Heap @b Profiling: Memory usage analysis and leak detection
+ * - @b Thread @b Stack @b Capture: Get call stacks of all threads
+ * - @b Standard @b pprof @b Interface: Compatible with Go pprof tools
+ * - @b Web @b Interface: Beautiful web control panel with one-click flame graph
+ * - @b RESTful @b API: Complete HTTP API endpoints
+ *
+ * @section getting_started Getting Started
+ *
+ * @subsection quick_example Quick Example
+ *
+ * @code{.cpp}
+ * #include <drogon/drogon.h>
+ * #include "profiler_manager.h"
+ * #include "web_server.h"
+ *
+ * int main() {
+ *     auto& profiler = profiler::ProfilerManager::getInstance();
+ *
+ *     // Register HTTP handlers
+ *     profiler::registerHttpHandlers(profiler);
+ *
+ *     // Start HTTP server
+ *     drogon::app().addListener("0.0.0.0", 8080).run();
+ *     return 0;
+ * }
+ * @endcode
+ *
+ * @section api_endpoints API Endpoints
+ *
+ * | Endpoint | Description |
+ * |----------|-------------|
+ * | /pprof/profile | CPU profile (Go pprof compatible) |
+ * | /pprof/heap | Heap profile (Go pprof compatible) |
+ * | /pprof/symbol | Symbolization interface |
+ * | /api/cpu/analyze | CPU flame graph SVG |
+ * | /api/heap/analyze | Heap flame graph SVG |
+ * | /api/thread/stacks | Get all thread call stacks |
+ *
+ * @section installation Installation
+ *
+ * See @ref docs/user_guide/05_installation.md for detailed installation instructions.
+ *
+ * @section license License
+ *
+ * MIT License
+ *
+ * @section links Useful Links
+ *
+ * - GitHub: https://github.com/IronsDu/cpp-remote-profiler
+ * - Issue Tracker: https://github.com/IronsDu/cpp-remote-profiler/issues
+ */

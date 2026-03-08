@@ -1,3 +1,6 @@
+/// @file symbolize.h
+/// @brief Symbolization utilities for address-to-symbol resolution
+
 #pragma once
 
 #include "profiler_version.h"
@@ -7,27 +10,42 @@
 
 PROFILER_NAMESPACE_BEGIN
 
-// 符号化结果
+/// @struct SymbolizedFrame
+/// @brief Result of symbolizing a single address
+///
+/// Contains the resolved symbol information for a single instruction pointer.
 struct SymbolizedFrame {
-    std::string function_name; // 函数名
-    std::string source_file;   // 源文件路径
-    unsigned int line = 0;     // 行号
-    bool is_inlined = false;   // 是否是内联函数
+    std::string function_name; ///< Function name (demangled)
+    std::string source_file;   ///< Source file path
+    unsigned int line = 0;     ///< Line number in source file
+    bool is_inlined = false;   ///< Whether this is an inlined function
 };
 
-// 符号化器接口
+/// @class Symbolizer
+/// @brief Abstract interface for symbolization
+///
+/// Provides a common interface for resolving addresses to symbols.
+/// Different implementations can use different backends (e.g., abseil, libbacktrace).
 class Symbolizer {
 public:
     virtual ~Symbolizer() = default;
 
-    // 符号化单个地址
+    /// @brief Symbolize a single address
+    /// @param address The instruction pointer to symbolize
+    /// @return Vector of SymbolizedFrame (may contain multiple for inlined frames)
     virtual std::vector<SymbolizedFrame> symbolize(void* address) = 0;
 
-    // 符号化多个地址
+    /// @brief Symbolize multiple addresses in batch
+    /// @param addresses Vector of instruction pointers to symbolize
+    /// @return Vector of symbolized frame vectors (one per input address)
     virtual std::vector<std::vector<SymbolizedFrame>> symbolizeBatch(const std::vector<void*>& addresses) = 0;
 };
 
-// Backward-cpp 符号化器实现
+/// @class BackwardSymbolizer
+/// @brief Symbolizer implementation using backward-cpp library
+///
+/// Uses the backward-cpp library for address symbolization with support
+/// for inline function detection.
 class BackwardSymbolizer : public Symbolizer {
 public:
     BackwardSymbolizer();
@@ -38,10 +56,11 @@ public:
 
 private:
     class Impl;
-    std::unique_ptr<Impl> impl_;
+    std::unique_ptr<Impl> impl_; ///< Pimpl pointer for implementation hiding
 };
 
-// 工厂函数
+/// @brief Factory function to create a Symbolizer instance
+/// @return Unique pointer to a new Symbolizer instance
 std::unique_ptr<Symbolizer> createSymbolizer();
 
 PROFILER_NAMESPACE_END
