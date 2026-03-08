@@ -15,10 +15,10 @@ PROFILER_NAMESPACE_BEGIN
 ///
 /// Contains the resolved symbol information for a single instruction pointer.
 struct SymbolizedFrame {
-    std::string function_name;  ///< Function name (demangled)
-    std::string source_file;    ///< Source file path
-    unsigned int line = 0;      ///< Line number in source file
-    bool is_inlined = false;    ///< Whether this is an inlined function
+    std::string function_name; ///< Function name (demangled)
+    std::string source_file;   ///< Source file path
+    unsigned int line = 0;     ///< Line number in source file
+    bool is_inlined = false;   ///< Whether this is an inlined function
 };
 
 /// @class Symbolizer

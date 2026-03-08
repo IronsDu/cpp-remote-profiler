@@ -19,9 +19,9 @@ PROFILER_NAMESPACE_BEGIN
 /// @enum ProfilerType
 /// @brief Types of profiling operations supported
 enum class ProfilerType {
-    CPU,          ///< CPU profiling using gperftools
-    HEAP,         ///< Heap memory profiling
-    HEAP_GROWTH   ///< Heap growth stack analysis
+    CPU,        ///< CPU profiling using gperftools
+    HEAP,       ///< Heap memory profiling
+    HEAP_GROWTH ///< Heap growth stack analysis
 };
 
 /// @struct ProfilerState
@@ -37,10 +37,10 @@ struct ProfilerState {
 /// @brief Structure to hold captured stack trace for a thread
 /// @note Uses fixed-size array for signal-safety
 struct ThreadStackTrace {
-    pid_t tid;             ///< Thread ID
-    void* addresses[64];   ///< Array of instruction pointers (fixed size for signal-safety)
-    int depth;             ///< Number of valid addresses in the array
-    bool captured;         ///< Whether the trace was successfully captured
+    pid_t tid;           ///< Thread ID
+    void* addresses[64]; ///< Array of instruction pointers (fixed size for signal-safety)
+    int depth;           ///< Number of valid addresses in the array
+    bool captured;       ///< Whether the trace was successfully captured
 };
 
 /// @struct SharedStackTrace
@@ -196,24 +196,24 @@ private:
     /// @brief Restore old signal handler
     void restoreSignalHandler();
 
-    std::string profile_dir_;                            ///< Directory for profile outputs
+    std::string profile_dir_;                               ///< Directory for profile outputs
     std::map<ProfilerType, ProfilerState> profiler_states_; ///< Current profiler states
-    mutable std::mutex mutex_;                           ///< Mutex for thread safety
+    mutable std::mutex mutex_;                              ///< Mutex for thread safety
 
     std::atomic<bool> cpu_profiling_in_progress_{false}; ///< CPU profiling concurrency control
     std::unique_ptr<Symbolizer> symbolizer_;             ///< Symbolizer instance
 
-    static std::atomic<bool> capture_in_progress_;       ///< Stack capture in progress flag
-    static SharedStackTrace* shared_stacks_;             ///< Shared stack trace array
-    static int stack_array_size_;                        ///< Size of stack array
-    static std::atomic<pid_t> excluded_tid_;             ///< Thread ID to exclude from capture
-    static std::atomic<int> completed_count_;            ///< Count of completed captures
-    static int expected_count_;                          ///< Expected number of threads to capture
-    static pid_t main_thread_id_;                        ///< PID of main thread
-    static int stack_capture_signal_;                    ///< Signal used for stack capture
-    static struct sigaction old_action_;                 ///< Saved old signal handler
-    static bool old_action_saved_;                       ///< Whether old handler was saved
-    static bool enable_signal_chaining_;                 ///< Signal chaining enabled flag
+    static std::atomic<bool> capture_in_progress_; ///< Stack capture in progress flag
+    static SharedStackTrace* shared_stacks_;       ///< Shared stack trace array
+    static int stack_array_size_;                  ///< Size of stack array
+    static std::atomic<pid_t> excluded_tid_;       ///< Thread ID to exclude from capture
+    static std::atomic<int> completed_count_;      ///< Count of completed captures
+    static int expected_count_;                    ///< Expected number of threads to capture
+    static pid_t main_thread_id_;                  ///< PID of main thread
+    static int stack_capture_signal_;              ///< Signal used for stack capture
+    static struct sigaction old_action_;           ///< Saved old signal handler
+    static bool old_action_saved_;                 ///< Whether old handler was saved
+    static bool enable_signal_chaining_;           ///< Signal chaining enabled flag
 };
 
 PROFILER_NAMESPACE_END
