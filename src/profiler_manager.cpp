@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cxxabi.h>
 #include <dirent.h>
 #include <dlfcn.h>
