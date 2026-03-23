@@ -1,4 +1,4 @@
-#include "symbolize.h"
+#include "internal/symbolize.h"
 #include <absl/debugging/symbolize.h>
 #include <algorithm>
 #include <backward.hpp>

@@ -1,4 +1,4 @@
-#include "web_resources.h"
+#include "internal/web_resources.h"
 #include <string>
 
 PROFILER_NAMESPACE_BEGIN
