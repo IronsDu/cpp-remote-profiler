@@ -1,8 +1,9 @@
 #include "profiler_manager.h"
 #include "absl/debugging/stacktrace.h"
 #include "absl/debugging/symbolize.h"
-#include "embed_flamegraph.h"
-#include "embed_pprof.h"
+#include "internal/embed_flamegraph.h"
+#include "internal/embed_pprof.h"
+#include "internal/symbolize.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>

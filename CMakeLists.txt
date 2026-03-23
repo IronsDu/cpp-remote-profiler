@@ -102,8 +102,6 @@ set(PROFILER_SOURCES
 
 set(PROFILER_HEADERS
     include/profiler_manager.h
-    include/symbolize.h
-    include/web_resources.h
     include/web_server.h
 )
 
@@ -129,6 +127,8 @@ target_include_directories(profiler_lib
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include/cpp-remote-profiler>
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
 )
 
 # Example executable

@@ -1,6 +1,6 @@
 #include "web_server.h"
+#include "internal/web_resources.h"
 #include "profiler_manager.h"
-#include "web_resources.h"
 #include <drogon/drogon.h>
 #include <fstream>
 #include <iostream>

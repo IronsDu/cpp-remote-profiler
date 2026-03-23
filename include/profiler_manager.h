@@ -4,7 +4,6 @@
 #pragma once
 
 #include "profiler_version.h"
-#include "symbolize.h"
 #include <atomic>
 #include <map>
 #include <memory>
@@ -15,6 +14,9 @@
 #include <vector>
 
 PROFILER_NAMESPACE_BEGIN
+
+// Forward declaration
+class Symbolizer;
 
 /// @enum ProfilerType
 /// @brief Types of profiling operations supported
