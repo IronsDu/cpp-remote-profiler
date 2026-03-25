@@ -64,6 +64,7 @@ find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(Backward CONFIG REQUIRED)
 find_package(absl REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
 
 # Find gperftools via pkg-config
 find_package(PkgConfig REQUIRED)
@@ -98,11 +99,15 @@ set(PROFILER_SOURCES
     src/symbolize.cpp
     src/web_resources.cpp
     src/web_server.cpp
+    src/internal/log_manager.cpp
+    src/internal/default_log_sink.cpp
 )
 
 set(PROFILER_HEADERS
     include/profiler_manager.h
     include/web_server.h
+    include/profiler/log_sink.h
+    include/profiler/logger.h
 )
 
 # Create library
@@ -116,6 +121,8 @@ target_link_libraries(profiler_lib
         absl::stacktrace
         absl::debugging_internal
         absl::demangle_internal
+        spdlog::spdlog
+        Drogon::Drogon
         pthread
         ${CMAKE_DL_LIBS}
     PUBLIC
@@ -170,6 +177,17 @@ if(REMOTE_PROFILER_BUILD_TESTS)
     )
 
     add_test(NAME FullFlowTest COMMAND test_full_flow)
+
+    # Logger 测试
+    add_executable(test_logger tests/test_logger.cpp)
+    target_link_libraries(test_logger
+        profiler_lib
+        GTest::gtest
+        GTest::gtest_main
+        pthread
+    )
+
+    add_test(NAME LoggerTest COMMAND test_logger)
     message(STATUS "Tests will be built")
 else()
     message(STATUS "Tests disabled")
@@ -197,6 +215,13 @@ if(REMOTE_PROFILER_INSTALL)
     # Install headers
     install(FILES ${PROFILER_HEADERS}
         DESTINATION include/cpp-remote-profiler
+    )
+
+    # Install profiler subdirectory headers
+    install(FILES
+        include/profiler/log_sink.h
+        include/profiler/logger.h
+        DESTINATION include/cpp-remote-profiler/profiler
     )
 
     # Install version header

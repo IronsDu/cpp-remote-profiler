@@ -3,6 +3,7 @@
 #include "absl/debugging/symbolize.h"
 #include "internal/embed_flamegraph.h"
 #include "internal/embed_pprof.h"
+#include "internal/log_macros.h"
 #include "internal/symbolize.h"
 #include <algorithm>
 #include <atomic>
@@ -56,7 +57,7 @@ ProfilerManager::ProfilerManager() {
 
     // Write embedded flamegraph.pl script to current directory
     if (!writeFlamegraphScript("./flamegraph.pl")) {
-        std::cerr << "Warning: Failed to write flamegraph.pl script" << std::endl;
+        PROFILER_WARNING("Failed to write flamegraph.pl script");
     }
 
     // Create profile directory if not exists
@@ -72,7 +73,7 @@ ProfilerManager::ProfilerManager() {
     try {
         symbolizer_ = createSymbolizer();
     } catch (const std::exception& e) {
-        std::cerr << "Failed to initialize symbolizer: " << e.what() << std::endl;
+        PROFILER_ERROR("Failed to initialize symbolizer: {}", e.what());
         // Continue without symbolizer (will fall back to addr2line)
     }
 
@@ -110,21 +111,20 @@ ProfilerManager& ProfilerManager::getInstance() {
 void ProfilerManager::setStackCaptureSignal(int signal) {
     // Check if signal is valid
     if (signal < 1 || signal > SIGRTMAX) {
-        std::cerr << "Invalid signal number: " << signal << std::endl;
+        PROFILER_ERROR("Invalid signal number: {}", signal);
         return;
     }
 
     // If handler is already installed, restore old one first
     if (old_action_saved_) {
-        std::cerr << "Warning: Signal handler already installed for signal " << stack_capture_signal_
-                  << ". Restoring before changing." << std::endl;
+        PROFILER_WARNING("Signal handler already installed for signal {}. Restoring before changing.", stack_capture_signal_);
         // Note: This won't work correctly if multiple instances exist,
         // but it's a best-effort attempt
         ProfilerManager::getInstance().restoreSignalHandler();
     }
 
     stack_capture_signal_ = signal;
-    std::cout << "Stack capture signal set to: " << signal << std::endl;
+    PROFILER_INFO("Stack capture signal set to: {}", signal);
 }
 
 int ProfilerManager::getStackCaptureSignal() {
@@ -133,7 +133,7 @@ int ProfilerManager::getStackCaptureSignal() {
 
 void ProfilerManager::setSignalChaining(bool enable) {
     enable_signal_chaining_ = enable;
-    std::cout << "Signal chaining " << (enable ? "enabled" : "disabled") << std::endl;
+    PROFILER_INFO("Signal chaining {}", enable ? "enabled" : "disabled");
 }
 
 void ProfilerManager::installSignalHandler() {
@@ -145,19 +145,19 @@ void ProfilerManager::installSignalHandler() {
     // Save old signal handler
     if (sigaction(stack_capture_signal_, &sa, &old_action_) == 0) {
         old_action_saved_ = true;
-        std::cout << "Registered signal handler for signal " << stack_capture_signal_ << std::endl;
+        PROFILER_INFO("Registered signal handler for signal {}", stack_capture_signal_);
     } else {
-        std::cerr << "Failed to register signal handler for signal " << stack_capture_signal_ << ": " << strerror(errno)
-                  << std::endl;
+        PROFILER_ERROR("Failed to register signal handler for signal {}: {}",
+                       stack_capture_signal_, strerror(errno));
     }
 }
 
 void ProfilerManager::restoreSignalHandler() {
     if (old_action_saved_) {
         if (sigaction(stack_capture_signal_, &old_action_, nullptr) == 0) {
-            std::cout << "Restored old signal handler for signal " << stack_capture_signal_ << std::endl;
+            PROFILER_INFO("Restored old signal handler for signal {}", stack_capture_signal_);
         } else {
-            std::cerr << "Failed to restore old signal handler: " << strerror(errno) << std::endl;
+            PROFILER_ERROR("Failed to restore old signal handler: {}", strerror(errno));
         }
         old_action_saved_ = false;
     }
@@ -323,16 +323,16 @@ std::string ProfilerManager::generateFlameGraph(const std::string& collapsed_fil
         << " --width=1200"
         << " " << collapsed_file << " 2>/dev/null";
 
-    std::cout << "Generating FlameGraph: " << cmd.str() << std::endl;
+    PROFILER_INFO("Generating FlameGraph: {}", cmd.str());
 
     if (!executeCommand(cmd.str(), svg_output)) {
-        std::cerr << "Failed to execute flamegraph.pl" << std::endl;
+        PROFILER_ERROR("Failed to execute flamegraph.pl");
         return R"({"error": "Failed to execute flamegraph.pl command"})";
     }
 
     // Validate output
     if (svg_output.find("<?xml") == std::string::npos && svg_output.find("<svg") == std::string::npos) {
-        std::cerr << "flamegraph.pl did not generate valid SVG" << std::endl;
+        PROFILER_ERROR("flamegraph.pl did not generate valid SVG");
         return R"({"error": "flamegraph.pl did not generate valid SVG"})";
     }
 
@@ -395,7 +395,7 @@ std::string ProfilerManager::resolveSymbolWithBackward(void* address) {
         return oss.str();
 
     } catch (const std::exception& e) {
-        std::cerr << "Error in resolveSymbolWithBackward: " << e.what() << std::endl;
+        PROFILER_ERROR("Error in resolveSymbolWithBackward: {}", e.what());
         std::ostringstream oss;
         oss << "0x" << std::hex << reinterpret_cast<unsigned long long>(address);
         return oss.str();
@@ -427,7 +427,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     }
 
     // Step 3: Wait for specified duration
-    std::cout << "Profiling for " << duration << " seconds..." << std::endl;
+    PROFILER_INFO("Profiling for {} seconds...", duration);
     sleep(duration);
 
     // Step 4: Stop profiler
@@ -452,7 +452,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     // Check output_type
     if (output_type == "flamegraph") {
         // PATH 1: Generate FlameGraph using Brendan Gregg's tool
-        std::cout << "Generating FlameGraph output..." << std::endl;
+        PROFILER_INFO("Generating FlameGraph output...");
 
         // Step 5a: Generate collapsed format using pprof --collapsed
         std::string collapsed_file = "/tmp/cpu_collapsed.prof";
@@ -460,7 +460,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         collapsed_cmd << "./pprof --collapsed " << exe_path << " " << profile_path << " > " << collapsed_file
                       << " 2>&1";
 
-        std::cout << "Running collapsed command: " << collapsed_cmd.str() << std::endl;
+        PROFILER_DEBUG("Running collapsed command: {}", collapsed_cmd.str());
 
         std::string collapsed_output;
         if (!executeCommand(collapsed_cmd.str(), collapsed_output)) {
@@ -485,11 +485,11 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         collapsed_in.close();
 
         if (!has_data) {
-            std::cout << "pprof --collapsed produced no data" << std::endl;
+            PROFILER_WARNING("pprof --collapsed produced no data");
             return R"({"error": "pprof --collapsed produced no data"})";
         }
 
-        std::cout << "Collapsed stacks written to " << collapsed_file << std::endl;
+        PROFILER_INFO("Collapsed stacks written to {}", collapsed_file);
 
         // Step 5b: Generate FlameGraph from collapsed format
         svg_output = generateFlameGraph(collapsed_file, "CPU Flame Graph");
@@ -502,7 +502,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
 
     } else {
         // PATH 2: Default - Generate pprof SVG (existing behavior)
-        std::cout << "Generating pprof SVG output..." << std::endl;
+        PROFILER_INFO("Generating pprof SVG output...");
 
         // Build pprof command (使用可执行文件的绝对路径进行符号化)
         std::ostringstream cmd;
@@ -527,7 +527,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
             }
         }
 
-        std::cout << "pprof SVG generated successfully!" << std::endl;
+        PROFILER_INFO("pprof SVG generated successfully!");
 
         // 后处理 SVG：添加 viewBox 以支持正确的缩放和显示
         // 查找 <svg> 标签并添加 viewBox 属性
@@ -545,7 +545,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
 
                     // 在 <svg> 标签内插入 viewBox 属性
                     svg_output.insert(svg_tag_end, viewbox_attr);
-                    std::cout << "Added viewBox to SVG for proper scaling" << std::endl;
+                    PROFILER_DEBUG("Added viewBox to SVG for proper scaling");
                 }
             }
         }
@@ -557,13 +557,13 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
 std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string& output_type) {
     std::string profile_prefix = profile_dir_ + "/heap_analyze";
 
-    std::cout << "=== Starting Heap Profile Analysis ===" << std::endl;
-    std::cout << "Profile prefix: " << profile_prefix << std::endl;
-    std::cout << "Duration: " << duration << " seconds" << std::endl;
+    PROFILER_INFO("=== Starting Heap Profile Analysis ===");
+    PROFILER_INFO("Profile prefix: {}", profile_prefix);
+    PROFILER_INFO("Duration: {} seconds", duration);
 
     // Step 1: Stop any existing heap profiler
     if (profiler_states_[ProfilerType::HEAP].is_running) {
-        std::cout << "Stopping existing heap profiler..." << std::endl;
+        PROFILER_INFO("Stopping existing heap profiler...");
         stopHeapProfiler();
         usleep(100000);
     }
@@ -577,13 +577,13 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     setenv("HEAP_PROFILE_ALLOCATION_INTERVAL", "1048576", 1); // 1MB
     setenv("HEAP_PROFILE_INUSE_INTERVAL", "524288", 1);       // 512KB
 
-    std::cout << "Environment variables set" << std::endl;
+    PROFILER_DEBUG("Environment variables set");
 
     // Step 3: Start Heap profiler - NOTE: HeapProfilerStart might not work as expected
     // gperftools heap profiler works primarily through environment variables
-    std::cout << "Calling HeapProfilerStart()..." << std::endl;
+    PROFILER_DEBUG("Calling HeapProfilerStart()...");
     HeapProfilerStart(profile_prefix.c_str());
-    std::cout << "HeapProfilerStart() completed" << std::endl;
+    PROFILER_DEBUG("HeapProfilerStart() completed");
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -598,9 +598,9 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     std::atomic<bool> keep_running(true);
     std::atomic<size_t> allocations_count(0);
 
-    std::cout << "Starting memory allocation thread..." << std::endl;
+    PROFILER_DEBUG("Starting memory allocation thread...");
     std::thread memory_thread([&keep_running, &allocations_count]() {
-        std::cout << "Memory thread started" << std::endl;
+        PROFILER_DEBUG("Memory thread started");
         int iteration = 0;
         while (keep_running && iteration < 100) { // 限制最大迭代次数
             // 进行各种内存分配 - 直接分配不释放，确保 heap profiler 能采样
@@ -622,29 +622,28 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
             iteration++;
 
             if (iteration % 10 == 0) {
-                std::cout << "Memory thread: " << iteration << " iterations, " << allocations_count << " allocations"
-                          << std::endl;
+                PROFILER_TRACE("Memory thread: {} iterations, {} allocations", iteration, allocations_count.load());
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        std::cout << "Memory thread ending after " << iteration << " iterations" << std::endl;
+        PROFILER_DEBUG("Memory thread ending after {} iterations", iteration);
     });
 
     // Step 5: Wait for specified duration
-    std::cout << "Heap profiling for " << duration << " seconds..." << std::endl;
+    PROFILER_INFO("Heap profiling for {} seconds...", duration);
     sleep(duration);
-    std::cout << "Sleep completed, stopping profiler..." << std::endl;
+    PROFILER_DEBUG("Sleep completed, stopping profiler...");
 
     // Step 6: Stop profiler
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        std::cout << "Setting keep_running = false..." << std::endl;
+        PROFILER_DEBUG("Setting keep_running = false...");
         keep_running = false;
 
-        std::cout << "Calling HeapProfilerStop()..." << std::endl;
+        PROFILER_DEBUG("Calling HeapProfilerStop()...");
         HeapProfilerStop();
-        std::cout << "HeapProfilerStop() completed" << std::endl;
+        PROFILER_DEBUG("HeapProfilerStop() completed");
 
         auto now = std::chrono::system_clock::now();
         auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
@@ -654,30 +653,29 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     }
 
     // 等待内存分配线程结束
-    std::cout << "Waiting for memory thread to join..." << std::endl;
+    PROFILER_DEBUG("Waiting for memory thread to join...");
     if (memory_thread.joinable()) {
         memory_thread.join();
     }
-    std::cout << "Memory thread joined. Total allocations: " << allocations_count << std::endl;
+    PROFILER_INFO("Memory thread joined. Total allocations: {}", allocations_count.load());
 
     // Step 7: Check if heap files were generated
-    std::cout << "Searching for heap profile files in " << profile_dir_ << std::endl;
+    PROFILER_INFO("Searching for heap profile files in {}", profile_dir_);
     std::string latest_heap_file = findLatestHeapProfile(profile_dir_);
 
     if (latest_heap_file.empty()) {
-        std::cout << "No .heap file found. Listing all files in directory:" << std::endl;
+        PROFILER_WARNING("No .heap file found. Listing all files in directory:");
         std::string ls_cmd = "ls -la " + profile_dir_ + "/";
         [[maybe_unused]] int result = system(ls_cmd.c_str());
 
-        std::cout << "\nWARNING: gperftools heap profiler requires special configuration." << std::endl;
-        std::cout << "Heap profiling needs to be enabled at program startup via HEAPPROFILE environment variable."
-                  << std::endl;
-        std::cout << "\nFor now, returning a helpful error message." << std::endl;
+        PROFILER_WARNING("gperftools heap profiler requires special configuration.");
+        PROFILER_WARNING("Heap profiling needs to be enabled at program startup via HEAPPROFILE environment variable.");
+        PROFILER_WARNING("For now, returning a helpful error message.");
 
         return R"({"error": "Heap profiling requires the program to be started with HEAPPROFILE environment variable set. Please restart the program with: HEAPPROFILE=/tmp/cpp_profiler/heap ./profiler_example. Alternatively, use CPU profiling which works without special configuration."})";
     }
 
-    std::cout << "Using heap profile: " << latest_heap_file << std::endl;
+    PROFILER_INFO("Using heap profile: {}", latest_heap_file);
 
     // Step 9: Generate SVG using pprof or flamegraph.pl
     std::string svg_output;
@@ -686,7 +684,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     // Check output_type
     if (output_type == "flamegraph") {
         // PATH 1: Generate FlameGraph using Brendan Gregg's tool
-        std::cout << "Generating Heap FlameGraph..." << std::endl;
+        PROFILER_INFO("Generating Heap FlameGraph...");
 
         // Step 9a: Generate collapsed format using pprof --collapsed
         std::string collapsed_file = "/tmp/heap_collapsed.prof";
@@ -694,7 +692,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
         collapsed_cmd << "./pprof --collapsed " << exe_path << " " << latest_heap_file << " > " << collapsed_file
                       << " 2>&1";
 
-        std::cout << "Running collapsed command: " << collapsed_cmd.str() << std::endl;
+        PROFILER_DEBUG("Running collapsed command: {}", collapsed_cmd.str());
 
         std::string collapsed_output;
         if (!executeCommand(collapsed_cmd.str(), collapsed_output)) {
@@ -719,11 +717,11 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
         collapsed_in.close();
 
         if (!has_data) {
-            std::cout << "pprof --collapsed produced no data" << std::endl;
+            PROFILER_WARNING("pprof --collapsed produced no data");
             return R"({"error": "pprof --collapsed produced no data"})";
         }
 
-        std::cout << "Collapsed stacks written to " << collapsed_file << std::endl;
+        PROFILER_INFO("Collapsed stacks written to {}", collapsed_file);
 
         // Step 9b: Generate FlameGraph from collapsed format
         svg_output = generateFlameGraph(collapsed_file, "Heap Flame Graph");
@@ -734,30 +732,30 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
             return svg_output;
         }
 
-        std::cout << "Heap FlameGraph generated successfully! Size: " << svg_output.length() << std::endl;
+        PROFILER_INFO("Heap FlameGraph generated successfully! Size: {}", svg_output.length());
 
     } else {
         // PATH 2: Default - Generate pprof SVG (existing behavior)
-        std::cout << "Generating Heap pprof SVG..." << std::endl;
+        PROFILER_INFO("Generating Heap pprof SVG...");
 
         // Build pprof command (使用可执行文件的绝对路径进行符号化)
         std::ostringstream cmd;
         cmd << "./pprof --svg " << exe_path << " " << latest_heap_file << " 2>/dev/null";
 
-        std::cout << "Command: " << cmd.str() << std::endl;
+        PROFILER_DEBUG("Command: {}", cmd.str());
 
         if (!executeCommand(cmd.str(), svg_output)) {
-            std::cout << "pprof command failed" << std::endl;
+            PROFILER_ERROR("pprof command failed");
             return R"({"error": "Failed to execute pprof command"})";
         }
 
         // Check if SVG was generated
         if (svg_output.find("<?xml") == std::string::npos && svg_output.find("<svg") == std::string::npos) {
-            std::cout << "pprof did not return SVG. Output: " << svg_output.substr(0, 200) << std::endl;
+            PROFILER_ERROR("pprof did not return SVG. Output: {}", svg_output.substr(0, 200));
             return R"({"error": "pprof did not generate valid SVG. Output: )" + svg_output + R"("})";
         }
 
-        std::cout << "Heap pprof SVG generated successfully! Size: " << svg_output.length() << std::endl;
+        PROFILER_INFO("Heap pprof SVG generated successfully! Size: {}", svg_output.length());
 
         // 后处理 SVG：添加 viewBox 以支持正确的缩放和显示
         size_t svg_start = svg_output.find("<svg");
@@ -768,7 +766,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
                 if (svg_tag.find("viewBox") == std::string::npos) {
                     std::string viewbox_attr = " viewBox=\"0 -1000 2000 1000\"";
                     svg_output.insert(svg_tag_end, viewbox_attr);
-                    std::cout << "Added viewBox to heap SVG for proper scaling" << std::endl;
+                    PROFILER_DEBUG("Added viewBox to heap SVG for proper scaling");
                 }
             }
         }
@@ -780,7 +778,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
 std::string ProfilerManager::findLatestHeapProfile(const std::string& dir) {
     DIR* dp = opendir(dir.c_str());
     if (!dp) {
-        std::cerr << "Failed to open directory: " << dir << std::endl;
+        PROFILER_ERROR("Failed to open directory: {}", dir);
         return "";
     }
 
@@ -813,14 +811,14 @@ std::string ProfilerManager::findLatestHeapProfile(const std::string& dir) {
 std::string ProfilerManager::getRawCPUProfile(int seconds) {
     // Validate seconds parameter
     if (seconds < 1 || seconds > 300) {
-        std::cerr << "Invalid seconds parameter: " << seconds << ". Must be between 1 and 300." << std::endl;
+        PROFILER_ERROR("Invalid seconds parameter: {}. Must be between 1 and 300.", seconds);
         return "";
     }
 
     // Check concurrency control
     bool expected = false;
     if (!cpu_profiling_in_progress_.compare_exchange_strong(expected, true)) {
-        std::cerr << "CPU profiling already in progress. Only one request at a time." << std::endl;
+        PROFILER_ERROR("CPU profiling already in progress. Only one request at a time.");
         return "";
     }
 
@@ -838,16 +836,16 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
 
     // Stop any existing CPU profiler first
     if (profiler_states_[ProfilerType::CPU].is_running) {
-        std::cout << "Stopping existing CPU profiler..." << std::endl;
+        PROFILER_INFO("Stopping existing CPU profiler...");
         ProfilerStop();
         profiler_states_[ProfilerType::CPU].is_running = false;
         usleep(100000); // 100ms to ensure file is written
     }
 
     // Start CPU profiler
-    std::cout << "Starting CPU profiler for " << seconds << " seconds..." << std::endl;
+    PROFILER_INFO("Starting CPU profiler for {} seconds...", seconds);
     if (!ProfilerStart(profile_path.c_str())) {
-        std::cerr << "Failed to start CPU profiler" << std::endl;
+        PROFILER_ERROR("Failed to start CPU profiler");
         return "";
     }
 
@@ -860,7 +858,7 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
     sleep(seconds);
 
     // Stop profiler
-    std::cout << "Stopping CPU profiler..." << std::endl;
+    PROFILER_INFO("Stopping CPU profiler...");
     ProfilerStop();
 
     now = std::chrono::system_clock::now();
@@ -874,7 +872,7 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
     // Read profile file
     std::ifstream file(profile_path, std::ios::binary);
     if (!file.is_open()) {
-        std::cerr << "Failed to open profile file: " << profile_path << std::endl;
+        PROFILER_ERROR("Failed to open profile file: {}", profile_path);
         return "";
     }
 
@@ -891,7 +889,7 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
 
     file.close();
 
-    std::cout << "Profile data size: " << profile_data.size() << " bytes" << std::endl;
+    PROFILER_INFO("Profile data size: {} bytes", profile_data.size());
     return profile_data;
 }
 
@@ -904,12 +902,11 @@ std::string ProfilerManager::getRawHeapSample() {
     MallocExtension::instance()->GetHeapSample(&heap_sample);
 
     if (heap_sample.empty()) {
-        std::cerr << "Failed to get heap sample. "
-                  << "Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set." << std::endl;
+        PROFILER_ERROR("Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.");
         return "";
     }
 
-    std::cout << "Heap sample size: " << heap_sample.size() << " bytes" << std::endl;
+    PROFILER_INFO("Heap sample size: {} bytes", heap_sample.size());
     return heap_sample;
 }
 
@@ -922,12 +919,11 @@ std::string ProfilerManager::getRawHeapGrowthStacks() {
     MallocExtension::instance()->GetHeapGrowthStacks(&heap_growth_stacks);
 
     if (heap_growth_stacks.empty()) {
-        std::cerr << "Failed to get heap growth stacks. "
-                  << "No heap growth data available." << std::endl;
+        PROFILER_ERROR("Failed to get heap growth stacks. No heap growth data available.");
         return "";
     }
 
-    std::cout << "Heap growth stacks size: " << heap_growth_stacks.size() << " bytes" << std::endl;
+    PROFILER_INFO("Heap growth stacks size: {} bytes", heap_growth_stacks.size());
     return heap_growth_stacks;
 }
 
@@ -937,7 +933,7 @@ std::string ProfilerManager::getThreadStacks() {
     // Open /proc/self/task directory to list all threads
     DIR* task_dir = opendir("/proc/self/task");
     if (!task_dir) {
-        std::cerr << "Failed to open /proc/self/task" << std::endl;
+        PROFILER_ERROR("Failed to open /proc/self/task");
         return "";
     }
 
@@ -1048,7 +1044,7 @@ std::string ProfilerManager::getThreadStacks() {
     result << "Total threads: " << thread_count << "\n";
 
     std::string output = result.str();
-    std::cout << "Thread stacks collected, size: " << output.size() << " bytes" << std::endl;
+    PROFILER_INFO("Thread stacks collected, size: {} bytes", output.size());
 
     return output;
 }
@@ -1130,7 +1126,7 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
     pid_t max_tid = 0;
     DIR* task_dir = opendir("/proc/self/task");
     if (!task_dir) {
-        std::cerr << "Failed to open /proc/self/task" << std::endl;
+        PROFILER_ERROR("Failed to open /proc/self/task");
         return result;
     }
 
@@ -1148,7 +1144,7 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
     }
     closedir(task_dir);
 
-    std::cout << "Found " << tids.size() << " threads, max_tid = " << max_tid << std::endl;
+    PROFILER_INFO("Found {} threads, max_tid = {}", tids.size(), max_tid);
 
     // 2. Allocate array based on max_tid (tid as direct index)
     int array_size = max_tid + 1;
@@ -1158,7 +1154,7 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
         (SharedStackTrace*)mmap(nullptr, shared_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
     if (temp_stacks == MAP_FAILED) {
-        std::cerr << "Failed to allocate shared memory for stack traces" << std::endl;
+        PROFILER_ERROR("Failed to allocate shared memory for stack traces");
         return result;
     }
 
@@ -1214,7 +1210,7 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
         }
     }
 
-    std::cout << "Sent signal to " << signals_sent << " threads (" << signals_failed << " failed)" << std::endl;
+    PROFILER_INFO("Sent signal to {} threads ({} failed)", signals_sent, signals_failed);
 
     // Set expected count based on ACTUAL signals sent (not original thread count)
     // This handles the case where threads exit between enumerating and sending signals
@@ -1222,7 +1218,7 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
 
     // If no threads were signaled, nothing to do
     if (expected_count_ == 0) {
-        std::cout << "No threads to capture (all may have exited)" << std::endl;
+        PROFILER_INFO("No threads to capture (all may have exited)");
         capture_in_progress_.store(false, std::memory_order_release);
         excluded_tid_.store(0, std::memory_order_release);
         munmap(temp_stacks, shared_size);
@@ -1241,7 +1237,7 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
         int completed = completed_count_.load(std::memory_order_acquire);
 
         if (completed >= expected_count_) {
-            std::cout << "All threads completed stack capture in " << elapsed << "ms" << std::endl;
+            PROFILER_INFO("All threads completed stack capture in {}ms", elapsed);
             break;
         }
 
@@ -1251,8 +1247,7 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
 
     if (elapsed >= MAX_WAIT_MS) {
         int completed = completed_count_.load(std::memory_order_acquire);
-        std::cout << "Warning: Timeout waiting for threads to complete. "
-                  << "Expected " << expected_count_ << ", got " << completed << std::endl;
+        PROFILER_WARNING("Timeout waiting for threads to complete. Expected {}, got {}", expected_count_, completed);
     }
 
     // Now safe to clear flags
@@ -1282,8 +1277,7 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
         }
     }
 
-    std::cout << "Collected " << collected << " thread stacks from " << array_size << " slots (" << tids.size()
-              << " threads total)" << std::endl;
+    PROFILER_INFO("Collected {} thread stacks from {} slots ({} threads total)", collected, array_size, tids.size());
 
     // 7. Clean up
     munmap(temp_stacks, shared_size);
@@ -1327,7 +1321,7 @@ std::string ProfilerManager::getThreadCallStacks() {
     }
 
     std::string output = result.str();
-    std::cout << "Thread callstacks collected, size: " << output.size() << " bytes" << std::endl;
+    PROFILER_INFO("Thread callstacks collected, size: {} bytes", output.size());
 
     return output;
 }
