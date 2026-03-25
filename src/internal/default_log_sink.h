@@ -18,11 +18,7 @@ public:
     DefaultLogSink();
     ~DefaultLogSink() override;
 
-    void log(LogLevel level,
-             const char* file,
-             int line,
-             const char* function,
-             const char* message) override;
+    void log(LogLevel level, const char* file, int line, const char* function, const char* message) override;
 
     void flush() override;
 
@@ -35,6 +31,6 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace internal
+} // namespace internal
 
 PROFILER_NAMESPACE_END

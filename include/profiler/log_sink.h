@@ -11,12 +11,12 @@ PROFILER_NAMESPACE_BEGIN
 /// @enum LogLevel
 /// @brief Log severity levels
 enum class LogLevel {
-    Trace,    ///< Detailed debug information
-    Debug,    ///< Debug information
-    Info,     ///< General information
-    Warning,  ///< Warning messages
-    Error,    ///< Error messages
-    Fatal     ///< Fatal errors (typically terminates program)
+    Trace,   ///< Detailed debug information
+    Debug,   ///< Debug information
+    Info,    ///< General information
+    Warning, ///< Warning messages
+    Error,   ///< Error messages
+    Fatal    ///< Fatal errors (typically terminates program)
 };
 
 /// @class LogSink
@@ -49,11 +49,7 @@ public:
     /// @param line Source line number
     /// @param function Function name (may be nullptr)
     /// @param message Formatted log message
-    virtual void log(LogLevel level,
-                     const char* file,
-                     int line,
-                     const char* function,
-                     const char* message) = 0;
+    virtual void log(LogLevel level, const char* file, int line, const char* function, const char* message) = 0;
 
     /// @brief Flush any buffered log output
     /// @note Default implementation does nothing

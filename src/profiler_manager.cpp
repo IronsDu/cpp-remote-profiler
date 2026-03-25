@@ -117,7 +117,8 @@ void ProfilerManager::setStackCaptureSignal(int signal) {
 
     // If handler is already installed, restore old one first
     if (old_action_saved_) {
-        PROFILER_WARNING("Signal handler already installed for signal {}. Restoring before changing.", stack_capture_signal_);
+        PROFILER_WARNING("Signal handler already installed for signal {}. Restoring before changing.",
+                         stack_capture_signal_);
         // Note: This won't work correctly if multiple instances exist,
         // but it's a best-effort attempt
         ProfilerManager::getInstance().restoreSignalHandler();
@@ -147,8 +148,7 @@ void ProfilerManager::installSignalHandler() {
         old_action_saved_ = true;
         PROFILER_INFO("Registered signal handler for signal {}", stack_capture_signal_);
     } else {
-        PROFILER_ERROR("Failed to register signal handler for signal {}: {}",
-                       stack_capture_signal_, strerror(errno));
+        PROFILER_ERROR("Failed to register signal handler for signal {}: {}", stack_capture_signal_, strerror(errno));
     }
 }
 

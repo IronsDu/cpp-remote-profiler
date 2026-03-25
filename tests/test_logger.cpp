@@ -1,11 +1,11 @@
 /// @file test_logger.cpp
 /// @brief Tests for the custom logger sink functionality
 
+#include <atomic>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <profiler/log_sink.h>
 #include <profiler/logger.h>
-#include <atomic>
-#include <mutex>
 #include <vector>
 
 PROFILER_NAMESPACE_BEGIN
@@ -21,19 +21,9 @@ public:
         std::string message;
     };
 
-    void log(LogLevel level,
-             const char* file,
-             int line,
-             const char* function,
-             const char* message) override {
+    void log(LogLevel level, const char* file, int line, const char* function, const char* message) override {
         std::lock_guard<std::mutex> lock(mutex_);
-        entries_.push_back(LogEntry{
-            level,
-            file ? file : "",
-            line,
-            function ? function : "",
-            message ? message : ""
-        });
+        entries_.push_back(LogEntry{level, file ? file : "", line, function ? function : "", message ? message : ""});
         log_count_++;
     }
 
@@ -116,7 +106,7 @@ TEST_F(LoggerTest, LogLevelFiltering) {
 
     // Log messages at different levels directly to sink
     // (The filtering happens in LogManager, but we can verify the level is set)
-    EXPECT_TRUE(true);  // Level is set
+    EXPECT_TRUE(true); // Level is set
 
     // Reset to trace for other tests
     setLogLevel(LogLevel::Trace);
@@ -177,10 +167,8 @@ TEST_F(LoggerTest, ThreadSafety) {
     for (int t = 0; t < num_threads; ++t) {
         threads.emplace_back([this, t, messages_per_thread]() {
             for (int i = 0; i < messages_per_thread; ++i) {
-                mock_sink_->log(LogLevel::Info, "thread_test.cpp",
-                               t * messages_per_thread + i,
-                               "threadFunc",
-                               ("Thread " + std::to_string(t) + " message " + std::to_string(i)).c_str());
+                mock_sink_->log(LogLevel::Info, "thread_test.cpp", t * messages_per_thread + i, "threadFunc",
+                                ("Thread " + std::to_string(t) + " message " + std::to_string(i)).c_str());
             }
         });
     }

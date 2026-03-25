@@ -14,9 +14,7 @@ LogManager& LogManager::instance() {
     return instance;
 }
 
-LogManager::LogManager()
-    : sink_(std::make_shared<DefaultLogSink>()) {
-}
+LogManager::LogManager() : sink_(std::make_shared<DefaultLogSink>()) {}
 
 void LogManager::setSink(std::shared_ptr<LogSink> sink) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -45,15 +43,11 @@ bool LogManager::shouldLog(LogLevel level) const {
     return static_cast<int>(level) >= static_cast<int>(level_.load(std::memory_order_relaxed));
 }
 
-void logMessage(LogLevel level,
-                const char* file,
-                int line,
-                const char* function,
-                std::string&& message) {
+void logMessage(LogLevel level, const char* file, int line, const char* function, std::string&& message) {
     LogManager::instance().sink()->log(level, file, line, function, message.c_str());
 }
 
-}  // namespace internal
+} // namespace internal
 
 // Implementation of public API functions (in profiler namespace)
 void setSink(std::shared_ptr<LogSink> sink) {

@@ -46,12 +46,8 @@ private:
 };
 
 /// @brief Internal function to write a log message (fmt-style formatting)
-void logMessage(LogLevel level,
-                const char* file,
-                int line,
-                const char* function,
-                std::string&& message);
+void logMessage(LogLevel level, const char* file, int line, const char* function, std::string&& message);
 
-}  // namespace internal
+} // namespace internal
 
 PROFILER_NAMESPACE_END
