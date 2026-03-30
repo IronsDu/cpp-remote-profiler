@@ -15,7 +15,99 @@
 
 ## 核心架构
 
-### 1. 两种使用场景
+### 1. 日志系统设计
+
+#### 设计目标
+- **可扩展性**: 允许用户注入自定义日志 sink，集成到应用的日志系统
+- **零依赖默认**: 默认使用 spdlog 输出到 stderr，无需配置即可使用
+- **线程安全**: 支持多线程并发日志输出
+- **fmt 风格格式化**: 使用 `{}` 占位符，类型安全
+
+#### 架构设计
+```
+用户代码
+    ↓
+PROFILER_INFO("msg: {}", value)
+    ↓
+LogManager (单例)
+    ↓
+    ├── DefaultLogSink (默认) → spdlog → stderr
+    └── CustomLogSink (用户注入) → 应用日志系统
+```
+
+#### 公共 API
+```cpp
+// include/profiler/log_sink.h
+namespace profiler {
+
+enum class LogLevel { Trace, Debug, Info, Warning, Error, Fatal };
+
+class LogSink {
+public:
+    virtual ~LogSink() = default;
+    virtual void log(LogLevel level,
+                     const char* file, int line,
+                     const char* function,
+                     const char* message) = 0;
+    virtual void flush() {}
+};
+
+}  // namespace profiler
+
+// include/profiler/logger.h
+namespace profiler {
+
+void setSink(std::shared_ptr<LogSink> sink);
+void setLogLevel(LogLevel level);
+
+}  // namespace profiler
+```
+
+#### 内部日志宏
+```cpp
+// src/internal/log_macros.h
+#define PROFILER_INFO(fmt_str, ...)     // Info 级别
+#define PROFILER_DEBUG(fmt_str, ...)    // Debug 级别
+#define PROFILER_WARNING(fmt_str, ...)  // Warning 级别
+#define PROFILER_ERROR(fmt_str, ...)    // Error 级别
+```
+
+#### 用户集成示例
+```cpp
+#include <profiler/log_sink.h>
+#include <profiler/logger.h>
+
+// 1. 自定义 sink 集成到应用日志
+class MyAppLogSink : public profiler::LogSink {
+    void log(profiler::LogLevel level, const char* file, int line,
+             const char* function, const char* message) override {
+        // 转发到应用的日志系统
+        MY_APP_LOG(level, "[Profiler] {}:{} - {}", file, line, message);
+    }
+};
+
+// 2. 设置自定义 sink
+profiler::setSink(std::make_shared<MyAppLogSink>());
+
+// 3. 可选：调整日志级别
+profiler::setLogLevel(profiler::LogLevel::Debug);
+```
+
+#### 文件结构
+```
+include/profiler/
+├── log_sink.h    # LogSink 接口 + LogLevel 枚举
+└── logger.h      # setSink() + setLogLevel()
+
+src/internal/
+├── log_manager.h         # 内部状态管理
+├── log_manager.cpp
+├── default_log_sink.h    # 默认实现（基于 spdlog）
+├── default_log_sink.cpp
+└── log_macros.h          # 内部日志宏
+```
+
+### 2. 两种使用场景
 
 #### 场景 1: pprof 工具访问（标准模式）
 ```
