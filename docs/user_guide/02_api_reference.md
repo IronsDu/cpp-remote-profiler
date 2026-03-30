@@ -5,6 +5,7 @@
 ## 目录
 - [ProfilerManager](#profilermanager)
 - [类型定义](#类型定义)
+- [日志系统 API](#日志系统-api)
 - [CPU Profiling API](#cpu-profiling-api)
 - [Heap Profiling API](#heap-profiling-api)
 - [线程堆栈 API](#线程堆栈-api)
@@ -71,6 +72,211 @@ struct ThreadStackTrace {
     int depth;              // 堆栈深度
     bool captured;          // 是否成功捕获
 };
+```
+
+---
+
+## 日志系统 API
+
+profiler 库提供可配置的日志系统，允许用户将 profiler 的日志集成到自己的日志系统中。
+
+### LogLevel
+
+日志级别枚举。
+
+```cpp
+enum class LogLevel {
+    Trace,    // 详细调试信息
+    Debug,    // 调试信息
+    Info,     // 一般信息（默认级别）
+    Warning,  // 警告信息
+    Error,    // 错误信息
+    Fatal     // 致命错误
+};
+```
+
+---
+
+### LogSink
+
+日志输出接口，用户可继承此类实现自定义日志输出。
+
+```cpp
+class LogSink {
+public:
+    virtual ~LogSink() = default;
+
+    /// @brief 写入日志消息
+    /// @param level 日志级别
+    /// @param file 源文件名（可能为 nullptr）
+    /// @param line 源行号
+    /// @param function 函数名（可能为 nullptr）
+    /// @param message 格式化后的日志消息
+    virtual void log(LogLevel level,
+                     const char* file,
+                     int line,
+                     const char* function,
+                     const char* message) = 0;
+
+    /// @brief 刷新缓冲区（可选实现）
+    virtual void flush() {}
+};
+```
+
+**说明**:
+- 实现自定义 sink 后，通过 `setSink()` 注入到 profiler
+- 设置自定义 sink 后，默认的 stderr 输出将被替换
+- 所有参数的生命周期仅在 `log()` 调用期间有效，如需保留请复制
+
+---
+
+### setSink
+
+设置自定义日志 sink。
+
+```cpp
+void setSink(std::shared_ptr<LogSink> sink);
+```
+
+**参数**:
+- `sink`: 自定义 LogSink 的 shared_ptr，传 `nullptr` 恢复默认 sink
+
+**说明**:
+- 设置后，profiler 的所有日志将输出到自定义 sink
+- 默认 sink 输出到 stderr（使用 spdlog）
+- 设置 `nullptr` 可恢复默认行为
+
+**示例**:
+```cpp
+#include <profiler/log_sink.h>
+#include <profiler/logger.h>
+
+// 自定义 sink：集成到应用日志系统
+class MyAppLogSink : public profiler::LogSink {
+public:
+    void log(profiler::LogLevel level, const char* file, int line,
+             const char* function, const char* message) override {
+        // 转发到应用的日志系统
+        switch (level) {
+            case profiler::LogLevel::Error:
+                MY_APP_ERROR("[Profiler] {}:{} - {}", file, line, message);
+                break;
+            case profiler::LogLevel::Warning:
+                MY_APP_WARN("[Profiler] {}:{} - {}", file, line, message);
+                break;
+            default:
+                MY_APP_INFO("[Profiler] {}:{} - {}", file, line, message);
+                break;
+        }
+    }
+};
+
+// 设置自定义 sink
+profiler::setSink(std::make_shared<MyAppLogSink>());
+
+// 恢复默认 sink
+profiler::setSink(nullptr);
+```
+
+---
+
+### setLogLevel
+
+设置最小日志级别。
+
+```cpp
+void setLogLevel(LogLevel level);
+```
+
+**参数**:
+- `level`: 最小日志级别，低于此级别的消息将被过滤
+
+**说明**:
+- 默认级别为 `LogLevel::Info`
+- 日志级别从低到高：Trace < Debug < Info < Warning < Error < Fatal
+
+**示例**:
+```cpp
+#include <profiler/logger.h>
+
+// 启用调试日志
+profiler::setLogLevel(profiler::LogLevel::Debug);
+
+// 只显示错误和致命错误
+profiler::setLogLevel(profiler::LogLevel::Error);
+
+// 显示所有日志（包括 Trace）
+profiler::setLogLevel(profiler::LogLevel::Trace);
+```
+
+---
+
+### 完整示例：集成到 spdlog
+
+```cpp
+#include <profiler/log_sink.h>
+#include <profiler/logger.h>
+#include <spdlog/spdlog.h>
+
+class SpdlogSink : public profiler::LogSink {
+public:
+    void log(profiler::LogLevel level, const char* file, int line,
+             const char* function, const char* message) override {
+        // 映射日志级别
+        spdlog::level::level_enum spdlog_level;
+        switch (level) {
+            case profiler::LogLevel::Trace:    spdlog_level = spdlog::level::trace; break;
+            case profiler::LogLevel::Debug:    spdlog_level = spdlog::level::debug; break;
+            case profiler::LogLevel::Info:     spdlog_level = spdlog::level::info; break;
+            case profiler::LogLevel::Warning:  spdlog_level = spdlog::level::warn; break;
+            case profiler::LogLevel::Error:    spdlog_level = spdlog::level::err; break;
+            case profiler::LogLevel::Fatal:    spdlog_level = spdlog::level::critical; break;
+        }
+
+        // 输出到 spdlog
+        spdlog::log(spdlog::level::info, "[Profiler] {}:{} - {}", file, line, message);
+    }
+
+    void flush() override {
+        spdlog::default_logger()->flush();
+    }
+};
+
+int main() {
+    // 配置 spdlog
+    spdlog::set_level(spdlog::level::debug);
+    spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
+
+    // 集成 profiler 日志到 spdlog
+    profiler::setSink(std::make_shared<SpdlogSink>());
+    profiler::setLogLevel(profiler::LogLevel::Debug);
+
+    // 使用 profiler...
+}
+```
+
+---
+
+### 完整示例：完全禁用日志
+
+```cpp
+#include <profiler/log_sink.h>
+#include <profiler/logger.h>
+
+// 空 sink：丢弃所有日志
+class NullSink : public profiler::LogSink {
+public:
+    void log(profiler::LogLevel, const char*, int,
+             const char*, const char*) override {
+        // 什么都不做
+    }
+};
+
+// 方法 1：使用空 sink
+profiler::setSink(std::make_shared<NullSink>());
+
+// 方法 2：设置日志级别为 Fatal（只显示致命错误）
+profiler::setLogLevel(profiler::LogLevel::Fatal);
 ```
 
 ---
