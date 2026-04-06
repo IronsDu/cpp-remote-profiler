@@ -1,5 +1,5 @@
 /// @file default_log_sink.h
-/// @brief Default log sink implementation using spdlog
+/// @brief Default log sink implementation using std::cout/std::cerr
 
 #pragma once
 
@@ -12,7 +12,7 @@ PROFILER_NAMESPACE_BEGIN
 namespace internal {
 
 /// @class DefaultLogSink
-/// @brief Default log sink that outputs to stderr using spdlog
+/// @brief Default log sink that outputs to stdout/stderr
 class DefaultLogSink : public LogSink {
 public:
     DefaultLogSink();
@@ -27,8 +27,7 @@ public:
 
 private:
     std::mutex mutex_;
-    class Impl;
-    std::unique_ptr<Impl> impl_;
+    LogLevel min_level_ = LogLevel::Info;
 };
 
 } // namespace internal
