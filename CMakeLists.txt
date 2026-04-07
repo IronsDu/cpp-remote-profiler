@@ -105,6 +105,7 @@ message(STATUS "Profiler version namespace: ${PROFILER_VERSION_NAMESPACE}")
 set(PROFILER_CORE_SOURCES
     src/profiler_manager.cpp
     src/symbolize.cpp
+    src/http_handlers.cpp
     src/internal/log_manager.cpp
     src/internal/default_log_sink.cpp
 )
@@ -113,7 +114,7 @@ set(PROFILER_CORE_HEADERS
     include/profiler_manager.h
     include/profiler/log_sink.h
     include/profiler/logger.h
-    include/profiler/http_server.h
+    include/profiler/http_handlers.h
 )
 
 add_library(profiler_core ${PROFILER_CORE_SOURCES} ${PROFILER_CORE_HEADERS})
@@ -151,12 +152,10 @@ if(REMOTE_PROFILER_ENABLE_WEB)
     set(PROFILER_WEB_SOURCES
         src/web_server.cpp
         src/web_resources.cpp
-        src/backends/drogon/drogon_http_server.cpp
     )
 
     set(PROFILER_WEB_HEADERS
         include/web_server.h
-        src/backends/drogon/drogon_http_server.h
     )
 
     add_library(profiler_web ${PROFILER_WEB_SOURCES} ${PROFILER_WEB_HEADERS})
@@ -192,8 +191,6 @@ if(REMOTE_PROFILER_BUILD_EXAMPLES)
             profiler_web
             Drogon::Drogon
         )
-        # Access to DrogonHttpServer header in src/backends/drogon/
-        target_include_directories(profiler_example PRIVATE ${PROJECT_SOURCE_DIR}/src)
         target_compile_definitions(profiler_example PRIVATE REMOTE_PROFILER_ENABLE_WEB)
     else()
         target_link_libraries(profiler_example profiler_core)
@@ -290,7 +287,7 @@ if(REMOTE_PROFILER_INSTALL)
     install(FILES
         include/profiler/log_sink.h
         include/profiler/logger.h
-        include/profiler/http_server.h
+        include/profiler/http_handlers.h
         DESTINATION include/cpp-remote-profiler/profiler
     )
 

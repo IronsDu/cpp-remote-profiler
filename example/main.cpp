@@ -6,8 +6,7 @@
 #include <thread>
 
 #ifdef REMOTE_PROFILER_ENABLE_WEB
-#include "backends/drogon/drogon_http_server.h"
-using Server = profiler::DrogonHttpServer;
+#include <drogon/drogon.h>
 #endif
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
@@ -34,16 +33,13 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     profiler::ProfilerManager profiler;
 
 #ifdef REMOTE_PROFILER_ENABLE_WEB
-    // Create HTTP server (Drogon backend)
-    Server server;
-
-    // Register all HTTP route handlers
+    // Register all HTTP route handlers with Drogon
     std::cout << "Registering HTTP handlers...\n";
-    profiler::registerHttpHandlers(profiler, server);
+    profiler::registerHttpHandlers(profiler);
 
     // Start server (blocking)
     std::cout << "Starting server on " << host << ":" << port << "...\n";
-    server.listen(host, port);
+    drogon::app().addListener(host, port).run();
 #else
     std::cout << "Web UI disabled. Running in core-only mode.\n";
     // Keep the main thread alive

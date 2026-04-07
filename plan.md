@@ -1576,82 +1576,68 @@ server.listen(host, port);
 | # | 任务 | Commit | 说明 |
 |---|------|--------|------|
 | 1 | 移除 spdlog 依赖 | a83787a | `DefaultLogSink` 改用 `std::cout`/`std::cerr`，无 PIMPL |
-| 2 | 创建 HttpServer 抽象接口 | a83787a | `include/profiler/http_server.h`，纯 C++ 接口 |
+| 2 | ~~创建 HttpServer 抽象接口~~ | a83787a | 后被废弃，改用 ProfilerHttpHandlers 方案 |
 | 3 | LogManager 去单例 | a83787a | 改为普通类，由 ProfilerManager 实例持有 |
 | 4 | log macros 去 spdlog/fmt | a83787a | 改用 `std::format`，通过 `log_manager_` 成员访问 |
+| 5 | ProfilerManager 去单例 | aed09d0 | 删除 `getInstance()`，构造/析构改 public，`log_manager_` 改为 `unique_ptr<LogManager>` (PIMPL)，信号处理改为 lazy install |
+| 6 | ~~创建 Drogon 适配器~~ | aed09d0 | 后被删除，改用 ProfilerHttpHandlers 方案 |
+| 7 | 创建 ProfilerHttpHandlers | HEAD | `include/profiler/http_handlers.h` + `src/http_handlers.cpp`，框架无关的 handler 类 |
+| 8 | 重构 web_server | HEAD | 简化为 Drogon 薄适配层，调用 ProfilerHttpHandlers 方法 |
+| 9 | 删除旧 HttpServer 抽象 | HEAD | 删除 `include/profiler/http_server.h` 和 `src/backends/drogon/` |
+| 10 | CMake 拆分 target | HEAD | `profiler_core`(含 http_handlers) + `profiler_web`(Drogon 薄适配) |
+| 11 | 更新 example | HEAD | 使用 `registerHttpHandlers(profiler)` + `drogon::app().run()` |
+| 12 | 编译验证 & 测试 | HEAD | 18 个测试全部通过 |
 
-**未完成:**
+**设计决策：ProfilerHttpHandlers 方案**
 
-所有任务已完成。
+用户反馈 HttpServer 抽象方案有根本缺陷：用户如果已有 Web 框架（监听端口、管理路由），则无法集成 `HttpServer` 接口。
 
-**新完成:**
+新方案：
+- `ProfilerHttpHandlers` 类提供框架无关的 handler 方法
+- 每个 handler 返回 `HandlerResponse` 结构体 (`status`, `content_type`, `body`, `headers`)
+- 用户用任意框架包装 `HandlerResponse` 到自己的 response 对象
+- Drogon 集成变为 `web_server.cpp` 中的薄适配层
 
-| # | 任务 | 说明 |
-|---|------|------|
-| 5 | ProfilerManager 去单例 | 删除 `getInstance()`，构造/析构改 public，`log_manager_` 改为 `unique_ptr<LogManager>` (PIMPL)，信号处理改为 lazy install |
-| 6 | 创建 Drogon 适配器 | `src/backends/drogon/drogon_http_server.{h,cpp}`，实现 HttpServer 接口 |
-| 7 | 重构 web_server.h/cpp | 移除 Drogon include，`registerHttpHandlers(profiler, server)` 接收 `HttpServer&`，用 `Request`/`Response` 重写所有路由 |
-| 8 | CMake 拆分 target | `profiler_core` + `profiler_web`，添加 `REMOTE_PROFILER_ENABLE_WEB` 选项 |
-| 9 | 更新 logger.h | `setSink`/`setLogLevel` 改为 ProfilerManager 实例方法 |
-| 10 | 更新 example/tests | example 用新 API（普通对象 + DrogonHttpServer），tests 适配非单例 |
-| 11 | 更新 vcpkg.json | 移除 spdlog |
-| 12 | 编译验证 & 测试 | 编译 full 模式通过，18 个测试全部通过 |
+```cpp
+// 用户代码（任意框架）：
+ProfilerManager profiler;
+ProfilerHttpHandlers handlers(profiler);
+
+// 调用 handler，获得框架无关的响应
+HandlerResponse resp = handlers.handleCpuAnalyze(10, "flamegraph");
+
+// 用自己的框架包装响应
+yourFrameworkResponse.setStatus(resp.status);
+yourFrameworkResponse.setContentType(resp.content_type);
+yourFrameworkResponse.setBody(resp.body);
+```
+
+**文件变更清单:**
+
+| 操作 | 文件 | 说明 |
+|------|------|------|
+| 新增 | `include/profiler/http_handlers.h` | HandlerResponse 结构体 + ProfilerHttpHandlers 类声明 |
+| 新增 | `src/http_handlers.cpp` | 所有 profiler endpoint 业务逻辑（框架无关） |
+| 修改 | `include/web_server.h` | 移除 HttpServer& 参数，改为 `registerHttpHandlers(ProfilerManager&)` |
+| 修改 | `src/web_server.cpp` | Drogon 薄适配：调用 ProfilerHttpHandlers + WebResources |
+| 修改 | `CMakeLists.txt` | `profiler_core` 加入 http_handlers.cpp，移除 backends/ |
+| 修改 | `example/main.cpp` | 使用 `registerHttpHandlers(profiler)` + `drogon::app().run()` |
+| 删除 | `include/profiler/http_server.h` | 旧 HttpServer 抽象接口 |
+| 删除 | `src/backends/drogon/` | 旧 Drogon 适配器 |
 
 **测试结果:**
 - LoggerTest: 7/7 通过
 - FullFlowTest: 6/6 通过
 - CPUProfileTest + ProfilerManagerTest: 5/5 通过
 
-#### 续接指南
-
-下次开发从任务 #5 开始。关键改动点：
-
-1. **`include/profiler_manager.h`**:
-   - 删除 `static ProfilerManager& getInstance()`
-   - 构造函数/析构函数改为 public
-   - 新增成员 `internal::LogManager log_manager_`
-   - 新增 public 方法 `setLogSink()`, `setLogLevel()`
-   - 信号相关 static 成员保留（信号处理器是全局资源），但 `installSignalHandler()` 从构造函数移出
-
-2. **`src/profiler_manager.cpp`**:
-   - 删除 `getInstance()` 实现
-   - 所有 `PROFILER_*` 宏现在依赖 `log_manager_` 成员（已通过 log_macros.h 的改动实现）
-   - 构造函数不再自动调用 `installSignalHandler()`，改为 lazy install（首次 `captureAllThreadStacks()` 时安装）
-
-3. **`include/profiler/logger.h`**:
-   - 删除全局 `setSink()` / `setLogLevel()` 声明
-   - 这些方法改为 `ProfilerManager` 的实例方法
-
-4. **`include/web_server.h`**:
-   - `#include <drogon/drogon.h>` → `#include "profiler/http_server.h"`
-   - 签名: `void registerHttpHandlers(ProfilerManager& profiler, HttpServer& server)`
-
-5. **`src/web_server.cpp`**:
-   - 所有 `app().registerHandler(...)` 调用改为 `server.get/post(...)`
-   - 所有 Drogon 的 `HttpRequestPtr`/`HttpResponsePtr` 改为 `Request`/`Response`
-   - 所有 `Json::Value` 改为手动拼接 JSON 字符串或使用 `nlohmann-json`（已在 vcpkg.json 中）
-   - CORS header 直接通过 `Response::headers` 设置
-
-6. **`src/backends/drogon/drogon_http_server.{h,cpp}`**（新建）:
-   - 实现 `HttpServer` 接口
-   - 内部持有 `std::map<std::string, Handler>` 路由表
-   - `get()`/`post()` 注册路由
-   - `listen()` 调用 `drogon::app().registerHandler(...)` + `addListener()` + `.run()`
-   - handler 内部将 Drogon request 适配为 `Request`，将 `Response` 适配为 Drogon response
-
-7. **`CMakeLists.txt`**:
-   - `profiler_core` target: profiler_manager.cpp, symbolize.cpp, default_log_sink.cpp, log_manager.cpp
-   - `profiler_web` target: web_server.cpp, web_resources.cpp, drogon_http_server.cpp（条件编译）
-   - `example` 链接 `profiler_web`
-   - `tests` 只链接 `profiler_core`（不需要 Web）
-
 #### 不在本次范围内（后续迭代）
 
 - `SharedStackTrace`/`ThreadStackTrace` 从公共头文件移到内部
 - ProfilerManager 的 PIMPL 化
+- `dispatch()` 方法的实现（在 http_handlers.h 中声明但未实现）
 
 ---
 
-**文档版本**: 1.2
+**文档版本**: 1.3
 **最后更新**: 2026-04-07
 **维护者**: Claude Code
