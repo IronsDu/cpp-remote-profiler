@@ -5,7 +5,7 @@
 #include <gtest/gtest.h>
 #include <mutex>
 #include <profiler/log_sink.h>
-#include <profiler/logger.h>
+#include <profiler_manager.h>
 #include <vector>
 
 PROFILER_NAMESPACE_BEGIN
@@ -67,23 +67,24 @@ private:
 class LoggerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Create and set mock sink
+        // Create and set mock sink on the ProfilerManager instance
         mock_sink_ = std::make_shared<MockLogSink>();
-        setSink(mock_sink_);
+        profiler_.setLogSink(mock_sink_);
     }
 
     void TearDown() override {
         // Reset to default sink
-        setSink(nullptr);
+        profiler_.setLogSink(nullptr);
     }
 
+    ProfilerManager profiler_;
     std::shared_ptr<MockLogSink> mock_sink_;
 };
 
 /// @brief Test that custom sink receives log messages
 TEST_F(LoggerTest, CustomSinkReceivesMessages) {
     // Set log level to capture all messages
-    setLogLevel(LogLevel::Trace);
+    profiler_.setLogLevel(LogLevel::Trace);
 
     // Log a test message using internal macro
     // Note: We can't use PROFILER_INFO directly here since it's internal,
@@ -102,19 +103,19 @@ TEST_F(LoggerTest, CustomSinkReceivesMessages) {
 /// @brief Test log level filtering
 TEST_F(LoggerTest, LogLevelFiltering) {
     // Set log level to Warning
-    setLogLevel(LogLevel::Warning);
+    profiler_.setLogLevel(LogLevel::Warning);
 
     // Log messages at different levels directly to sink
     // (The filtering happens in LogManager, but we can verify the level is set)
     EXPECT_TRUE(true); // Level is set
 
     // Reset to trace for other tests
-    setLogLevel(LogLevel::Trace);
+    profiler_.setLogLevel(LogLevel::Trace);
 }
 
 /// @brief Test multiple log messages
 TEST_F(LoggerTest, MultipleMessages) {
-    setLogLevel(LogLevel::Trace);
+    profiler_.setLogLevel(LogLevel::Trace);
 
     mock_sink_->log(LogLevel::Debug, "file1.cpp", 10, "func1", "Message 1");
     mock_sink_->log(LogLevel::Info, "file2.cpp", 20, "func2", "Message 2");
@@ -144,21 +145,21 @@ TEST_F(LoggerTest, FlushWorks) {
 /// @brief Test resetting to default sink
 TEST_F(LoggerTest, ResetToDefaultSink) {
     // Reset to default
-    setSink(nullptr);
+    profiler_.setLogSink(nullptr);
 
     // This should not crash - default sink handles the log
     // We can't easily verify default sink output, but we can verify no crash
     EXPECT_NO_THROW({
-        // Any logging would go to default sink (stderr via spdlog)
+        // Any logging would go to default sink (stderr via std::cerr)
     });
 
     // Restore mock sink for other tests
-    setSink(mock_sink_);
+    profiler_.setLogSink(mock_sink_);
 }
 
 /// @brief Test thread safety of mock sink
 TEST_F(LoggerTest, ThreadSafety) {
-    setLogLevel(LogLevel::Trace);
+    profiler_.setLogLevel(LogLevel::Trace);
 
     const int num_threads = 4;
     const int messages_per_thread = 100;
@@ -182,7 +183,7 @@ TEST_F(LoggerTest, ThreadSafety) {
 
 /// @brief Test all log levels
 TEST_F(LoggerTest, AllLogLevels) {
-    setLogLevel(LogLevel::Trace);
+    profiler_.setLogLevel(LogLevel::Trace);
 
     mock_sink_->log(LogLevel::Trace, "test.cpp", 1, "f", "trace");
     mock_sink_->log(LogLevel::Debug, "test.cpp", 2, "f", "debug");

@@ -70,7 +70,7 @@ TEST(FullFlowTest, GperftoolsGeneratesValidProfile) {
 
 // 测试2: 完整的 CPU profiling 流程
 TEST(FullFlowTest, CompleteCPUProfilingFlow) {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     // 1. 启动 profiler
     std::string profile_path = "/tmp/test_flow_cpu.prof";
@@ -107,7 +107,7 @@ TEST(FullFlowTest, CompleteCPUProfilingFlow) {
 
 // 测试3: 多次启动停止 profiler
 TEST(FullFlowTest, MultipleStartStopCycles) {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     for (int cycle = 0; cycle < 3; ++cycle) {
         std::string profile_path = "/tmp/test_cycle_" + std::to_string(cycle) + ".prof";
@@ -136,7 +136,7 @@ TEST(FullFlowTest, MultipleStartStopCycles) {
 
 // 测试4: 并发 profiler 请求应该被拒绝
 TEST(FullFlowTest, ConcurrentProfilingRequests) {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     // 启动第一个 profiling
     std::string profile_path = "/tmp/test_concurrent.prof";
@@ -161,7 +161,7 @@ TEST(FullFlowTest, ConcurrentProfilingRequests) {
 
 // 测试5: getRawCPUProfile 功能
 TEST(FullFlowTest, GetRawCPUProfile) {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     // 获取原始 profile 数据（采样 1 秒）
     std::string profile_data = profiler.getRawCPUProfile(1);
@@ -188,7 +188,7 @@ TEST(FullFlowTest, GetRawCPUProfile) {
 
 // 测试6: Heap profiling 基本流程
 TEST(FullFlowTest, BasicHeapProfilingFlow) {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     // 启动 heap profiler
     std::string heap_path = "/tmp/test_heap.prof";

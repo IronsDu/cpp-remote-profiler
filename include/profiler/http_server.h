@@ -1,3 +1,6 @@
+/// @file http_server.h
+/// @brief Abstract HTTP server interface (framework-agnostic)
+
 #pragma once
 
 #include "profiler_version.h"
@@ -23,16 +26,29 @@ struct Response {
     std::map<std::string, std::string> headers;  ///< Additional headers
 
     /// Set response as HTML content
-    void setHtml(const std::string& html);
+    void setHtml(const std::string& html) {
+        body = html;
+        content_type = "text/html";
+    }
 
     /// Set response as JSON content
-    void setJson(const std::string& json);
+    void setJson(const std::string& json) {
+        body = json;
+        content_type = "application/json";
+    }
 
     /// Set response as SVG image
-    void setSvg(const std::string& svg);
+    void setSvg(const std::string& svg) {
+        body = svg;
+        content_type = "image/svg+xml";
+    }
 
     /// Set response as binary download
-    void setBinary(const std::string& data, const std::string& filename);
+    void setBinary(const std::string& data, const std::string& filename) {
+        body = data;
+        content_type = "application/octet-stream";
+        headers["Content-Disposition"] = "attachment; filename=" + filename;
+    }
 };
 
 /// Abstract HTTP server interface

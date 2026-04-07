@@ -1582,16 +1582,25 @@ server.listen(host, port);
 
 **未完成:**
 
-| # | 任务 | 依赖 | 说明 |
-|---|------|------|------|
-| 5 | ProfilerManager 去单例 | - | 删除 `getInstance()`，构造函数改为 public，添加 `log_manager_` 成员，信号处理改为 lazy install |
-| 6 | 创建 Drogon 适配器 | #2 | `src/backends/drogon/drogon_http_server.{h,cpp}`，实现 HttpServer 接口 |
-| 7 | 重构 web_server.h/cpp | #5,#6 | 移除 Drogon include，用 HttpServer 抽象重写所有路由 |
-| 8 | CMake 拆分 target | #5,#6 | `profiler_core` + `profiler_web`，添加 `REMOTE_PROFILER_ENABLE_WEB` 选项，符号可见性控制 |
-| 9 | 更新 logger.h | #5 | `setSink`/`setLogLevel` 改为 ProfilerManager 实例方法 |
-| 10 | 更新 example/tests | #5,#8 | example/main.cpp 用新 API，tests 适配非单例 |
-| 11 | 更新 vcpkg.json | #8 | 移除 spdlog |
-| 12 | 编译验证 & 测试 | #8 | 编译 core-only 和 full 两种模式，运行测试 |
+所有任务已完成。
+
+**新完成:**
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 5 | ProfilerManager 去单例 | 删除 `getInstance()`，构造/析构改 public，`log_manager_` 改为 `unique_ptr<LogManager>` (PIMPL)，信号处理改为 lazy install |
+| 6 | 创建 Drogon 适配器 | `src/backends/drogon/drogon_http_server.{h,cpp}`，实现 HttpServer 接口 |
+| 7 | 重构 web_server.h/cpp | 移除 Drogon include，`registerHttpHandlers(profiler, server)` 接收 `HttpServer&`，用 `Request`/`Response` 重写所有路由 |
+| 8 | CMake 拆分 target | `profiler_core` + `profiler_web`，添加 `REMOTE_PROFILER_ENABLE_WEB` 选项 |
+| 9 | 更新 logger.h | `setSink`/`setLogLevel` 改为 ProfilerManager 实例方法 |
+| 10 | 更新 example/tests | example 用新 API（普通对象 + DrogonHttpServer），tests 适配非单例 |
+| 11 | 更新 vcpkg.json | 移除 spdlog |
+| 12 | 编译验证 & 测试 | 编译 full 模式通过，18 个测试全部通过 |
+
+**测试结果:**
+- LoggerTest: 7/7 通过
+- FullFlowTest: 6/6 通过
+- CPUProfileTest + ProfilerManagerTest: 5/5 通过
 
 #### 续接指南
 

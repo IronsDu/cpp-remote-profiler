@@ -18,6 +18,7 @@ option(BUILD_SHARED_LIBS "Build shared libraries (DLL)" ON)
 option(REMOTE_PROFILER_INSTALL "Generate install target" ON)
 option(REMOTE_PROFILER_BUILD_EXAMPLES "Build example programs" ON)
 option(REMOTE_PROFILER_BUILD_TESTS "Build test programs" ON)
+option(REMOTE_PROFILER_ENABLE_WEB "Enable web UI (requires Drogon)" ON)
 option(ENABLE_COVERAGE "Enable code coverage reporting" OFF)
 
 option(BUILD_DOCS "Build API documentation" OFF)
@@ -27,6 +28,7 @@ message(STATUS "  BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
 message(STATUS "  REMOTE_PROFILER_INSTALL: ${REMOTE_PROFILER_INSTALL}")
 message(STATUS "  REMOTE_PROFILER_BUILD_EXAMPLES: ${REMOTE_PROFILER_BUILD_EXAMPLES}")
 message(STATUS "  REMOTE_PROFILER_BUILD_TESTS: ${REMOTE_PROFILER_BUILD_TESTS}")
+message(STATUS "  REMOTE_PROFILER_ENABLE_WEB: ${REMOTE_PROFILER_ENABLE_WEB}")
 message(STATUS "  ENABLE_COVERAGE: ${ENABLE_COVERAGE}")
 message(STATUS "  BUILD docs: ${BUILD_DOCS}")
 
@@ -57,18 +59,21 @@ endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "CXX flags: ${CMAKE_CXX_FLAGS}")
 
-# Find dependencies via vcpkg
-find_package(Drogon CONFIG REQUIRED)
+# Find core dependencies via vcpkg / pkg-config
 find_package(GTest CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(Backward CONFIG REQUIRED)
 find_package(absl REQUIRED)
-find_package(spdlog CONFIG REQUIRED)
 
 # Find gperftools via pkg-config
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GPERFTOOLS REQUIRED libprofiler libtcmalloc)
+
+# Find web dependencies (optional)
+if(REMOTE_PROFILER_ENABLE_WEB)
+    find_package(Drogon CONFIG REQUIRED)
+endif()
 
 # Include directories
 include_directories(${PROJECT_SOURCE_DIR}/include)
@@ -93,44 +98,40 @@ configure_file(
 message(STATUS "Profiler version: ${PROJECT_VERSION}")
 message(STATUS "Profiler version namespace: ${PROFILER_VERSION_NAMESPACE}")
 
-# Source files
-set(PROFILER_SOURCES
+# ============================================================================
+# Core library (always built, no Drogon/spdlog dependency)
+# ============================================================================
+
+set(PROFILER_CORE_SOURCES
     src/profiler_manager.cpp
     src/symbolize.cpp
-    src/web_resources.cpp
-    src/web_server.cpp
     src/internal/log_manager.cpp
     src/internal/default_log_sink.cpp
 )
 
-set(PROFILER_HEADERS
+set(PROFILER_CORE_HEADERS
     include/profiler_manager.h
-    include/web_server.h
     include/profiler/log_sink.h
     include/profiler/logger.h
+    include/profiler/http_server.h
 )
 
-# Create library
-add_library(profiler_lib ${PROFILER_SOURCES} ${PROFILER_HEADERS})
+add_library(profiler_core ${PROFILER_CORE_SOURCES} ${PROFILER_CORE_HEADERS})
 
-# Private link libraries (not exported)
-target_link_libraries(profiler_lib
+target_link_libraries(profiler_core
     PRIVATE
         Backward::Backward
         absl::symbolize
         absl::stacktrace
         absl::debugging_internal
         absl::demangle_internal
-        spdlog::spdlog
-        Drogon::Drogon
         pthread
         ${CMAKE_DL_LIBS}
     PUBLIC
         ${GPERFTOOLS_LIBRARIES}
 )
 
-# Include directories
-target_include_directories(profiler_lib
+target_include_directories(profiler_core
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include/cpp-remote-profiler>
@@ -138,55 +139,115 @@ target_include_directories(profiler_lib
         ${PROJECT_SOURCE_DIR}/src
 )
 
+# Note: Symbol visibility can be controlled with CXX_VISIBILITY_PRESET hidden
+# once proper export macros are added to the public API.
+# For now, default visibility is used.
+
+# ============================================================================
+# Web library (optional, requires Drogon)
+# ============================================================================
+
+if(REMOTE_PROFILER_ENABLE_WEB)
+    set(PROFILER_WEB_SOURCES
+        src/web_server.cpp
+        src/web_resources.cpp
+        src/backends/drogon/drogon_http_server.cpp
+    )
+
+    set(PROFILER_WEB_HEADERS
+        include/web_server.h
+        src/backends/drogon/drogon_http_server.h
+    )
+
+    add_library(profiler_web ${PROFILER_WEB_SOURCES} ${PROFILER_WEB_HEADERS})
+
+    target_link_libraries(profiler_web
+        PUBLIC
+            profiler_core
+        PRIVATE
+            Drogon::Drogon
+            pthread
+    )
+
+    target_include_directories(profiler_web
+        PUBLIC
+            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+    )
+
+    message(STATUS "Web UI enabled (profiler_web target)")
+else()
+    message(STATUS "Web UI disabled")
+endif()
+
+# ============================================================================
 # Example executable
+# ============================================================================
+
 if(REMOTE_PROFILER_BUILD_EXAMPLES)
     add_executable(profiler_example example/main.cpp example/workload.cpp)
-    target_link_libraries(profiler_example
-        profiler_lib
-        Drogon::Drogon
-    )
+    if(REMOTE_PROFILER_ENABLE_WEB)
+        target_link_libraries(profiler_example
+            profiler_web
+            Drogon::Drogon
+        )
+        # Access to DrogonHttpServer header in src/backends/drogon/
+        target_include_directories(profiler_example PRIVATE ${PROJECT_SOURCE_DIR}/src)
+        target_compile_definitions(profiler_example PRIVATE REMOTE_PROFILER_ENABLE_WEB)
+    else()
+        target_link_libraries(profiler_example profiler_core)
+    endif()
     message(STATUS "Example program will be built")
 else()
     message(STATUS "Example program disabled")
 endif()
 
+# ============================================================================
 # Tests
+# ============================================================================
+
 if(REMOTE_PROFILER_BUILD_TESTS)
     enable_testing()
 
-    # CPU profile 测试
+    # CPU profile test
     add_executable(test_cpu_profile tests/test_cpu_profile.cpp)
     target_link_libraries(test_cpu_profile
-        profiler_lib
-        Drogon::Drogon
+        profiler_core
         GTest::gtest
         GTest::gtest_main
         pthread
     )
-
     add_test(NAME CPUProfileTest COMMAND test_cpu_profile)
 
-    # Full flow 测试
+    # Full flow test
     add_executable(test_full_flow tests/test_full_flow.cpp)
-    target_link_libraries(test_full_flow
-        profiler_lib
-        Drogon::Drogon
-        GTest::gtest
-        GTest::gtest_main
-        pthread
-    )
-
+    if(REMOTE_PROFILER_ENABLE_WEB)
+        target_link_libraries(test_full_flow
+            profiler_web
+            Drogon::Drogon
+            GTest::gtest
+            GTest::gtest_main
+            pthread
+        )
+    else()
+        target_link_libraries(test_full_flow
+            profiler_core
+            GTest::gtest
+            GTest::gtest_main
+            pthread
+        )
+    endif()
     add_test(NAME FullFlowTest COMMAND test_full_flow)
 
-    # Logger 测试
+    # Logger test
     add_executable(test_logger tests/test_logger.cpp)
     target_link_libraries(test_logger
-        profiler_lib
+        profiler_core
         GTest::gtest
         GTest::gtest_main
         pthread
     )
-
     add_test(NAME LoggerTest COMMAND test_logger)
     message(STATUS "Tests will be built")
 else()
@@ -201,10 +262,8 @@ endif()
 # ============================================================================
 
 if(REMOTE_PROFILER_INSTALL)
-    # Install library and export
-    # Note: Only PUBLIC and INTERFACE link libraries will be exported
-    # PRIVATE dependencies (Backward, absl) will not be visible to consumers
-    install(TARGETS profiler_lib
+    # Install core library
+    install(TARGETS profiler_core
         EXPORT cpp-remote-profiler-targets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -212,8 +271,18 @@ if(REMOTE_PROFILER_INSTALL)
         INCLUDES DESTINATION include/cpp-remote-profiler
     )
 
-    # Install headers
-    install(FILES ${PROFILER_HEADERS}
+    # Install web library (if built)
+    if(REMOTE_PROFILER_ENABLE_WEB)
+        install(TARGETS profiler_web
+            EXPORT cpp-remote-profiler-targets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        )
+    endif()
+
+    # Install core headers
+    install(FILES ${PROFILER_CORE_HEADERS}
         DESTINATION include/cpp-remote-profiler
     )
 
@@ -221,8 +290,16 @@ if(REMOTE_PROFILER_INSTALL)
     install(FILES
         include/profiler/log_sink.h
         include/profiler/logger.h
+        include/profiler/http_server.h
         DESTINATION include/cpp-remote-profiler/profiler
     )
+
+    # Install web header (if built)
+    if(REMOTE_PROFILER_ENABLE_WEB)
+        install(FILES include/web_server.h
+            DESTINATION include/cpp-remote-profiler
+        )
+    endif()
 
     # Install version header
     install(FILES include/version.h
@@ -316,4 +393,3 @@ if(BUILD_DOCS)
         message(WARNING "Doxygen not found - documentation will not be generated")
     endif()
 endif()
-

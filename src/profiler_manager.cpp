@@ -3,6 +3,7 @@
 #include "absl/debugging/symbolize.h"
 #include "internal/embed_flamegraph.h"
 #include "internal/embed_pprof.h"
+#include "internal/log_manager.h"
 #include "internal/log_macros.h"
 #include "internal/symbolize.h"
 #include <algorithm>
@@ -51,7 +52,8 @@ struct sigaction ProfilerManager::old_action_;
 bool ProfilerManager::old_action_saved_ = false;
 bool ProfilerManager::enable_signal_chaining_ = false;
 
-ProfilerManager::ProfilerManager() {
+ProfilerManager::ProfilerManager()
+    : log_manager_(std::make_unique<internal::LogManager>()) {
     // Write embedded pprof script to current directory
     writePprofScript("./pprof");
 
@@ -83,10 +85,7 @@ ProfilerManager::ProfilerManager() {
     // Initialize abseil symbolizer
     absl::InitializeSymbolizer("");
 
-    // Note: shared_stacks_ will be allocated dynamically in captureAllThreadStacks()
-
-    // Register signal handler for stack tracing (saves old handler)
-    installSignalHandler();
+    // Note: Signal handler is installed lazily on first captureAllThreadStacks() call
 }
 
 ProfilerManager::~ProfilerManager() {
@@ -97,35 +96,36 @@ ProfilerManager::~ProfilerManager() {
         IsHeapProfilerRunning();
     }
 
-    // Restore old signal handler
-    restoreSignalHandler();
-
-    // Note: shared_stacks_ is allocated and freed in captureAllThreadStacks()
+    // Restore old signal handler if we installed one
+    if (signal_handler_installed_) {
+        restoreSignalHandler();
+    }
 }
 
-ProfilerManager& ProfilerManager::getInstance() {
-    static ProfilerManager instance;
-    return instance;
+void ProfilerManager::setLogSink(std::shared_ptr<LogSink> sink) {
+    log_manager_->setSink(std::move(sink));
+}
+
+void ProfilerManager::setLogLevel(LogLevel level) {
+    log_manager_->setLogLevel(level);
 }
 
 void ProfilerManager::setStackCaptureSignal(int signal) {
     // Check if signal is valid
     if (signal < 1 || signal > SIGRTMAX) {
-        PROFILER_ERROR("Invalid signal number: {}", signal);
+        std::cerr << "[ERROR] Invalid signal number: " << signal << std::endl;
         return;
     }
 
     // If handler is already installed, restore old one first
     if (old_action_saved_) {
-        PROFILER_WARNING("Signal handler already installed for signal {}. Restoring before changing.",
-                         stack_capture_signal_);
-        // Note: This won't work correctly if multiple instances exist,
-        // but it's a best-effort attempt
-        ProfilerManager::getInstance().restoreSignalHandler();
+        std::cerr << "[WARN] Signal handler already installed for signal " << stack_capture_signal_
+                  << ". Restoring before changing." << std::endl;
+        restoreSignalHandler();
     }
 
     stack_capture_signal_ = signal;
-    PROFILER_INFO("Stack capture signal set to: {}", signal);
+    std::cout << "[INFO] Stack capture signal set to: " << signal << std::endl;
 }
 
 int ProfilerManager::getStackCaptureSignal() {
@@ -134,10 +134,14 @@ int ProfilerManager::getStackCaptureSignal() {
 
 void ProfilerManager::setSignalChaining(bool enable) {
     enable_signal_chaining_ = enable;
-    PROFILER_INFO("Signal chaining {}", enable ? "enabled" : "disabled");
+    std::cout << "[INFO] Signal chaining " << (enable ? "enabled" : "disabled") << std::endl;
 }
 
 void ProfilerManager::installSignalHandler() {
+    if (signal_handler_installed_) {
+        return; // Already installed
+    }
+
     struct sigaction sa;
     sa.sa_sigaction = &ProfilerManager::signalHandler;
     sa.sa_flags = SA_SIGINFO | SA_RESTART;
@@ -146,6 +150,7 @@ void ProfilerManager::installSignalHandler() {
     // Save old signal handler
     if (sigaction(stack_capture_signal_, &sa, &old_action_) == 0) {
         old_action_saved_ = true;
+        signal_handler_installed_ = true;
         PROFILER_INFO("Registered signal handler for signal {}", stack_capture_signal_);
     } else {
         PROFILER_ERROR("Failed to register signal handler for signal {}: {}", stack_capture_signal_, strerror(errno));
@@ -155,9 +160,9 @@ void ProfilerManager::installSignalHandler() {
 void ProfilerManager::restoreSignalHandler() {
     if (old_action_saved_) {
         if (sigaction(stack_capture_signal_, &old_action_, nullptr) == 0) {
-            PROFILER_INFO("Restored old signal handler for signal {}", stack_capture_signal_);
+            std::cout << "[INFO] Restored old signal handler for signal " << stack_capture_signal_ << std::endl;
         } else {
-            PROFILER_ERROR("Failed to restore old signal handler: {}", strerror(errno));
+            std::cerr << "[ERROR] Failed to restore old signal handler: " << strerror(errno) << std::endl;
         }
         old_action_saved_ = false;
     }
@@ -599,7 +604,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     std::atomic<size_t> allocations_count(0);
 
     PROFILER_DEBUG("Starting memory allocation thread...");
-    std::thread memory_thread([&keep_running, &allocations_count]() {
+    std::thread memory_thread([this, &keep_running, &allocations_count]() {
         PROFILER_DEBUG("Memory thread started");
         int iteration = 0;
         while (keep_running && iteration < 100) { // 限制最大迭代次数
@@ -1120,6 +1125,9 @@ std::string ProfilerManager::symbolizeAddress(void* addr) {
 
 std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
     std::vector<ThreadStackTrace> result;
+
+    // Lazily install signal handler on first use
+    installSignalHandler();
 
     // 1. Read all thread IDs and find maximum
     std::vector<pid_t> tids;

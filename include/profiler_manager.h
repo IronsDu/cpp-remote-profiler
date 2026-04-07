@@ -4,6 +4,7 @@
 #pragma once
 
 #include "profiler_version.h"
+#include "profiler/log_sink.h"
 #include <atomic>
 #include <map>
 #include <memory>
@@ -15,8 +16,12 @@
 
 PROFILER_NAMESPACE_BEGIN
 
-// Forward declaration
+// Forward declarations
 class Symbolizer;
+
+namespace internal {
+class LogManager;
+} // namespace internal
 
 /// @enum ProfilerType
 /// @brief Types of profiling operations supported
@@ -59,17 +64,32 @@ struct SharedStackTrace {
 /// @class ProfilerManager
 /// @brief Main manager class for profiling operations
 ///
-/// ProfilerManager provides a singleton interface for controlling
-/// CPU profiling, heap profiling, and thread stack capture.
-/// It integrates with gperftools for profiling and provides
-/// pprof-compatible output formats.
+/// ProfilerManager controls CPU profiling, heap profiling,
+/// and thread stack capture. It integrates with gperftools
+/// and provides pprof-compatible output formats.
+///
+/// Create an instance and manage its lifetime as needed.
+/// Signal handlers are installed lazily on first stack capture.
 ///
 /// @note Thread-safe. All public methods can be called from any thread.
 class ProfilerManager {
 public:
-    /// @brief Get the singleton instance of ProfilerManager
-    /// @return Reference to the singleton instance
-    static ProfilerManager& getInstance();
+    /// @brief Construct a ProfilerManager
+    ProfilerManager();
+
+    /// @brief Destructor - stops any running profilers and restores signal handlers
+    ~ProfilerManager();
+
+    ProfilerManager(const ProfilerManager&) = delete;
+    ProfilerManager& operator=(const ProfilerManager&) = delete;
+
+    /// @brief Set a custom log sink for profiler messages
+    /// @param sink Shared pointer to a LogSink implementation (nullptr reverts to default)
+    void setLogSink(std::shared_ptr<LogSink> sink);
+
+    /// @brief Set the minimum log level for profiler messages
+    /// @param level Minimum level for messages to be output
+    void setLogLevel(LogLevel level);
 
     /// @brief Start CPU profiling session
     /// @param output_path Path to save the profile output (default: "cpu.prof")
@@ -169,12 +189,11 @@ public:
     /// @return Path to the executable
     std::string getExecutablePath();
 
-private:
-    ProfilerManager();
-    ~ProfilerManager();
-    ProfilerManager(const ProfilerManager&) = delete;
-    ProfilerManager& operator=(const ProfilerManager&) = delete;
+    /// @brief Get the log manager (for internal use by log macros)
+    /// @return Reference to the internal LogManager
+    internal::LogManager& logManager() { return *log_manager_; }
 
+private:
     std::string findLatestHeapProfile(const std::string& dir);
 
     /// @brief Generate flame graph from collapsed stack format
@@ -196,14 +215,16 @@ private:
     void installSignalHandler();
 
     /// @brief Restore old signal handler
-    void restoreSignalHandler();
+    static void restoreSignalHandler();
 
     std::string profile_dir_;                               ///< Directory for profile outputs
     std::map<ProfilerType, ProfilerState> profiler_states_; ///< Current profiler states
     mutable std::mutex mutex_;                              ///< Mutex for thread safety
 
+    std::unique_ptr<internal::LogManager> log_manager_;  ///< Per-instance log manager (PIMPL)
     std::atomic<bool> cpu_profiling_in_progress_{false}; ///< CPU profiling concurrency control
     std::unique_ptr<Symbolizer> symbolizer_;             ///< Symbolizer instance
+    bool signal_handler_installed_{false};                ///< Whether signal handler has been installed
 
     static std::atomic<bool> capture_in_progress_; ///< Stack capture in progress flag
     static SharedStackTrace* shared_stacks_;       ///< Shared stack trace array

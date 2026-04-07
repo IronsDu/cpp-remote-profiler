@@ -20,11 +20,13 @@ inline void logToManager(LogManager& mgr, LogLevel level, const char* file, int 
 
 PROFILER_NAMESPACE_END
 
-// The PROFILER_LOG_IMPL macro now requires a `log_manager_` member to be available in the calling context
+// The PROFILER_LOG_IMPL macro uses logManager() method which returns a reference to the internal LogManager.
+// This method must be available in the calling context (i.e., ProfilerManager methods).
 #define PROFILER_LOG_IMPL(level, fmt_str, ...)                                                                         \
     do {                                                                                                               \
-        if (log_manager_.shouldLog(level)) {                                                                           \
-            ::profiler::internal::logToManager(log_manager_, level, __FILE__, __LINE__, __FUNCTION__,                  \
+        auto& _log_mgr = logManager();                                                                                 \
+        if (_log_mgr.shouldLog(level)) {                                                                               \
+            ::profiler::internal::logToManager(_log_mgr, level, __FILE__, __LINE__, __FUNCTION__,                      \
                                                ::profiler::internal::formatMessage(fmt_str, ##__VA_ARGS__));            \
         }                                                                                                              \
     } while (0)

@@ -3,6 +3,7 @@
 
 #include "default_log_sink.h"
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <ctime>
 #include <iostream>
