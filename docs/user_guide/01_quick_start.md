@@ -43,20 +43,14 @@ if [ ! -d "vcpkg" ]; then
     cd ..
 fi
 
-# 4. 安装 vcpkg 依赖
-cd vcpkg
-./vcpkg install --triplet=x64-linux-release
-cd ..
-
-# 5. 编译库
+# 4. 编译库
 mkdir build && cd build
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DVCPKG_TARGET_TRIPLET=x64-linux-release
 
-# 6. 安装到系统（可选）
-sudo make install
+make -j$(nproc)
 ```
 
 ### 方法 2: 直接集成源码
@@ -82,7 +76,8 @@ void doSomeWork() {
 }
 
 int main() {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    // 创建 ProfilerManager 实例（非单例模式）
+    profiler::ProfilerManager profiler;
 
     std::cout << "开始 CPU profiling..." << std::endl;
 
@@ -108,8 +103,6 @@ int main() {
 
 ### CMakeLists.txt 配置
 
-在你的项目根目录创建 `CMakeLists.txt`:
-
 ```cmake
 cmake_minimum_required(VERSION 3.15)
 project(MyProfilerApp VERSION 1.0.0)
@@ -117,37 +110,19 @@ project(MyProfilerApp VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 方法 1: 如果已安装到系统
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(GPERFTOOLS REQUIRED libprofiler libtcmalloc)
+# 链接 profiler 核心库（不需要 Drogon）
+find_package(cpp-remote-profiler REQUIRED)
 
 add_executable(my_app my_profiler_app.cpp)
-
-# 链接 profiler 库
-target_link_libraries(my_app
-    profiler_lib           # C++ Remote Profiler 库
-    ${GPERFTOOLS_LIBRARIES} # gperftools
-    pthread
-)
-
-# 方法 2: 如果使用源码直接编译
-# add_subdirectory(path/to/cpp-remote-profiler)
-# target_link_libraries(my_app profiler_lib)
+target_link_libraries(my_app cpp-remote-profiler::profiler_core)
 ```
 
 ### 编译命令
 
 ```bash
-# 如果使用 vcpkg
 mkdir build && cd build
-cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=../cpp-remote-profiler/vcpkg/scripts/buildsystems/vcpkg.cmake \
-    -DVCPKG_TARGET_TRIPLET=x64-linux-release
-
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make
-
-# 运行
 ./my_app
 ```
 
@@ -164,42 +139,20 @@ make
 #### 使用 Go pprof (推荐)
 
 ```bash
-# 安装 Go (如果还没有)
-wget https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
-export PATH=$PATH:/usr/local/go/bin
-
 # 使用 pprof 分析
 go tool pprof -http=:8080 my_profile.prof
 ```
 
-然后在浏览器中打开 `http://localhost:8080`
-
-#### 使用 FlameGraph
-
-```bash
-# 1. 安装 FlameGraph 工具
-git clone https://github.com/brendangregg/FlameGraph /tmp/FlameGraph
-
-# 2. 使用 pprof 转换 profile 为 collapsed 格式
-pprof -raw my_profile.app > /tmp/profile.raw
-
-# 3. 生成火焰图
-perl /tmp/FlameGraph/flamegraph.pl /tmp/profile.raw > flamegraph.svg
-
-# 4. 在浏览器中查看
-firefox flamegraph.svg
-```
-
 ## 一键生成火焰图 (API 方式)
 
-如果你想直接在代码中生成火焰图，可以使用 `analyzeCPUProfile()`:
+如果你想直接在代码中生成火焰图：
 
 ```cpp
 #include "profiler_manager.h"
+#include <fstream>
 
 int main() {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     // 采样 10 秒并生成火焰图
     std::string svg = profiler.analyzeCPUProfile(10, "flamegraph");
@@ -209,40 +162,65 @@ int main() {
     out << svg;
     out.close();
 
-    std::cout << "火焰图已生成: flamegraph.svg" << std::endl;
-
     return 0;
 }
 ```
 
 ## 带有 Web 界面的完整示例
 
-如果你想要一个完整的 Web 界面来查看 profiling 结果：
+如果你使用 Drogon 框架，可以使用一键注册函数：
 
 ```cpp
-#include <drogon/drogon.h>
 #include "profiler_manager.h"
 #include "web_server.h"
+#include <drogon/drogon.h>
 
 int main() {
-    // 启动 Drogon 服务器
-    profiler::ProfilerManager& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
-    // 注册所有 profiling 相关的 HTTP 端点
+    // 注册所有 profiling 相关的 HTTP 端点到 Drogon
     profiler::registerHttpHandlers(profiler);
 
-    // 监听 8080 端口
-    drogon::app().addListener("0.0.0.0", 8080);
-    std::cout << "Profiler Web UI: http://localhost:8080" << std::endl;
-
     // 启动服务器
-    drogon::app().run();
+    drogon::app().addListener("0.0.0.0", 8080).run();
 
     return 0;
 }
 ```
 
-访问 `http://localhost:8080` 即可看到 Web 界面，点击按钮即可生成火焰图。
+**CMake 配置**:
+```cmake
+target_link_libraries(my_app
+    cpp-remote-profiler::profiler_web
+    Drogon::Drogon
+)
+```
+
+## 使用其他 Web 框架
+
+如果你使用的是 Drogon 以外的 Web 框架，可以使用 `ProfilerHttpHandlers`：
+
+```cpp
+#include "profiler_manager.h"
+#include "profiler/http_handlers.h"
+
+int main() {
+    profiler::ProfilerManager profiler;
+    profiler::ProfilerHttpHandlers handlers(profiler);
+
+    // 调用任意 handler，获得框架无关的响应
+    profiler::HandlerResponse resp = handlers.handleCpuAnalyze(10, "flamegraph");
+
+    // resp.status, resp.content_type, resp.body
+    // 用你自己的 Web 框架包装这些数据
+}
+```
+
+**CMake 配置**:
+```cmake
+target_link_libraries(my_app cpp-remote-profiler::profiler_core)
+# 不需要 Drogon
+```
 
 ## Heap Profiling 示例
 
@@ -256,15 +234,13 @@ int main() {
     // 设置环境变量 (在程序启动前)
     setenv("TCMALLOC_SAMPLE_PARAMETER", "524288", 1);
 
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
-    // 启动 heap profiler
     profiler.startHeapProfiler("heap.prof");
 
     // 分配一些内存
     int* data = new int[1000];
 
-    // 停止 heap profiler
     profiler.stopHeapProfiler();
 
     delete[] data;
@@ -286,9 +262,9 @@ export TCMALLOC_SAMPLE_PARAMETER=524288
 
 ## 下一步
 
-- 📖 阅读 [API 参考手册](02_api_reference.md) 了解所有可用的 API
-- 💡 查看 [集成示例](03_integration_examples.md) 学习更多使用场景
-- 🔧 遇到问题？查看 [故障排除指南](04_troubleshooting.md)
+- 阅读 [API 参考手册](02_api_reference.md) 了解所有可用的 API
+- 查看 [集成示例](03_integration_examples.md) 学习更多使用场景
+- 遇到问题？查看 [故障排除指南](04_troubleshooting.md)
 
 ## 常见问题
 
@@ -307,8 +283,5 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 ### Q: Heap profiling 不工作
 **A**: 确保设置了 `TCMALLOC_SAMPLE_PARAMETER` 环境变量，并且链接了 tcmalloc 库。
 
-### Q: 性能开销太大
-**A**: CPU profiling 通常有 1-5% 的性能开销。如果开销过大，可以：
-- 降低采样频率
-- 仅在需要时启用 profiling
-- 使用更长的采样间隔
+### Q: 如何在非 Drogon 的 Web 框架中使用？
+**A**: 使用 `ProfilerHttpHandlers` 类。每个 handler 方法返回 `HandlerResponse` 结构体，你只需将其包装到你框架的 response 对象中。详见 [场景 3: 与任意 Web 框架集成](03_integration_examples.md#场景-3-与任意-web-框架集成)。
