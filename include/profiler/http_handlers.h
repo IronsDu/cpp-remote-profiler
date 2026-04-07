@@ -35,8 +35,7 @@ struct HandlerResponse {
         return {200, "text/plain", content, {}};
     }
     static HandlerResponse binary(const std::string& data, const std::string& filename) {
-        return {200, "application/octet-stream", data,
-                {{"Content-Disposition", "attachment; filename=" + filename}}};
+        return {200, "application/octet-stream", data, {{"Content-Disposition", "attachment; filename=" + filename}}};
     }
     static HandlerResponse error(int status, const std::string& message) {
         return {status, "application/json", "{\"error\":\"" + message + "\"}", {}};
@@ -80,8 +79,7 @@ public:
     /// Dispatch a request to the appropriate handler based on path.
     /// Returns a 404 response if path is not recognized.
     HandlerResponse dispatch(const std::string& method, const std::string& path,
-                             const std::map<std::string, std::string>& params = {},
-                             const std::string& body = "");
+                             const std::map<std::string, std::string>& params = {}, const std::string& body = "");
 
     // --- Standard pprof endpoints ---
     HandlerResponse handlePprofProfile(int seconds);

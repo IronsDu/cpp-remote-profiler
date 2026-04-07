@@ -22,8 +22,10 @@ static bool validateOutputType(const std::string& output_type) {
 }
 
 static int clampDuration(int duration, int lo, int hi) {
-    if (duration < lo) return lo;
-    if (duration > hi) return hi;
+    if (duration < lo)
+        return lo;
+    if (duration > hi)
+        return hi;
     return duration;
 }
 
@@ -42,15 +44,12 @@ HandlerResponse ProfilerHttpHandlers::handleStatus() {
 
     std::ostringstream json;
     json << "{";
-    json << "\"cpu\":{\"running\":" << (cpu.is_running ? "true" : "false")
-         << ",\"output_path\":\"" << cpu.output_path << "\""
-         << ",\"duration_ms\":" << cpu.duration << "},";
-    json << "\"heap\":{\"running\":" << (heap.is_running ? "true" : "false")
-         << ",\"output_path\":\"" << heap.output_path << "\""
-         << ",\"duration_ms\":" << heap.duration << "},";
-    json << "\"growth\":{\"running\":" << (growth.is_running ? "true" : "false")
-         << ",\"output_path\":\"" << growth.output_path << "\""
-         << ",\"duration_ms\":" << growth.duration << "}";
+    json << "\"cpu\":{\"running\":" << (cpu.is_running ? "true" : "false") << ",\"output_path\":\"" << cpu.output_path
+         << "\"" << ",\"duration_ms\":" << cpu.duration << "},";
+    json << "\"heap\":{\"running\":" << (heap.is_running ? "true" : "false") << ",\"output_path\":\""
+         << heap.output_path << "\"" << ",\"duration_ms\":" << heap.duration << "},";
+    json << "\"growth\":{\"running\":" << (growth.is_running ? "true" : "false") << ",\"output_path\":\""
+         << growth.output_path << "\"" << ",\"duration_ms\":" << growth.duration << "}";
     json << "}";
 
     return HandlerResponse::json(json.str());
@@ -94,8 +93,10 @@ HandlerResponse ProfilerHttpHandlers::handleCpuSvgRaw(int duration) {
     profiler_.executeCommand(cmd, svg);
 
     size_t pos = svg.find("<?xml");
-    if (pos == std::string::npos) pos = svg.find("<svg");
-    if (pos != std::string::npos && pos > 0) svg = svg.substr(pos);
+    if (pos == std::string::npos)
+        pos = svg.find("<svg");
+    if (pos != std::string::npos && pos > 0)
+        svg = svg.substr(pos);
 
     if (svg.empty() || svg.find("<svg") == std::string::npos) {
         return errorResp(500, "Failed to generate SVG: insufficient CPU samples collected.");
@@ -132,16 +133,22 @@ HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
 
     // Verify collapsed data
     std::ifstream in(collapsed_file);
-    if (!in.is_open()) return errorResp(500, "Failed to create collapsed file");
+    if (!in.is_open())
+        return errorResp(500, "Failed to create collapsed file");
     std::string line;
     bool has_data = false;
     while (std::getline(in, line)) {
-        if (!line.empty() && line[0] != '#') { has_data = true; break; }
+        if (!line.empty() && line[0] != '#') {
+            has_data = true;
+            break;
+        }
     }
     in.close();
-    if (!has_data) return errorResp(500, "pprof --collapsed produced no data.");
+    if (!has_data)
+        return errorResp(500, "pprof --collapsed produced no data.");
 
-    std::string fg_cmd = "perl ./flamegraph.pl --title=\"CPU Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
+    std::string fg_cmd =
+        "perl ./flamegraph.pl --title=\"CPU Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
     std::string svg;
     profiler_.executeCommand(fg_cmd, svg);
 
@@ -188,8 +195,10 @@ HandlerResponse ProfilerHttpHandlers::handleHeapSvgRaw() {
     profiler_.executeCommand(cmd, svg);
 
     size_t pos = svg.find("<?xml");
-    if (pos == std::string::npos) pos = svg.find("<svg");
-    if (pos != std::string::npos && pos > 0) svg = svg.substr(pos);
+    if (pos == std::string::npos)
+        pos = svg.find("<svg");
+    if (pos != std::string::npos && pos > 0)
+        svg = svg.substr(pos);
 
     if (svg.empty() || svg.find("<svg") == std::string::npos) {
         return errorResp(500, "Failed to generate SVG");
@@ -223,16 +232,22 @@ HandlerResponse ProfilerHttpHandlers::handleHeapFlamegraphRaw() {
     }
 
     std::ifstream in(collapsed_file);
-    if (!in.is_open()) return errorResp(500, "Failed to create collapsed file");
+    if (!in.is_open())
+        return errorResp(500, "Failed to create collapsed file");
     std::string line;
     bool has_data = false;
     while (std::getline(in, line)) {
-        if (!line.empty() && line[0] != '#') { has_data = true; break; }
+        if (!line.empty() && line[0] != '#') {
+            has_data = true;
+            break;
+        }
     }
     in.close();
-    if (!has_data) return errorResp(500, "pprof --collapsed produced no data");
+    if (!has_data)
+        return errorResp(500, "pprof --collapsed produced no data");
 
-    std::string fg_cmd = "perl ./flamegraph.pl --title=\"Heap Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
+    std::string fg_cmd =
+        "perl ./flamegraph.pl --title=\"Heap Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
     std::string svg;
     profiler_.executeCommand(fg_cmd, svg);
 
@@ -241,9 +256,8 @@ HandlerResponse ProfilerHttpHandlers::handleHeapFlamegraphRaw() {
     }
 
     auto resp = HandlerResponse::svg(svg);
-    std::string ts = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
-                                        std::chrono::system_clock::now().time_since_epoch())
-                                        .count());
+    std::string ts = std::to_string(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     resp.headers["Content-Disposition"] = "attachment; filename=heap_flamegraph_" + ts + ".svg";
     return resp;
 }
@@ -280,7 +294,8 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthAnalyze(const std::string& out
         }
 
         std::ostringstream fg;
-        fg << "perl ./flamegraph.pl --title=\"Heap Growth Flame Graph\" --width=1200 " << collapsed_file << " 2>/dev/null";
+        fg << "perl ./flamegraph.pl --title=\"Heap Growth Flame Graph\" --width=1200 " << collapsed_file
+           << " 2>/dev/null";
         if (!profiler_.executeCommand(fg.str(), svg)) {
             return errorResp(500, "Failed to execute flamegraph.pl command");
         }
@@ -328,8 +343,10 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthSvgRaw() {
     profiler_.executeCommand(cmd, svg);
 
     size_t pos = svg.find("<?xml");
-    if (pos == std::string::npos) pos = svg.find("<svg");
-    if (pos != std::string::npos && pos > 0) svg = svg.substr(pos);
+    if (pos == std::string::npos)
+        pos = svg.find("<svg");
+    if (pos != std::string::npos && pos > 0)
+        svg = svg.substr(pos);
 
     if (svg.empty() || svg.find("<svg") == std::string::npos) {
         return errorResp(500, "Failed to generate SVG");
@@ -363,16 +380,22 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthFlamegraphRaw() {
     }
 
     std::ifstream in(collapsed_file);
-    if (!in.is_open()) return errorResp(500, "Failed to create collapsed file");
+    if (!in.is_open())
+        return errorResp(500, "Failed to create collapsed file");
     std::string line;
     bool has_data = false;
     while (std::getline(in, line)) {
-        if (!line.empty() && line[0] != '#') { has_data = true; break; }
+        if (!line.empty() && line[0] != '#') {
+            has_data = true;
+            break;
+        }
     }
     in.close();
-    if (!has_data) return errorResp(500, "pprof --collapsed produced no data");
+    if (!has_data)
+        return errorResp(500, "pprof --collapsed produced no data");
 
-    std::string fg_cmd = "perl ./flamegraph.pl --title=\"Heap Growth Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
+    std::string fg_cmd =
+        "perl ./flamegraph.pl --title=\"Heap Growth Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
     std::string svg;
     profiler_.executeCommand(fg_cmd, svg);
 
@@ -381,9 +404,8 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthFlamegraphRaw() {
     }
 
     auto resp = HandlerResponse::svg(svg);
-    std::string ts = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
-                                        std::chrono::system_clock::now().time_since_epoch())
-                                        .count());
+    std::string ts = std::to_string(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     resp.headers["Content-Disposition"] = "attachment; filename=growth_flamegraph_" + ts + ".svg";
     return resp;
 }
@@ -437,7 +459,8 @@ HandlerResponse ProfilerHttpHandlers::handlePprofSymbol(const std::string& body)
     std::ostringstream result;
 
     while (std::getline(iss, address)) {
-        if (address.empty() || address[0] == '#') continue;
+        if (address.empty() || address[0] == '#')
+            continue;
 
         std::string original = address;
         std::string addr_str = address;
