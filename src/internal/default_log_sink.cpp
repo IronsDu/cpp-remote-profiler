@@ -50,7 +50,7 @@ DefaultLogSink::DefaultLogSink() = default;
 
 DefaultLogSink::~DefaultLogSink() = default;
 
-void DefaultLogSink::log(LogLevel level, const char* file, int line, const char* function, const char* message) {
+void DefaultLogSink::log(LogLevel level, const char* file, int line, [[maybe_unused]] const char* function, const char* message) {
     if (static_cast<int>(level) < static_cast<int>(min_level_)) {
         return;
     }
