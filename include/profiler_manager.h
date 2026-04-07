@@ -3,8 +3,8 @@
 
 #pragma once
 
-#include "profiler_version.h"
 #include "profiler/log_sink.h"
+#include "profiler_version.h"
 #include <atomic>
 #include <map>
 #include <memory>
@@ -191,7 +191,9 @@ public:
 
     /// @brief Get the log manager (for internal use by log macros)
     /// @return Reference to the internal LogManager
-    internal::LogManager& logManager() { return *log_manager_; }
+    internal::LogManager& logManager() {
+        return *log_manager_;
+    }
 
 private:
     std::string findLatestHeapProfile(const std::string& dir);
@@ -224,7 +226,7 @@ private:
     std::unique_ptr<internal::LogManager> log_manager_;  ///< Per-instance log manager (PIMPL)
     std::atomic<bool> cpu_profiling_in_progress_{false}; ///< CPU profiling concurrency control
     std::unique_ptr<Symbolizer> symbolizer_;             ///< Symbolizer instance
-    bool signal_handler_installed_{false};                ///< Whether signal handler has been installed
+    bool signal_handler_installed_{false};               ///< Whether signal handler has been installed
 
     static std::atomic<bool> capture_in_progress_; ///< Stack capture in progress flag
     static SharedStackTrace* shared_stacks_;       ///< Shared stack trace array

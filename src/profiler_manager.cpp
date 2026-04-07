@@ -3,8 +3,8 @@
 #include "absl/debugging/symbolize.h"
 #include "internal/embed_flamegraph.h"
 #include "internal/embed_pprof.h"
-#include "internal/log_manager.h"
 #include "internal/log_macros.h"
+#include "internal/log_manager.h"
 #include "internal/symbolize.h"
 #include <algorithm>
 #include <atomic>
@@ -52,8 +52,7 @@ struct sigaction ProfilerManager::old_action_;
 bool ProfilerManager::old_action_saved_ = false;
 bool ProfilerManager::enable_signal_chaining_ = false;
 
-ProfilerManager::ProfilerManager()
-    : log_manager_(std::make_unique<internal::LogManager>()) {
+ProfilerManager::ProfilerManager() : log_manager_(std::make_unique<internal::LogManager>()) {
     // Write embedded pprof script to current directory
     writePprofScript("./pprof");
 
@@ -323,10 +322,8 @@ std::string ProfilerManager::generateFlameGraph(const std::string& collapsed_fil
     // Build flamegraph.pl command
     // Use "perl ./flamegraph.pl" instead of "./flamegraph.pl" for better compatibility
     std::ostringstream cmd;
-    cmd << "perl ./flamegraph.pl"
-        << " --title=\"" << title << "\""
-        << " --width=1200"
-        << " " << collapsed_file << " 2>/dev/null";
+    cmd << "perl ./flamegraph.pl" << " --title=\"" << title << "\"" << " --width=1200" << " " << collapsed_file
+        << " 2>/dev/null";
 
     PROFILER_INFO("Generating FlameGraph: {}", cmd.str());
 

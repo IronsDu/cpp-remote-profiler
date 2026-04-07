@@ -9,6 +9,13 @@
 #include <iostream>
 #include <thread>
 
+// Free function used as a known address for symbol resolution tests
+namespace {
+int helperFunctionForAddrTest(int x) {
+    return x * x;
+}
+} // namespace
+
 // Test 1: Verify gperftools generates valid CPU profile
 TEST(CPUProfileTest, GperftoolsGeneratesValidProfile) {
     const char* profile_path = "/tmp/test_cpu.prof";
@@ -112,8 +119,9 @@ TEST(ProfilerManagerTest, AnalyzeCPUProfile) {
 TEST(ProfilerManagerTest, ResolveSymbol) {
     profiler::ProfilerManager profiler;
 
-    // Test with a known address (main function)
-    void* test_addr = reinterpret_cast<void*>(&profiler::ProfilerManager::startCPUProfiler);
+    // Test with a known free function address
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    void* test_addr = reinterpret_cast<void*>(&helperFunctionForAddrTest);
 
     std::string symbol = profiler.resolveSymbolWithBackward(test_addr);
 

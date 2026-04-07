@@ -12,7 +12,8 @@ template <typename... Args> std::string formatMessage(std::format_string<Args...
     return std::format(fmt, std::forward<Args>(args)...);
 }
 
-inline void logToManager(LogManager& mgr, LogLevel level, const char* file, int line, const char* function, std::string&& message) {
+inline void logToManager(LogManager& mgr, LogLevel level, const char* file, int line, const char* function,
+                         std::string&& message) {
     mgr.sink()->log(level, file, line, function, message.c_str());
 }
 
@@ -27,7 +28,7 @@ PROFILER_NAMESPACE_END
         auto& _log_mgr = logManager();                                                                                 \
         if (_log_mgr.shouldLog(level)) {                                                                               \
             ::profiler::internal::logToManager(_log_mgr, level, __FILE__, __LINE__, __FUNCTION__,                      \
-                                               ::profiler::internal::formatMessage(fmt_str, ##__VA_ARGS__));            \
+                                               ::profiler::internal::formatMessage(fmt_str, ##__VA_ARGS__));           \
         }                                                                                                              \
     } while (0)
 
