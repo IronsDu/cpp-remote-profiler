@@ -1,7 +1,7 @@
-/// @file web_server.cpp
-/// @brief Drogon integration: registers profiler routes using ProfilerHttpHandlers
+/// @file drogon_adapter.cpp
+/// @brief Drogon integration: registers profiler routes via ProfilerHttpHandlers
 
-#include "web_server.h"
+#include "profiler/drogon_adapter.h"
 #include "internal/web_resources.h"
 #include "profiler/http_handlers.h"
 #include <drogon/drogon.h>
@@ -34,7 +34,7 @@ static void sendResponse(const HandlerResponse& hr, std::function<void(const dro
     callback(resp);
 }
 
-void registerHttpHandlers(profiler::ProfilerManager& profiler) {
+void registerDrogonHandlers(profiler::ProfilerManager& profiler) {
     auto handlers = std::make_shared<ProfilerHttpHandlers>(profiler);
 
     // --- GET routes ---

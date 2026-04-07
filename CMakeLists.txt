@@ -150,12 +150,12 @@ target_include_directories(profiler_core
 
 if(REMOTE_PROFILER_ENABLE_WEB)
     set(PROFILER_WEB_SOURCES
-        src/web_server.cpp
+        src/drogon_adapter.cpp
         src/web_resources.cpp
     )
 
     set(PROFILER_WEB_HEADERS
-        include/web_server.h
+        include/profiler/drogon_adapter.h
     )
 
     add_library(profiler_web ${PROFILER_WEB_SOURCES} ${PROFILER_WEB_HEADERS})
@@ -293,8 +293,8 @@ if(REMOTE_PROFILER_INSTALL)
 
     # Install web header (if built)
     if(REMOTE_PROFILER_ENABLE_WEB)
-        install(FILES include/web_server.h
-            DESTINATION include/cpp-remote-profiler
+        install(FILES include/profiler/drogon_adapter.h
+            DESTINATION include/cpp-remote-profiler/profiler
         )
     endif()
 

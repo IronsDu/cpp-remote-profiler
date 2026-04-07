@@ -172,14 +172,14 @@ int main() {
 
 ```cpp
 #include "profiler_manager.h"
-#include "web_server.h"
+#include "profiler/drogon_adapter.h"
 #include <drogon/drogon.h>
 
 int main() {
     profiler::ProfilerManager profiler;
 
     // 注册所有 profiling 相关的 HTTP 端点到 Drogon
-    profiler::registerHttpHandlers(profiler);
+    profiler::registerDrogonHandlers(profiler);
 
     // 启动服务器
     drogon::app().addListener("0.0.0.0", 8080).run();

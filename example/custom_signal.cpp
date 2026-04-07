@@ -7,8 +7,8 @@
 void example1_default_signal() {
     std::cout << "=== Example 1: Using default SIGUSR1 ===" << std::endl;
 
-    // 直接使用，默认使用 SIGUSR1
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    // 创建 ProfilerManager 实例
+    profiler::ProfilerManager profiler;
 
     std::cout << "Current signal: " << profiler.getStackCaptureSignal() << std::endl;
     std::cout << "(SIGUSR1 = " << SIGUSR1 << ")" << std::endl;
@@ -23,7 +23,7 @@ void example2_custom_signal() {
     // 在使用 profiler 之前设置信号
     profiler::ProfilerManager::setStackCaptureSignal(SIGUSR2);
 
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     std::cout << "Current signal: " << profiler.getStackCaptureSignal() << std::endl;
     std::cout << "(SIGUSR2 = " << SIGUSR2 << ")" << std::endl;
@@ -39,7 +39,7 @@ void example3_realtime_signal() {
     int custom_signal = SIGRTMIN + 5;
     profiler::ProfilerManager::setStackCaptureSignal(custom_signal);
 
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     std::cout << "Current signal: " << profiler.getStackCaptureSignal() << std::endl;
     std::cout << "(SIGRTMIN + 5 = " << custom_signal << ")" << std::endl;
@@ -54,13 +54,13 @@ void example4_signal_chaining() {
     // 启用信号链（在处理器中调用旧的处理器）
     profiler::ProfilerManager::setSignalChaining(true);
 
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     // ... 使用 profiler ...
 }
 
 int main() {
-    // 只运行其中一个示例（因为 ProfilerManager 是单例）
+    // 只运行其中一个示例
 
     // 示例 1：默认信号（推荐）
     example1_default_signal();
@@ -76,7 +76,7 @@ int main() {
 
     std::cout << "\n=== Signal configuration tips ===" << std::endl;
     std::cout << "1. Check if your application uses SIGUSR1/SIGUSR2" << std::endl;
-    std::cout << "2. Use setStackCaptureSignal() before calling getInstance()" << std::endl;
+    std::cout << "2. Use setStackCaptureSignal() before creating ProfilerManager" << std::endl;
     std::cout << "3. Real-time signals (SIGRTMIN+n) are safer" << std::endl;
     std::cout << "4. Signal chaining can be enabled but may interfere with stack capture" << std::endl;
 

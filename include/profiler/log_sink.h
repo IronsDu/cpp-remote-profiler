@@ -36,8 +36,9 @@ enum class LogLevel {
 ///     }
 /// };
 ///
-/// // Set custom sink
-/// profiler::setSink(std::make_shared<MyLogSink>());
+/// // Set custom sink on your ProfilerManager instance
+/// profiler::ProfilerManager profiler;
+/// profiler.setLogSink(std::make_shared<MyLogSink>());
 /// @endcode
 class LogSink {
 public:

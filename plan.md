@@ -19,9 +19,9 @@
 
 #### 设计目标
 - **可扩展性**: 允许用户注入自定义日志 sink，集成到应用的日志系统
-- **零依赖默认**: 默认使用 spdlog 输出到 stderr，无需配置即可使用
+- **零依赖默认**: 默认使用 std::cout/std::cerr 输出，无需配置即可使用
 - **线程安全**: 支持多线程并发日志输出
-- **fmt 风格格式化**: 使用 `{}` 占位符，类型安全
+- **std::format 格式化**: 使用 C++20 `std::format`，类型安全
 
 #### 架构设计
 ```
@@ -29,9 +29,9 @@
     ↓
 PROFILER_INFO("msg: {}", value)
     ↓
-LogManager (单例)
+LogManager (实例持有，由 ProfilerManager 拥有)
     ↓
-    ├── DefaultLogSink (默认) → spdlog → stderr
+    ├── DefaultLogSink (默认) → std::cout/std::cerr
     └── CustomLogSink (用户注入) → 应用日志系统
 ```
 
@@ -54,13 +54,9 @@ public:
 
 }  // namespace profiler
 
-// include/profiler/logger.h
-namespace profiler {
-
-void setSink(std::shared_ptr<LogSink> sink);
-void setLogLevel(LogLevel level);
-
-}  // namespace profiler
+// include/profiler/logger.h (removed — logging is now configured via ProfilerManager instance)
+// profiler::ProfilerManager::setLogSink(std::shared_ptr<LogSink> sink)
+// profiler::ProfilerManager::setLogLevel(LogLevel level)
 ```
 
 #### 内部日志宏
@@ -75,7 +71,7 @@ void setLogLevel(LogLevel level);
 #### 用户集成示例
 ```cpp
 #include <profiler/log_sink.h>
-#include <profiler/logger.h>
+#include "profiler_manager.h"
 
 // 1. 自定义 sink 集成到应用日志
 class MyAppLogSink : public profiler::LogSink {
@@ -86,25 +82,26 @@ class MyAppLogSink : public profiler::LogSink {
     }
 };
 
-// 2. 设置自定义 sink
-profiler::setSink(std::make_shared<MyAppLogSink>());
+// 2. 创建 ProfilerManager 并设置自定义 sink
+profiler::ProfilerManager profiler;
+profiler.setLogSink(std::make_shared<MyAppLogSink>());
 
 // 3. 可选：调整日志级别
-profiler::setLogLevel(profiler::LogLevel::Debug);
+profiler.setLogLevel(profiler::LogLevel::Debug);
 ```
 
 #### 文件结构
 ```
 include/profiler/
 ├── log_sink.h    # LogSink 接口 + LogLevel 枚举
-└── logger.h      # setSink() + setLogLevel()
+└── logger.h      # 仅 log 宏声明（日志配置移到 ProfilerManager 实例方法）
 
 src/internal/
-├── log_manager.h         # 内部状态管理
+├── log_manager.h         # 内部状态管理（非单例，由 ProfilerManager 持有）
 ├── log_manager.cpp
-├── default_log_sink.h    # 默认实现（基于 spdlog）
+├── default_log_sink.h    # 默认实现（基于 std::cout/cerr）
 ├── default_log_sink.cpp
-└── log_macros.h          # 内部日志宏
+└── log_macros.h          # 内部日志宏（使用 std::format）
 ```
 
 ### 2. 两种使用场景
@@ -1409,9 +1406,10 @@ Gemini 对本项目的锐评中指出核心问题：
 
 ```
 profiler_core          ← 核心库，依赖：gperftools, absl, backward-cpp
+                         包含：ProfilerManager, ProfilerHttpHandlers, 日志系统
                          不依赖：Drogon, spdlog
-profiler_web (可选)    ← Web 层，依赖：Drogon
-                         通过 HttpServer 抽象接口与 core 解耦
+profiler_web (可选)    ← Drogon 适配层，依赖：Drogon
+                         包含：drogon_adapter.cpp, web_resources.cpp
 profiler_example       ← 示例程序
 ```
 
@@ -1428,46 +1426,50 @@ target_link_libraries(myapp cpp-remote-profiler::profiler_web)
 # 自动带上 Drogon
 ```
 
-##### 2. HttpServer 抽象接口
+##### 2. ProfilerHttpHandlers（框架无关的 handler）
 
-新增 `include/profiler/http_server.h`，定义纯 C++ 接口：
+`include/profiler/http_handlers.h` 提供框架无关的 handler 方法：
 
 ```cpp
-// Request/Response 是纯 C++ 结构体，不依赖任何第三方库
-struct Request {
-    std::string method;
-    std::string path;
-    std::string body;
-    std::map<std::string, std::string> params;
-};
-
-struct Response {
-    int status_code = 200;
-    std::string body;
+// HandlerResponse 是纯 C++ 结构体，不依赖任何 Web 框架
+struct HandlerResponse {
+    int status = 200;
     std::string content_type = "text/plain";
+    std::string body;
     std::map<std::string, std::string> headers;
-    // 便捷方法
-    void setHtml(const std::string& html);
-    void setJson(const std::string& json);
-    void setSvg(const std::string& svg);
-    void setBinary(const std::string& data, const std::string& filename);
+
+    static HandlerResponse html(const std::string& content);
+    static HandlerResponse json(const std::string& content);
+    static HandlerResponse svg(const std::string& content);
+    static HandlerResponse text(const std::string& content);
+    static HandlerResponse binary(const std::string& data, const std::string& filename);
+    static HandlerResponse error(int status, const std::string& message);
 };
 
-class HttpServer {
+class ProfilerHttpHandlers {
 public:
-    virtual ~HttpServer() = default;
-    using Handler = std::function<void(const Request&, Response&)>;
-    virtual void get(const std::string& path, Handler handler) = 0;
-    virtual void post(const std::string& path, Handler handler) = 0;
-    virtual void listen(const std::string& host, int port) = 0;
+    explicit ProfilerHttpHandlers(ProfilerManager& profiler);
+    HandlerResponse handleStatus();
+    HandlerResponse handleCpuAnalyze(int duration, const std::string& output_type);
+    HandlerResponse handlePprofProfile(int seconds);
+    // ... 其他 handler 方法
 };
 ```
 
-##### 3. Drogon 适配器
+用户可以将其与任意 Web 框架集成：
+```cpp
+profiler::ProfilerManager profiler;
+profiler::ProfilerHttpHandlers handlers(profiler);
+profiler::HandlerResponse resp = handlers.handleCpuAnalyze(10, "flamegraph");
+// 用你自己的框架包装 resp.status, resp.content_type, resp.body
+```
 
-新增 `src/backends/drogon/drogon_http_server.h|.cpp`：
+##### 3. Drogon 适配层
+
+`include/profiler/drogon_adapter.h` + `src/drogon_adapter.cpp`：
 - 唯一 `#include <drogon/drogon.h>` 的地方
-- 将 Drogon API 适配到 HttpServer 接口
+- 将 ProfilerHttpHandlers 的返回值包装成 Drogon response
+- 提供 `registerDrogonHandlers(profiler)` 一键注册函数
 
 ##### 4. spdlog 完全移除
 
@@ -1475,12 +1477,11 @@ public:
 - 日志格式化从 `spdlog/fmt/fmt.h` 切换到 C++20 `std::format`
 - spdlog 不再是任何编译目标的依赖
 
-##### 5. web_server.h 改造
+##### 5. drogon_adapter.h（原 web_server.h）
 
 ```cpp
-// 之前：#include <drogon/drogon.h>（暴露 Drogon）
-// 之后：#include "profiler/http_server.h"（纯 C++ 接口）
-void registerHttpHandlers(ProfilerManager& profiler, HttpServer& server);
+// include/profiler/drogon_adapter.h — 唯一需要 Drogon 的公共头文件
+void registerDrogonHandlers(profiler::ProfilerManager& profiler);
 ```
 
 ##### 6. CMake 修改
@@ -1507,7 +1508,7 @@ set_target_properties(profiler_core PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
 ##### 7. 去掉单例模式
 
-ProfilerManager 改为普通类：
+ProfilerManager 改为普通类（已完成）：
 
 ```cpp
 // 之前：单例
@@ -1519,7 +1520,7 @@ profiler::ProfilerManager profiler;
 profiler.startCPUProfiler("cpu.prof");
 ```
 
-日志配置从全局 LogManager 单例改为实例持有：
+日志配置从全局 LogManager 单例改为实例持有（已完成）：
 
 ```cpp
 // 之前：全局函数
@@ -1537,13 +1538,11 @@ profiler.setLogSink(mySink);
 
 ```cpp
 #include "profiler_manager.h"
-#include "web_server.h"
-#include "drogon_http_server.h"
+#include "profiler/drogon_adapter.h"
 
 profiler::ProfilerManager profiler;
-profiler::DrogonHttpServer server;
-profiler::registerHttpHandlers(profiler, server);
-server.listen(host, port);
+profiler::registerDrogonHandlers(profiler);
+drogon::app().addListener(host, port).run();
 ```
 
 #### 文件变更清单
@@ -1618,12 +1617,14 @@ yourFrameworkResponse.setBody(resp.body);
 |------|------|------|
 | 新增 | `include/profiler/http_handlers.h` | HandlerResponse 结构体 + ProfilerHttpHandlers 类声明 |
 | 新增 | `src/http_handlers.cpp` | 所有 profiler endpoint 业务逻辑（框架无关） |
-| 修改 | `include/web_server.h` | 移除 HttpServer& 参数，改为 `registerHttpHandlers(ProfilerManager&)` |
-| 修改 | `src/web_server.cpp` | Drogon 薄适配：调用 ProfilerHttpHandlers + WebResources |
+| 修改 | `include/profiler/drogon_adapter.h`（原 web_server.h） | Drogon 适配层，提供 `registerDrogonHandlers()` |
+| 修改 | `src/drogon_adapter.cpp`（原 web_server.cpp） | Drogon 薄适配：调用 ProfilerHttpHandlers + WebResources |
 | 修改 | `CMakeLists.txt` | `profiler_core` 加入 http_handlers.cpp，移除 backends/ |
-| 修改 | `example/main.cpp` | 使用 `registerHttpHandlers(profiler)` + `drogon::app().run()` |
+| 修改 | `example/main.cpp` | 使用 `registerDrogonHandlers(profiler)` + `drogon::app().run()` |
 | 删除 | `include/profiler/http_server.h` | 旧 HttpServer 抽象接口 |
 | 删除 | `src/backends/drogon/` | 旧 Drogon 适配器 |
+| 删除 | `include/web_server.h` | 旧文件名，已重命名为 drogon_adapter.h |
+| 删除 | `src/web_server.cpp` | 旧文件名，已重命名为 drogon_adapter.cpp |
 
 **测试结果:**
 - LoggerTest: 7/7 通过

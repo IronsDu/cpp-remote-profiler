@@ -1,5 +1,5 @@
-/// @file web_server.h
-/// @brief Drogon integration: registers profiler routes using ProfilerHttpHandlers
+/// @file drogon_adapter.h
+/// @brief Drogon integration: registers profiler routes via ProfilerHttpHandlers
 
 #pragma once
 
@@ -17,6 +17,6 @@ PROFILER_NAMESPACE_BEGIN
 ///   drogon::app().addListener(host, port).run();
 ///
 /// @param profiler Reference to the ProfilerManager instance to use
-void registerHttpHandlers(profiler::ProfilerManager& profiler);
+void registerDrogonHandlers(profiler::ProfilerManager& profiler);
 
 PROFILER_NAMESPACE_END

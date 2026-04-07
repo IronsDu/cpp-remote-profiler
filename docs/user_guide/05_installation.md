@@ -86,7 +86,7 @@ set(CMAKE_TOOLCHAIN_FILE /path/to/vcpkg/scripts/buildsystems/vcpkg.cmake)
 find_package(cpp-remote-profiler CONFIG REQUIRED)
 
 add_executable(my_app main.cpp)
-target_link_libraries(my_app cpp-remote-profiler::profiler_lib)
+target_link_libraries(my_app cpp-remote-profiler::profiler_core)
 ```
 
 ### 步骤 4: 编译和运行
@@ -236,7 +236,7 @@ target_link_libraries(my_app
 #include <iostream>
 
 int main() {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
     std::cout << "Profiler version: " << REMOTE_PROFILER_VERSION << std::endl;
 
     profiler.startCPUProfiler("my_profile.prof");
@@ -319,7 +319,7 @@ make -j$(nproc)
 sudo make install
 
 # 默认安装路径：
-#   /usr/local/lib/libprofiler_lib.so
+#   /usr/local/lib/libprofiler_core.so
 #   /usr/local/include/cpp-remote-profiler/
 ```
 
@@ -391,7 +391,7 @@ sudo dnf install cpp-remote-profiler-devel
 ldconfig -p | grep profiler_lib
 
 # 或检查特定路径
-ls -l /usr/local/lib/libprofiler_lib.*
+ls -l /usr/local/lib/libprofiler_core.*
 ```
 
 ### 检查头文件
@@ -400,8 +400,7 @@ ls -l /usr/local/lib/libprofiler_lib.*
 ls -l /usr/local/include/cpp-remote-profiler/
 # 应该看到：
 #   profiler_manager.h
-#   symbolize.h
-#   web_server.h
+#   profiler/drogon_adapter.h
 #   version.h
 ```
 
@@ -414,7 +413,7 @@ ls -l /usr/local/include/cpp-remote-profiler/
 #include <iostream>
 
 int main() {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     std::cout << "C++ Remote Profiler" << std::endl;
     std::cout << "Version: " << REMOTE_PROFILER_VERSION << std::endl;
@@ -446,7 +445,7 @@ Installation successful!
 
 **错误**:
 ```
-error while loading shared libraries: libprofiler_lib.so: cannot open shared object file
+error while loading shared libraries: libprofiler_core.so: cannot open shared object file
 ```
 
 **解决方案**:
@@ -591,7 +590,7 @@ conan remove cpp-remote-profiler --all
 
 ```bash
 sudo rm -rf /usr/local/include/cpp-remote-profiler
-sudo rm -f /usr/local/lib/libprofiler_lib.*
+sudo rm -f /usr/local/lib/libprofiler_core.*
 sudo ldconfig
 ```
 

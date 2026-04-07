@@ -93,7 +93,7 @@ target_link_libraries(my_app
 ```cpp
 // web_profiling_server.cpp
 #include "profiler_manager.h"
-#include "web_server.h"
+#include "profiler/drogon_adapter.h"
 #include <drogon/drogon.h>
 #include <iostream>
 
@@ -104,7 +104,7 @@ int main() {
     profiler::ProfilerManager profiler;
 
     // 注册所有 profiling 相关的 HTTP 端点到 Drogon
-    profiler::registerHttpHandlers(profiler);
+    profiler::registerDrogonHandlers(profiler);
 
     // 配置 Drogon 服务器
     drogon::app().addListener("0.0.0.0", 8080);
@@ -123,14 +123,14 @@ int main() {
 
 ```cpp
 #include "profiler_manager.h"
-#include "web_server.h"
+#include "profiler/drogon_adapter.h"
 #include <drogon/drogon.h>
 
 int main() {
     profiler::ProfilerManager profiler;
 
     // 注册 profiling 端点
-    profiler::registerHttpHandlers(profiler);
+    profiler::registerDrogonHandlers(profiler);
 
     // 注册你自己的业务端点
     drogon::app().registerHandler(

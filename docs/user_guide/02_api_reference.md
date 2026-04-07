@@ -461,14 +461,14 @@ static void setSignalChaining(bool enable);
 
 ---
 
-## Web Server API (Drogon 便捷函数)
+## Drogon Adapter API
 
-### registerHttpHandlers
+### registerDrogonHandlers
 
 使用 Drogon 时的一键注册函数。
 
 ```cpp
-void registerHttpHandlers(profiler::ProfilerManager& profiler);
+void registerDrogonHandlers(profiler::ProfilerManager& profiler);
 ```
 
 **说明**: 注册所有 profiling 端点到 Drogon 全局 app。需要在链接时加入 `profiler_web` 目标。
@@ -476,12 +476,12 @@ void registerHttpHandlers(profiler::ProfilerManager& profiler);
 **示例**:
 ```cpp
 #include "profiler_manager.h"
-#include "web_server.h"
+#include "profiler/drogon_adapter.h"
 #include <drogon/drogon.h>
 
 int main() {
     profiler::ProfilerManager profiler;
-    profiler::registerHttpHandlers(profiler);
+    profiler::registerDrogonHandlers(profiler);
     drogon::app().addListener("0.0.0.0", 8080).run();
 }
 ```

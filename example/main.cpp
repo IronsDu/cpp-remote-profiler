@@ -1,5 +1,5 @@
+#include "profiler/drogon_adapter.h"
 #include "profiler_manager.h"
-#include "web_server.h"
 #include "workload.h"
 #include <chrono>
 #include <iostream>
@@ -35,7 +35,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
 #ifdef REMOTE_PROFILER_ENABLE_WEB
     // Register all HTTP route handlers with Drogon
     std::cout << "Registering HTTP handlers...\n";
-    profiler::registerHttpHandlers(profiler);
+    profiler::registerDrogonHandlers(profiler);
 
     // Start server (blocking)
     std::cout << "Starting server on " << host << ":" << port << "...\n";
