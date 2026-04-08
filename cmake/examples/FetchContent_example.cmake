@@ -48,6 +48,6 @@ FetchContent_MakeAvailable(cpp-remote-profiler)
 
 # Link to your target
 # target_link_libraries(your_target
-#     cpp-remote-profiler::profiler_lib
+#     cpp-remote-profiler::profiler_web
 #     Drogon::Drogon  # Required if using web features
 # )

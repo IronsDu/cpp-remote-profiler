@@ -45,11 +45,13 @@ sudo make install DESTDIR=/opt/cpp-remote-profiler
 └── include/
     └── cpp-remote-profiler/
         ├── profiler_manager.h
-        ├── symbolize.h
+        ├── profiler_version.h
+        ├── version.h
         ├── profiler/
-│           ├── drogon_adapter.h
-│           ├── http_handlers.h
-        ├── web_resources.h
+        │   ├── drogon_adapter.h
+        │   ├── http_handlers.h
+        │   ├── log_sink.h
+        │   └── logger.h
         └── version.h
 ```
 
@@ -126,10 +128,9 @@ find_package(cpp-remote-profiler REQUIRED)
 # 创建可执行文件
 add_executable(my_app main.cpp)
 
-# 链接库（需要同时链接 Drogon）
+# 链接库（使用 profiler_web 自动带上 Drogon）
 target_link_libraries(my_app
-    cpp-remote-profiler::profiler_core
-    Drogon::Drogon
+    cpp-remote-profiler::profiler_web
 )
 ```
 
@@ -213,8 +214,7 @@ find_package(cpp-remote-profiler REQUIRED)
 add_executable(web_app main.cpp)
 
 target_link_libraries(web_app
-    cpp-remote-profiler::profiler_core
-    Drogon::Drogon
+    cpp-remote-profiler::profiler_web
 )
 ```
 
@@ -326,7 +326,7 @@ cmake ..
 undefined reference to `drogon::...`
 ```
 
-**原因**: profiler_lib 包含 Web 功能，需要链接 Drogon
+**原因**: profiler_web 依赖 Drogon，需要链接 Drogon
 
 **解决方案**:
 
@@ -456,7 +456,8 @@ make
 ```bash
 # 删除安装的文件
 sudo rm -rf /usr/local/include/cpp-remote-profiler
-sudo rm -f /usr/local/lib/libprofiler_lib.*
+sudo rm -f /usr/local/lib/libprofiler_core.*
+sudo rm -f /usr/local/lib/libprofiler_web.*
 sudo rm -rf /usr/local/lib/cmake/cpp-remote-profiler
 
 # 更新动态链接库缓存

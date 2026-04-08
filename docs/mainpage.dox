@@ -10,27 +10,26 @@
  *
  * - @b CPU @b Profiling: CPU performance analysis using gperftools
  * - @b Heap @b Profiling: Memory usage analysis and leak detection
+ * - @b Heap @b Growth @b Profiling: Heap growth analysis (no env var needed)
  * - @b Thread @b Stack @b Capture: Get call stacks of all threads
  * - @b Standard @b pprof @b Interface: Compatible with Go pprof tools
+ * - @b Framework @b Agnostic: ProfilerHttpHandlers work with any web framework
  * - @b Web @b Interface: Beautiful web control panel with one-click flame graph
  * - @b RESTful @b API: Complete HTTP API endpoints
+ * - @b Configurable @b Logging: Custom LogSink integration
  *
  * @section getting_started Getting Started
  *
  * @subsection quick_example Quick Example
  *
  * @code{.cpp}
- * #include <drogon/drogon.h>
  * #include "profiler_manager.h"
- * #include "web_server.h"
+ * #include "profiler/drogon_adapter.h"
+ * #include <drogon/drogon.h>
  *
  * int main() {
- *     auto& profiler = profiler::ProfilerManager::getInstance();
- *
- *     // Register HTTP handlers
- *     profiler::registerHttpHandlers(profiler);
- *
- *     // Start HTTP server
+ *     profiler::ProfilerManager profiler;
+ *     profiler::registerDrogonHandlers(profiler);
  *     drogon::app().addListener("0.0.0.0", 8080).run();
  *     return 0;
  * }

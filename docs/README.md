@@ -54,8 +54,8 @@
 详细的 API 文档（待完善）。
 
 - [ProfilerManager API](library_api/profiler_manager.md)
-- [Symbolize API](library_api/symbolize.md)
-- [Web Server API](library_api/web_server.md)
+- [HTTP Handlers API](library_api/http_handlers.md)
+- [Log Sink API](library_api/log_sink.md)
 
 ### 开发者指南
 贡献者和维护者文档。

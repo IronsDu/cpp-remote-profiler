@@ -133,13 +133,13 @@ target_link_libraries(your_app
 )
 ```
 
-链接顺序很重要：
+确保使用正确的 CMake 目标名：
 ```cmake
-# 错误的顺序
-target_link_libraries(your_app pthread profiler_lib)
+# 核心功能
+target_link_libraries(your_app cpp-remote-profiler::profiler_core)
 
-# 正确的顺序
-target_link_libraries(your_app profiler_lib pthread)
+# 如果需要 Web 界面
+target_link_libraries(your_app cpp-remote-profiler::profiler_web)
 ```
 
 ---
@@ -465,7 +465,7 @@ setenv("TCMALLOC_SAMPLE_PARAMETER", "524288", 1);
 2. **确保链接 tcmalloc**:
 ```cmake
 target_link_libraries(your_app
-    profiler_lib
+    cpp-remote-profiler::profiler_core
     tcmalloc  # 或 ${GPERFTOOLS_LIBRARIES}
     pthread
 )
@@ -626,7 +626,7 @@ profiler::ProfilerManager::setStackCaptureSignal(SIGUSR2);
 
 1. ✅ 编译时使用了 `-g` 选项
 2. ✅ 设置了 `TCMALLOC_SAMPLE_PARAMETER` (用于 heap profiling)
-3. ✅ 链接了所有必需的库（profiler_lib, tcmalloc, pthread）
+3. ✅ 链接了所有必需的库（profiler_core, tcmalloc, pthread）
 4. ✅ 服务器端口未被占用
 5. ✅ 有足够的磁盘空间存储 profile 文件
 6. ✅ 使用了支持的操作系统（Linux）
