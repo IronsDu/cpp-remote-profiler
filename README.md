@@ -1,6 +1,24 @@
 # C++ Remote Profiler
 
-类似 Go pprof 和 brpc pprof service 的 C++ 远程性能分析工具，基于 gperftools 和 Drogon 框架实现。
+类似 Go pprof 和 brpc pprof service 的 C++ 远程性能分析工具，基于 gperftools 和 Drogon 框架（可选）实现。
+
+## 目录
+
+- [版本说明](#-版本说明)
+- [功能特性](#-功能特性)
+- [设计理念](#-设计理念)
+- [快速开始](#-快速开始)
+- [使用方法](#-使用方法)
+- [如何查看火焰图](#-如何查看火焰图)
+- [API 端点](#-api-端点)
+- [项目结构](#-项目结构)
+- [运行测试](#-运行测试)
+- [代码格式检查](#-代码格式检查)
+- [集成到你的项目](#-集成到你的项目)
+- [配置说明](#-配置说明)
+- [注意事项](#-注意事项)
+- [与其他工具的对比](#-与其他工具的对比)
+- [许可证](#-许可证)
 
 **当前版本**: v0.1.0 (开发阶段)
 
@@ -39,9 +57,13 @@
 
 - ✅ **CPU Profiling**: 使用 gperftools 进行 CPU 性能分析
 - ✅ **Heap Profiling**: 内存使用分析和内存泄漏检测（调用 tcmalloc sample）
+- ✅ **Heap Growth Profiling**: 堆增长分析，无需 TCMALLOC_SAMPLE_PARAMETER 环境变量
 - ✅ **线程堆栈捕获**: 获取所有线程的调用堆栈，支持动态线程数
 - ✅ **标准 pprof 接口**: 支持 Go pprof 工具直接访问
 - ✅ **Web 界面**: 美观的 Web 控制面板，支持一键式火焰图分析
+- ✅ **框架无关**: ProfilerHttpHandlers 提供框架无关的 handler，可集成任意 Web 框架
+- ✅ **Drogon 可选**: Web 界面依赖 Drogon，但核心 profiling 功能完全独立
+- ✅ **可配置日志系统**: 支持自定义 LogSink，集成到应用日志系统
 - ✅ **RESTful API**: 完整的 HTTP API 接口
 - ✅ **依赖管理**: 使用 vcpkg 管理所有依赖
 - ✅ **信号处理器安全**: 保存并恢复用户程序的信号处理器
@@ -52,6 +74,11 @@
 
 1. **标准 pprof 模式**: 提供 `/pprof/profile`、`/pprof/heap` 接口，返回原始 profile 文件，兼容 Go pprof 工具
 2. **一键分析模式**: 提供 `/api/cpu/analyze` 等接口，直接返回 SVG，适合浏览器查看
+
+**架构特点**:
+- **核心库与 Web 解耦**: `profiler_core` 不依赖任何 Web 框架，`profiler_web` 是可选的 Drogon 适配层
+- **框架无关的 Handler**: `ProfilerHttpHandlers` 返回 `HandlerResponse` 结构体，可与任意 Web 框架集成
+- **非单例设计**: `ProfilerManager` 是普通类，用户自行管理生命周期
 
 **接口命名规则**:
 - `/pprof/*` - 标准 Go pprof 接口
@@ -116,11 +143,14 @@ cd vcpkg
 ```
 
 这将自动安装以下依赖：
-- drogon (Web 框架)
+- drogon (Web 框架，可选)
 - gtest (测试框架)
 - nlohmann-json (JSON 库)
 - openssl
 - zlib
+- protobuf
+- backward-cpp (栈回溯)
+- gperftools (CPU/Heap 性能分析)
 
 ### 4. 编译项目
 
@@ -290,24 +320,34 @@ cpp-remote-profiler/
 ├── build.sh                    # 构建脚本
 ├── start.sh                    # 启动脚本
 ├── include/
-│   ├── profiler_manager.h      # Profiler 管理器
-│   ├── symbolize.h             # 符号化引擎
-│   ├── web_resources.h         # Web 资源（嵌入的 HTML）
-│   ├── web_server.h            # HTTP 服务器
-│   └── version.h               # 版本信息
+│   ├── profiler_manager.h      # Profiler 管理器（非单例）
+│   ├── profiler_version.h.in   # 版本信息模板（CMake 生成）
+│   ├── version.h               # 版本宏（向后兼容）
+│   └── profiler/
+│       ├── http_handlers.h     # 框架无关的 HTTP 处理器
+│       ├── drogon_adapter.h    # Drogon 适配层（可选）
+│       ├── log_sink.h          # 日志 Sink 接口
+│       └── logger.h            # 日志配置接口
 ├── src/
-│   ├── profiler_manager.cpp
-│   ├── symbolize.cpp
+│   ├── profiler_manager.cpp    # Profiler 管理器实现
+│   ├── symbolize.cpp           # 符号化引擎
+│   ├── http_handlers.cpp       # HTTP 处理器实现（框架无关）
+│   ├── drogon_adapter.cpp      # Drogon 适配层实现（可选）
 │   ├── web_resources.cpp       # 嵌入的 Web 资源
-│   └── web_server.cpp          # HTTP 路由处理
+│   └── internal/               # 内部实现（不对外暴露）
+│       ├── log_manager.h/cpp   # 日志管理器
+│       ├── default_log_sink.h/cpp # 默认日志实现（std::cout/cerr）
+│       ├── log_macros.h        # 内部日志宏
+│       └── ...                 # 其他内部头文件
 ├── example/
 │   ├── main.cpp                # 示例程序主入口
 │   ├── workload.cpp            # 工作负载示例
 │   ├── workload.h
 │   └── custom_signal.cpp       # 自定义信号示例
 ├── tests/
-│   ├── test_cpu_profile.cpp
-│   └── test_full_flow.cpp
+│   ├── test_cpu_profile.cpp    # CPU profiling 测试
+│   ├── test_full_flow.cpp      # 完整流程测试
+│   └── test_logger.cpp         # 日志系统测试
 ├── docs/                       # 用户文档
 │   ├── README.md               # 文档索引
 │   └── user_guide/             # 用户指南
@@ -317,6 +357,8 @@ cpp-remote-profiler/
 │       ├── 04_troubleshooting.md
 │       ├── 05_installation.md
 │       └── 06_using_find_package.md
+├── scripts/
+│   └── check-format.sh         # 代码格式检查脚本
 └── vcpkg/                      # vcpkg 包管理器
 ```
 
@@ -324,8 +366,11 @@ cpp-remote-profiler/
 
 ```bash
 cd build
+ctest --output-on-failure
+# 或单独运行：
 ./test_cpu_profile
 ./test_full_flow
+./test_logger
 ```
 
 运行完整的火焰图测试：
@@ -377,49 +422,70 @@ http://localhost:8080
 
 ## 💡 集成到你的项目
 
-### 选项 1: 作为 HTTP 服务集成（推荐）
+### 选项 1: 仅使用核心 profiling 功能（无 Web 依赖）
 
-将 profiler 作为一个独立的 HTTP 服务运行：
+只需链接 `profiler_core`，不需要 Drogon：
 
-```cpp
-#include <drogon/drogon.h>
-
-int main() {
-    // 启动 profiler HTTP 服务
-    // 监听 8080 端口，提供 /prof 和 /heap 接口
-    // 你的主程序可以在其他端口运行
-    // 通过 HTTP 请求获取 profile 数据
-}
+```cmake
+find_package(cpp-remote-profiler REQUIRED)
+target_link_libraries(my_app cpp-remote-profiler::profiler_core)
 ```
 
-### 选项 2: 使用 gperftools 直接集成
-
 ```cpp
-#include <gperftools/profiler.h>
+#include "profiler_manager.h"
 
 int main() {
-    // 启动 CPU profiler
-    ProfilerStart("/tmp/my_app.prof");
+    profiler::ProfilerManager profiler;
 
-    // 运行需要分析的代码
-    yourCodeToProfile();
+    // 启动 CPU profiling
+    profiler.startCPUProfiler("cpu.prof");
 
-    // 停止 CPU profiler
-    ProfilerStop();
+    // ... 运行你的代码 ...
 
-    // 使用 pprof 工具分析
-    // go tool pprof /tmp/my_app.prof
+    profiler.stopCPUProfiler();
     return 0;
 }
 ```
 
-### 编译你的程序
+### 选项 2: 使用 Drogon Web 界面（推荐）
 
-```bash
-g++ -o your_app your_app.cpp \
-    -ltcmalloc_and_profiler \
-    -lprofiler \
-    -lpthread
+链接 `profiler_web` 即可获得完整的 Web 控制面板：
+
+```cmake
+find_package(cpp-remote-profiler REQUIRED)
+find_package(Drogon CONFIG REQUIRED)
+target_link_libraries(my_app
+    cpp-remote-profiler::profiler_web
+    Drogon::Drogon
+)
+```
+
+```cpp
+#include "profiler_manager.h"
+#include "profiler/drogon_adapter.h"
+#include <drogon/drogon.h>
+
+int main() {
+    profiler::ProfilerManager profiler;
+    profiler::registerDrogonHandlers(profiler);
+    drogon::app().addListener("0.0.0.0", 8080).run();
+}
+```
+
+### 选项 3: 与任意 Web 框架集成
+
+使用框架无关的 `ProfilerHttpHandlers`，只链接 `profiler_core`：
+
+```cpp
+#include "profiler_manager.h"
+#include "profiler/http_handlers.h"
+
+profiler::ProfilerManager profiler;
+profiler::ProfilerHttpHandlers handlers(profiler);
+
+// 调用 handler，获得框架无关的响应
+auto resp = handlers.handleCpuAnalyze(10, "flamegraph");
+// resp.status, resp.content_type, resp.body → 用你的框架包装
 ```
 
 ### 配置信号（可选）
@@ -430,10 +496,10 @@ g++ -o your_app your_app.cpp \
 #include "profiler_manager.h"
 
 int main() {
-    // 在使用 Profiler 之前设置信号
+    // 在创建 ProfilerManager 之前设置信号
     profiler::ProfilerManager::setStackCaptureSignal(SIGRTMIN + 5);
 
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     // ... 正常使用 profiler ...
 }
@@ -445,6 +511,32 @@ int main() {
 - `SIGRTMIN` 到 `SIGRTMAX` - 实时信号，更安全
 
 **示例程序**：参考 `example/custom_signal.cpp` 查看详细用法。
+
+### 配置日志（可选）
+
+可以自定义日志输出，集成到你的应用日志系统：
+
+```cpp
+#include "profiler_manager.h"
+#include "profiler/log_sink.h"
+
+class MyAppLogSink : public profiler::LogSink {
+public:
+    void log(profiler::LogLevel level, const char* file, int line,
+             const char* function, const char* message) override {
+        // 转发到你的日志系统
+        MY_APP_LOG("[Profiler] {}:{} - {}", file, line, message);
+    }
+};
+
+int main() {
+    profiler::ProfilerManager profiler;
+    profiler.setLogSink(std::make_shared<MyAppLogSink>());
+    profiler.setLogLevel(profiler::LogLevel::Debug);
+
+    // ... 正常使用 profiler ...
+}
+```
 
 ## ⚙️ 配置说明
 
@@ -485,11 +577,11 @@ cd vcpkg
 1. **编译选项**: 使用 `-g` 编译选项保留调试符号，以便正确显示函数名
 2. **性能开销**: CPU profiler 会有 1-5% 的性能开销
 3. **Heap Profiler**: 需要 tcmalloc 内存分配器和 `TCMALLOC_SAMPLE_PARAMETER` 环境变量
-4. **生产环境**: 谨慎使用，建议在开发/测试环境中使用
-5. **并发限制**: 同一时间只能有一个 CPU profiling 请求
-6. **环境变量**: 使用 heap profiling 前必须设置 `TCMALLOC_SAMPLE_PARAMETER`
+4. **Heap Growth**: 无需 `TCMALLOC_SAMPLE_PARAMETER`，可即时获取堆增长数据
+5. **生产环境**: 谨慎使用，建议在开发/测试环境中使用
+6. **并发限制**: 同一时间只能有一个 CPU profiling 请求
 7. **信号冲突**: 默认使用 SIGUSR1，如与你的程序冲突，请使用 `setStackCaptureSignal()` 配置其他信号
-8. **线程安全**: 线程堆栈捕获使用信号处理器，确保程序正确处理 SIGUSR1（或配置的信号）
+8. **线程安全**: 所有公共 API 都是线程安全的
 
 ## 🎨 与其他工具的对比
 

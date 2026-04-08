@@ -29,7 +29,7 @@ FetchContent_MakeAvailable(cpp-remote-profiler)
 # Find dependencies (manual - since we're not using vcpkg here)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GPERFTOOLS REQUIRED libprofiler libtcmalloc)
-find_package(Drogon REQUIRED)
+# Drogon is pulled in automatically by profiler_web target
 
 # ============================================================================
 # Build example executable
@@ -38,8 +38,7 @@ find_package(Drogon REQUIRED)
 add_executable(fetch_content_example FetchContent_integration_example.cpp)
 
 target_link_libraries(fetch_content_example
-    profiler_lib
-    Drogon::Drogon
+    cpp-remote-profiler::profiler_web
     ${GPERFTOOLS_LIBRARIES}
 )
 
@@ -51,4 +50,4 @@ target_link_libraries(fetch_content_example
 # add_subdirectory(/path/to/cpp-remote-profiler)
 
 # Then link:
-# target_link_libraries(your_app profiler_lib)
+# target_link_libraries(your_app cpp-remote-profiler::profiler_core)

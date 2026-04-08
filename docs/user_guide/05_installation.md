@@ -224,7 +224,7 @@ add_executable(my_app main.cpp)
 
 # 链接库
 target_link_libraries(my_app
-    profiler_lib
+    cpp-remote-profiler::profiler_core
     Drogon::Drogon  # 如果使用 Web 功能
 )
 ```
@@ -349,7 +349,7 @@ project(MyApp)
 add_subdirectory(/path/to/cpp-remote-profiler build/cpp-remote-profiler)
 
 add_executable(my_app main.cpp)
-target_link_libraries(my_app profiler_lib)
+target_link_libraries(my_app cpp-remote-profiler::profiler_core)
 ```
 
 ---
@@ -388,7 +388,7 @@ sudo dnf install cpp-remote-profiler-devel
 
 ```bash
 # 检查动态库
-ldconfig -p | grep profiler_lib
+ldconfig -p | grep profiler_core
 
 # 或检查特定路径
 ls -l /usr/local/lib/libprofiler_core.*
@@ -426,7 +426,7 @@ int main() {
 编译并运行：
 
 ```bash
-g++ -std=c++20 test_install.cpp -lprofiler_lib -o test_install
+g++ -std=c++20 test_install.cpp -lprofiler_core -o test_install
 ./test_install
 ```
 
