@@ -1,104 +1,92 @@
 /// @file default_log_sink.cpp
-/// @brief Default log sink implementation using spdlog
+/// @brief Default log sink implementation using std::cout/std::cerr
 
 #include "default_log_sink.h"
-#include <mutex>
-#include <spdlog/pattern_formatter.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/spdlog.h>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+#include <iostream>
+#include <string>
 
 PROFILER_NAMESPACE_BEGIN
 
 namespace internal {
 
-// Helper to convert profiler LogLevel to spdlog level
-static spdlog::level::level_enum toSpdlogLevel(LogLevel level) {
+static const char* levelToString(LogLevel level) {
     switch (level) {
     case LogLevel::Trace:
-        return spdlog::level::trace;
+        return "TRACE";
     case LogLevel::Debug:
-        return spdlog::level::debug;
+        return "DEBUG";
     case LogLevel::Info:
-        return spdlog::level::info;
+        return "INFO";
     case LogLevel::Warning:
-        return spdlog::level::warn;
+        return "WARN";
     case LogLevel::Error:
-        return spdlog::level::err;
+        return "ERROR";
     case LogLevel::Fatal:
-        return spdlog::level::critical;
+        return "FATAL";
     default:
-        return spdlog::level::info;
+        return "UNKNOWN";
     }
 }
 
-class DefaultLogSink::Impl {
-public:
-    Impl() {
-        // Create stderr sink with color
-        auto stderr_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+static std::string currentTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
 
-        // Create logger with custom pattern
-        // Format: [timestamp] [level] [source_location] message
-        logger_ = std::make_shared<spdlog::logger>("profiler", stderr_sink);
-        logger_->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%-7l%$] [%s:%#] %v");
-        logger_->set_level(spdlog::level::trace); // Let LogManager handle filtering
+    std::tm tm_buf{};
+    localtime_r(&time_t_now, &tm_buf);
 
-        // Register as default logger (optional, for spdlog internal use)
-        spdlog::register_logger(logger_);
-    }
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_buf);
 
-    ~Impl() {
-        spdlog::drop("profiler");
-    }
+    return std::string(buf) + "." + std::to_string(ms.count());
+}
 
-    void log(LogLevel level, const char* file, int line, const char* function, const char* message) {
-        // Extract just the filename from the full path
-        const char* filename = file;
-        if (const char* last_slash = strrchr(file, '/')) {
-            filename = last_slash + 1;
-        }
-
-        // Create source location for spdlog
-        spdlog::source_loc source_loc{filename, line, function};
-
-        // Log with spdlog
-        logger_->log(source_loc, toSpdlogLevel(level), "{}", message);
-
-        // For fatal errors, flush immediately
-        if (level == LogLevel::Fatal) {
-            logger_->flush();
-        }
-    }
-
-    void flush() {
-        logger_->flush();
-    }
-
-    void setLogLevel(LogLevel level) {
-        logger_->set_level(toSpdlogLevel(level));
-    }
-
-private:
-    std::shared_ptr<spdlog::logger> logger_;
-};
-
-DefaultLogSink::DefaultLogSink() : impl_(std::make_unique<Impl>()) {}
+DefaultLogSink::DefaultLogSink() = default;
 
 DefaultLogSink::~DefaultLogSink() = default;
 
-void DefaultLogSink::log(LogLevel level, const char* file, int line, const char* function, const char* message) {
+void DefaultLogSink::log(LogLevel level, const char* file, int line, [[maybe_unused]] const char* function,
+                         const char* message) {
+    if (static_cast<int>(level) < static_cast<int>(min_level_)) {
+        return;
+    }
+
+    // Extract filename from path
+    const char* filename = file;
+    if (const char* last_slash = strrchr(file, '/')) {
+        filename = last_slash + 1;
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
-    impl_->log(level, file, line, function, message);
+
+    // Format: [timestamp] [LEVEL] [file:line] message
+    std::string timestamp = currentTimestamp();
+
+    // Use stderr for warnings and above, stdout for the rest
+    auto& stream = (static_cast<int>(level) >= static_cast<int>(LogLevel::Warning)) ? std::cerr : std::cout;
+
+    stream << "[" << timestamp << "] [" << levelToString(level) << "] [" << filename << ":" << line << "] " << message
+           << std::endl;
+
+    if (level == LogLevel::Fatal) {
+        stream.flush();
+    }
 }
 
 void DefaultLogSink::flush() {
     std::lock_guard<std::mutex> lock(mutex_);
-    impl_->flush();
+    std::cout.flush();
+    std::cerr.flush();
 }
 
 void DefaultLogSink::setLogLevel(LogLevel level) {
     std::lock_guard<std::mutex> lock(mutex_);
-    impl_->setLogLevel(level);
+    min_level_ = level;
 }
 
 } // namespace internal

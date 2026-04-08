@@ -1,10 +1,13 @@
+#include "profiler/drogon_adapter.h"
 #include "profiler_manager.h"
-#include "web_server.h"
 #include "workload.h"
 #include <chrono>
-#include <drogon/drogon.h>
 #include <iostream>
 #include <thread>
+
+#ifdef REMOTE_PROFILER_ENABLE_WEB
+#include <drogon/drogon.h>
+#endif
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     std::cout << "C++ Remote Profiler Example\n";
@@ -16,7 +19,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     std::cout << "Starting HTTP server on " << host << ":" << port << "\n";
     std::cout << "Open your browser and visit: http://localhost:" << port << "\n\n";
 
-    // 启动后台线程 - 运行工作负载以生成 profiling 数据
+    // Start background workload thread
     std::thread worker([]() {
         while (true) {
             cpuIntensiveTask();
@@ -26,19 +29,24 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     });
     worker.detach();
 
-    // 获取 profiler 实例
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    // Create ProfilerManager instance (no longer a singleton)
+    profiler::ProfilerManager profiler;
 
-    // 注册所有 HTTP 路由处理器
+#ifdef REMOTE_PROFILER_ENABLE_WEB
+    // Register all HTTP route handlers with Drogon
     std::cout << "Registering HTTP handlers...\n";
-    profiler::registerHttpHandlers(profiler);
+    profiler::registerDrogonHandlers(profiler);
 
-    // 设置监听地址和端口
+    // Start server (blocking)
     std::cout << "Starting server on " << host << ":" << port << "...\n";
-    drogon::app().addListener(host, port);
-
-    // 启动服务器（阻塞）
-    drogon::app().run();
+    drogon::app().addListener(host, port).run();
+#else
+    std::cout << "Web UI disabled. Running in core-only mode.\n";
+    // Keep the main thread alive
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+#endif
 
     return 0;
 }

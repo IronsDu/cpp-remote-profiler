@@ -36,7 +36,7 @@ sudo make install DESTDIR=/opt/cpp-remote-profiler
 ```
 /usr/local/
 ├── lib/
-│   ├── libprofiler_lib.so           # 动态库
+│   ├── libprofiler_core.so           # 动态库
 │   └── cmake/
 │       └── cpp-remote-profiler/
 │           ├── cpp-remote-profiler-config.cmake
@@ -46,7 +46,9 @@ sudo make install DESTDIR=/opt/cpp-remote-profiler
     └── cpp-remote-profiler/
         ├── profiler_manager.h
         ├── symbolize.h
-        ├── web_server.h
+        ├── profiler/
+│           ├── drogon_adapter.h
+│           ├── http_handlers.h
         ├── web_resources.h
         └── version.h
 ```
@@ -73,7 +75,7 @@ find_package(cpp-remote-profiler REQUIRED)
 add_executable(my_app main.cpp)
 
 # 链接库
-target_link_libraries(my_app cpp-remote-profiler::profiler_lib)
+target_link_libraries(my_app cpp-remote-profiler::profiler_core)
 ```
 
 ### 方法 2: 使用 CMAKE_MODULE_PATH
@@ -126,7 +128,7 @@ add_executable(my_app main.cpp)
 
 # 链接库（需要同时链接 Drogon）
 target_link_libraries(my_app
-    cpp-remote-profiler::profiler_lib
+    cpp-remote-profiler::profiler_core
     Drogon::Drogon
 )
 ```
@@ -143,7 +145,7 @@ pkg_check_modules(GPERFTOOLS REQUIRED libprofiler libtcmalloc)
 add_executable(my_app main.cpp)
 
 target_link_libraries(my_app
-    cpp-remote-profiler::profiler_lib
+    cpp-remote-profiler::profiler_core
     ${GPERFTOOLS_LIBRARIES}
 )
 ```
@@ -164,7 +166,7 @@ set(CMAKE_CXX_STANDARD 20)
 find_package(cpp-remote-profiler REQUIRED)
 
 add_executable(app main.cpp)
-target_link_libraries(app cpp-remote-profiler::profiler_lib)
+target_link_libraries(app cpp-remote-profiler::profiler_core)
 ```
 
 **main.cpp**:
@@ -173,7 +175,7 @@ target_link_libraries(app cpp-remote-profiler::profiler_lib)
 #include <iostream>
 
 int main() {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
     std::cout << "Profiler Version: " << REMOTE_PROFILER_VERSION << std::endl;
 
@@ -211,7 +213,7 @@ find_package(cpp-remote-profiler REQUIRED)
 add_executable(web_app main.cpp)
 
 target_link_libraries(web_app
-    cpp-remote-profiler::profiler_lib
+    cpp-remote-profiler::profiler_core
     Drogon::Drogon
 )
 ```
@@ -219,19 +221,19 @@ target_link_libraries(web_app
 **main.cpp**:
 ```cpp
 #include "profiler_manager.h"
-#include "web_server.h"
+#include "profiler/drogon_adapter.h"
 #include <iostream>
 
 int main() {
-    profiler::ProfilerManager& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
 
-    // 注册 Web 界面
-    profiler::registerHttpHandlers(profiler);
+    // 注册 Web 界面到 Drogon
+    profiler::registerDrogonHandlers(profiler);
 
     std::cout << "Web UI: http://localhost:8080" << std::endl;
 
     // 启动服务器
-    // ... Drogon 服务器代码 ...
+    drogon::app().addListener("0.0.0.0", 8080).run();
 
     return 0;
 }
@@ -332,7 +334,7 @@ undefined reference to `drogon::...`
 # 在 CMakeLists.txt 中添加 Drogon
 find_package(Drogon REQUIRED)
 target_link_libraries(my_app
-    cpp-remote-profiler::profiler_lib
+    cpp-remote-profiler::profiler_core
     Drogon::Drogon  # 添加这一行
 )
 ```
@@ -381,7 +383,7 @@ target_include_directories(my_app PRIVATE /usr/local/include/cpp-remote-profiler
 
 **错误**:
 ```
-error while loading shared libraries: libprofiler_lib.so
+error while loading shared libraries: libprofiler_core.so
 ```
 
 **解决方案**:

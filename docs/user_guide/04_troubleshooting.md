@@ -117,11 +117,11 @@ brew install gperftools
 
 **错误信息**:
 ```
-undefined reference to `profiler::ProfilerManager::getInstance()'
+undefined reference to `profiler::ProfilerManager::startCPUProfiler(...)'
 ```
 
 **原因**:
-- 没有链接 profiler_lib
+- 没有链接 profiler_core
 - 链接顺序错误
 
 **解决方案**:
@@ -129,9 +129,7 @@ undefined reference to `profiler::ProfilerManager::getInstance()'
 确保在 CMakeLists.txt 中正确链接：
 ```cmake
 target_link_libraries(your_app
-    profiler_lib           # profiler 库
-    ${GPERFTOOLS_LIBRARIES} # gperftools 库
-    pthread                 # 线程库
+    cpp-remote-profiler::profiler_core  # profiler 核心库
 )
 ```
 
@@ -673,7 +671,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release ...
 #include "profiler_manager.h"
 
 int main() {
-    auto& profiler = profiler::ProfilerManager::getInstance();
+    profiler::ProfilerManager profiler;
     profiler.startCPUProfiler();
     // ...
     return 0;
