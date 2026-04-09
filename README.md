@@ -8,6 +8,8 @@
 - [功能特性](#-功能特性)
 - [设计理念](#-设计理念)
 - [快速开始](#-快速开始)
+- [CMake 构建选项](#-cmake-构建选项)
+- [安装](#-安装)
 - [使用方法](#-使用方法)
 - [如何查看火焰图](#-如何查看火焰图)
 - [API 端点](#-api-端点)
@@ -170,6 +172,115 @@ cmake .. \
     -DVCPKG_TARGET_TRIPLET=x64-linux-release
 make -j$(nproc)
 ```
+
+**构建类型说明**（`CMAKE_BUILD_TYPE`）：
+
+| 构建类型 | 说明 |
+|---------|------|
+| `Release` | 优化编译（`-O2`），适合生产使用 |
+| `Debug` | 无优化（`-O0`），适合调试 |
+| `RelWithDebInfo` | 优化编译且包含调试符号（**默认**），推荐用于 profiling |
+
+> 所有构建类型默认包含 `-g` 调试符号，以确保 profiling 结果能正确显示函数名。
+
+## ⚙️ CMake 构建选项
+
+项目提供以下 CMake 选项，可通过 `-D<Option>=<Value>` 在配置时指定。
+
+### 选项列表
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `BUILD_SHARED_LIBS` | `ON` | 构建动态库（`.so`），设为 `OFF` 则构建静态库（`.a`） |
+| `REMOTE_PROFILER_INSTALL` | `ON` | 生成 install target，设为 `OFF` 则不生成安装规则 |
+| `REMOTE_PROFILER_BUILD_EXAMPLES` | `ON` | 构建示例程序（`profiler_example`） |
+| `REMOTE_PROFILER_BUILD_TESTS` | `ON` | 构建测试程序 |
+| `REMOTE_PROFILER_ENABLE_WEB` | `ON` | 启用 Web UI（依赖 Drogon），设为 `OFF` 则无需 Drogon |
+| `ENABLE_COVERAGE` | `OFF` | 启用代码覆盖率报告（需要 GCC 或 Clang） |
+| `BUILD_DOCS` | `OFF` | 构建 API 文档（需要 Doxygen） |
+
+### 常见构建场景
+
+**完整构建**（默认，含 Web UI 和所有组件）：
+
+```bash
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DVCPKG_TARGET_TRIPLET=x64-linux-release
+```
+
+**最小化构建**（仅核心 profiling 库，不需要 Drogon）：
+
+```bash
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+    -DREMOTE_PROFILER_ENABLE_WEB=OFF \
+    -DREMOTE_PROFILER_BUILD_EXAMPLES=OFF \
+    -DREMOTE_PROFILER_BUILD_TESTS=OFF
+```
+
+**仅构建核心库（用于集成到其他项目）**：
+
+```bash
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+    -DREMOTE_PROFILER_ENABLE_WEB=OFF \
+    -DREMOTE_PROFILER_BUILD_EXAMPLES=OFF \
+    -DREMOTE_PROFILER_BUILD_TESTS=OFF \
+    -DBUILD_SHARED_LIBS=OFF
+```
+
+> 构建静态库（`BUILD_SHARED_LIBS=OFF`）后可使用 `cmake --install` 安装，其他项目通过 `find_package` 集成。详见 [集成到你的项目](#-集成到你的项目)。
+
+**构建带 API 文档的版本**：
+
+```bash
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+    -DBUILD_DOCS=ON
+```
+
+文档生成后位于 `build/docs/html/` 目录。
+
+## 📦 安装
+
+```bash
+# 安装到默认路径（通常为 /usr/local）
+cmake --install build
+
+# 安装到指定路径
+cmake --install build --prefix /opt/cpp-remote-profiler
+```
+
+安装后的文件布局：
+
+```
+<prefix>/
+├── include/cpp-remote-profiler/    # 头文件
+│   ├── profiler_manager.h
+│   ├── profiler_version.h
+│   ├── version.h
+│   └── profiler/
+│       ├── http_handlers.h
+│       └── log_sink.h
+├── lib/
+│   ├── libprofiler_core.so         # 核心库
+│   ├── libprofiler_web.so          # Web 库（如果启用）
+│   └── cmake/cpp-remote-profiler/  # CMake 配置文件
+│       ├── cpp-remote-profiler-config.cmake
+│       ├── cpp-remote-profiler-config-version.cmake
+│       └── cpp-remote-profiler-targets.cmake
+└── share/doc/cpp-remote-profiler/  # 文档（如果启用 BUILD_DOCS）
+```
+
+> 安装后，其他项目可通过 `find_package(cpp-remote-profiler)` 直接使用。详见 [集成到你的项目](#-集成到你的项目)。
 
 ### 5. 运行服务
 

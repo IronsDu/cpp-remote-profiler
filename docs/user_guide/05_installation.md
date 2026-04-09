@@ -1,14 +1,13 @@
 # 安装指南
 
-本文档详细介绍如何在不同环境下安装和集成 cpp-remote-profiler。
+本文档详细介绍如何编译、安装和集成 cpp-remote-profiler。
 
 ## 目录
+
 - [方法概览](#方法概览)
-- [方法 1: 使用 vcpkg](#方法-1-使用-vcpkg)
-- [方法 2: 使用 Conan](#方法-2-使用-conan)
-- [方法 3: 使用 FetchContent](#方法-3-使用-fetchcontent)
-- [方法 4: 手动编译](#方法-4-手动编译)
-- [方法 5: 系统包管理器](#方法-5-系统包管理器)
+- [方法 1: 从源码编译安装](#方法-1-从源码编译安装)
+- [方法 2: FetchContent 集成](#方法-2-fetchcontent-集成)
+- [方法 3: add_subdirectory 集成](#方法-3-add_subdirectory-集成)
 - [验证安装](#验证安装)
 - [故障排除](#故障排除)
 
@@ -16,397 +15,243 @@
 
 ## 方法概览
 
-| 方法 | 推荐度 | 适用场景 | 优点 | 缺点 |
-|------|-------|---------|------|------|
-| **vcpkg** | ⭐⭐⭐⭐⭐ | 跨平台项目 | 依赖管理完善、版本控制好 | 首次配置较慢 |
-| **Conan** | ⭐⭐⭐⭐ | 企业环境 | 二进制缓存、灵活配置 | 学习曲线稍陡 |
-| **FetchContent** | ⭐⭐⭐⭐ | 快速原型 | 无需预安装、最简单 | 每次重新编译 |
-| **手动编译** | ⭐⭐⭐ | 定制需求 | 完全控制 | 手动管理依赖 |
-| **系统包管理器** | ⭐⭐ | 生产部署 | 集成系统 | 版本可能滞后 |
+| 方法 | 适用场景 | 优点 | 缺点 |
+|------|---------|------|------|
+| **源码编译安装** | 系统级安装、多项目共享 | `find_package` 直接使用 | 需要手动管理更新 |
+| **FetchContent** | 快速集成、单项目使用 | 无需预安装、自动下载 | 每次构建需重新编译 |
+| **add_subdirectory** | 源码在同一工作区 | 完全控制、调试方便 | 需要管理源码位置 |
 
 ---
 
-## 方法 1: 使用 vcpkg
+## 方法 1: 从源码编译安装
 
-vcpkg 是微软开发的跨平台 C++ 包管理器，推荐使用。
+### 前置要求
 
-### 步骤 1: 安装 vcpkg
+- Linux 系统（已在 WSL2 和 Ubuntu 上测试）
+- CMake 3.15+
+- g++（支持 C++20）
+- git
+
+### 步骤 1: 安装系统依赖
 
 ```bash
-# 克隆 vcpkg
-git clone https://github.com/Microsoft/vcpkg.git
-cd vcpkg
-
-# Linux/macOS
-./bootstrap-vcpkg.sh
-
-# Windows
-.\bootstrap-vcpkg.bat
-
-# 添加到 PATH (可选)
-export PATH=$PATH:$(pwd)
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install -y \
+    cmake build-essential git pkg-config graphviz \
+    libgoogle-perftools-dev
 ```
 
-### 步骤 2: 安装 cpp-remote-profiler
-
-#### 方法 A: 从端口安装（推荐）
-
 ```bash
-# 方法 1: 使用 overlay ports
-cd /path/to/your/project
-vcpkg install cpp-remote-profiler --overlay-ports=/path/to/cpp-remote-profiler/ports
-
-# 方法 2: 添加到 vcpkg registry
-mkdir -p ~/.vcpkg-registries
-git clone https://github.com/your-org/cpp-remote-profiler-vcpkg ~/.vcpkg-registries/cpp-remote-profiler
-
-# 修改 vcpkg-configuration.json 添加 registry
+# Fedora/RHEL/CentOS
+sudo dnf install -y \
+    cmake gcc-c++ git pkg-config graphviz \
+    gperftools-devel
 ```
 
-#### 方法 B: 作为子模块使用
+### 步骤 2: 初始化 vcpkg 并安装依赖
 
 ```bash
-# 将 cpp-remote-profiler 添加为 git submodule
-cd your_project
-git submodule add https://github.com/your-org/cpp-remote-profiler.git third_party/cpp-remote-profiler
+# 克隆项目
+git clone https://github.com/IronsDu/cpp-remote-profiler.git
+cd cpp-remote-profiler
+
+# 初始化 vcpkg
+if [ ! -d "vcpkg" ]; then
+    git clone https://github.com/Microsoft/vcpkg.git
+    cd vcpkg && ./bootstrap-vcpkg.sh && cd ..
+fi
 
 # 安装依赖
-cd third_party/cpp-remote-profiler
-vcpkg install --triplet=x64-linux-release
+cd vcpkg
+./vcpkg install --triplet=x64-linux-release
+cd ..
 ```
 
-### 步骤 3: 在 CMake 项目中使用
-
-```cmake
-cmake_minimum_required(VERSION 3.15)
-project(MyApp)
-
-set(CMAKE_TOOLCHAIN_FILE /path/to/vcpkg/scripts/buildsystems/vcpkg.cmake)
-
-find_package(cpp-remote-profiler CONFIG REQUIRED)
-
-add_executable(my_app main.cpp)
-target_link_libraries(my_app cpp-remote-profiler::profiler_core)
-```
-
-### 步骤 4: 编译和运行
+### 步骤 3: 配置并编译
 
 ```bash
 mkdir build && cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
-make
-./my_app
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DVCPKG_TARGET_TRIPLET=x64-linux-release
+make -j$(nproc)
 ```
 
----
+可用的 CMake 选项：
 
-## 方法 2: 使用 Conan
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `BUILD_SHARED_LIBS` | `ON` | 构建动态库（`.so`），设为 `OFF` 则构建静态库（`.a`） |
+| `REMOTE_PROFILER_INSTALL` | `ON` | 生成 install target |
+| `REMOTE_PROFILER_BUILD_EXAMPLES` | `ON` | 构建示例程序 |
+| `REMOTE_PROFILER_BUILD_TESTS` | `ON` | 构建测试程序 |
+| `REMOTE_PROFILER_ENABLE_WEB` | `ON` | 启用 Web UI（依赖 Drogon） |
+| `ENABLE_COVERAGE` | `OFF` | 启用代码覆盖率报告 |
+| `BUILD_DOCS` | `OFF` | 构建 API 文档（需要 Doxygen） |
 
-Conan 是另一个流行的 C++ 包管理器，特别适合企业环境。
-
-### 步骤 1: 安装 Conan
+**常见配置示例**：
 
 ```bash
-# 安装 Conan 2.x
-pip install conan
-
-# 或使用 pip3
-pip3 install conan
-
-# 验证安装
-conan --version
+# 仅构建核心库（静态库，不含 Web UI）
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DREMOTE_PROFILER_ENABLE_WEB=OFF \
+    -DREMOTE_PROFILER_BUILD_EXAMPLES=OFF \
+    -DREMOTE_PROFILER_BUILD_TESTS=OFF
 ```
 
-### 步骤 2: 创建 Conan 配置
+### 步骤 4: 安装
 
 ```bash
-# 创建新配置
-conan config init
+# 安装到默认路径（/usr/local）
+sudo cmake --install .
 
-# 添加 cpp-remote-profiler registry (如果已发布)
-conan remote add cpp-remote-profiler https://your-conan-repo.com
+# 或安装到指定路径
+cmake --install . --prefix /opt/cpp-remote-profiler
 ```
 
-### 步骤 3: 安装 cpp-remote-profiler
+安装后的文件布局：
 
-#### 方法 A: 从 Conan Center 安装
-
-```bash
-# 搜索包
-conan search cpp-remote-profiler --remote=conancenter
-
-# 安装
-conan install --requires=cpp-remote-profiler/0.1.0
+```
+<prefix>/
+├── include/cpp-remote-profiler/    # 头文件
+│   ├── profiler_manager.h
+│   ├── profiler_version.h
+│   ├── version.h
+│   └── profiler/
+│       ├── http_handlers.h
+│       └── log_sink.h
+├── lib/
+│   ├── libprofiler_core.so         # 核心库
+│   ├── libprofiler_web.so          # Web 库（如果启用）
+│   └── cmake/cpp-remote-profiler/  # CMake 配置文件
+│       ├── cpp-remote-profiler-config.cmake
+│       ├── cpp-remote-profiler-config-version.cmake
+│       └── cpp-remote-profiler-targets.cmake
+└── share/doc/cpp-remote-profiler/  # 文档（如果启用 BUILD_DOCS）
 ```
 
-#### 方法 B: 从本地文件构建
-
-```bash
-cd /path/to/cpp-remote-profiler
-
-# 创建包
-conan create . \
-    --build=missing \
-    -s build_type=Release \
-    -o cpp-remote-profiler/*:shared=True
-```
-
-### 步骤 4: 在 CMake 项目中使用
-
-#### 方法 A: 使用 conan-cmake integration
-
-```cmake
-cmake_minimum_required(VERSION 3.15)
-project(MyApp)
-
-find_package(CPPRemoteProfiler REQUIRED)
-
-add_executable(my_app main.cpp)
-target_link_libraries(my_app CPPRemoteProfiler::CPPRemoteProfiler)
-```
-
-#### 方法 B: 使用生成器
-
-```bash
-# 生成 conanbuildinfo.cmake
-conan install . --output-folder=build --build=missing
-
-# 在 CMakeLists.txt 中
-include(${CMAKE_BINARY_DIR}/conan/conan_toolchain.cmake)
-```
-
----
-
-## 方法 3: 使用 FetchContent
-
-FetchContent 是 CMake 内置的功能，无需额外安装包管理器。
-
-### 优点
-- ✅ 无需预安装任何包管理器
-- ✅ 自动下载和集成
-- ✅ 适合快速原型开发
-
-### 缺点
-- ❌ 每次都需要重新编译
-- ❌ 无法跨项目共享二进制
-
-### 使用步骤
-
-#### 步骤 1: 修改 CMakeLists.txt
+### 步骤 5: 在项目中使用
 
 ```cmake
 cmake_minimum_required(VERSION 3.15)
 project(MyApp)
 
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 包含 FetchContent
-include(FetchContent)
-
-# 声明 cpp-remote-profiler
-FetchContent_Declare(
-    cpp-remote-profiler
-    GIT_REPOSITORY https://github.com/your-org/cpp-remote-profiler.git
-    GIT_TAG v0.1.0
-    GIT_SHALLOW TRUE
-)
-
-# 配置选项
-set(REMOTE_PROFILER_BUILD_EXAMPLES OFF CACHE BOOL "")
-set(REMOTE_PROFILER_BUILD_TESTS OFF CACHE BOOL "")
-set(REMOTE_PROFILER_INSTALL OFF CACHE BOOL "")
-
-# 获取并包含
-FetchContent_MakeAvailable(cpp-remote-profiler)
-
-# 你的可执行文件
-add_executable(my_app main.cpp)
-
-# 链接库
-target_link_libraries(my_app
-    cpp-remote-profiler::profiler_core
-    Drogon::Drogon  # 如果使用 Web 功能
-)
-```
-
-#### 步骤 2: 创建 main.cpp
-
-```cpp
-#include "profiler_manager.h"
-#include <iostream>
-
-int main() {
-    profiler::ProfilerManager profiler;
-    std::cout << "Profiler version: " << REMOTE_PROFILER_VERSION << std::endl;
-
-    profiler.startCPUProfiler("my_profile.prof");
-    // ... your code ...
-    profiler.stopCPUProfiler();
-
-    return 0;
-}
-```
-
-#### 步骤 3: 编译
-
-```bash
-mkdir build && cd build
-cmake ..
-make
-./my_app
-```
-
-### 完整示例
-
-参考 `cmake/examples/` 目录中的完整示例项目。
-
----
-
-## 方法 4: 手动编译
-
-手动编译提供了最大的灵活性，适合需要定制化的场景。
-
-### 步骤 1: 安装系统依赖
-
-#### Ubuntu/Debian
-
-```bash
-sudo apt-get update
-sudo apt-get install -y \
-    cmake build-essential git pkg-config graphviz \
-    libgoogle-perftools-dev libssl-dev zlib1g-dev
-```
-
-#### CentOS/RHEL/Fedora
-
-```bash
-# Fedora
-sudo dnf install -y \
-    cmake gcc-c++ git pkg-config graphviz \
-    gperftools-devel openssl-devel zlib-devel
-
-# CentOS/RHEL
-sudo yum install -y \
-    cmake gcc-c++ git pkgconfig graphviz \
-    gperftools-devel openssl-devel zlib-devel
-```
-
-#### macOS
-
-```bash
-brew install cmake gperftools openssl pkg-config graphviz
-```
-
-### 步骤 2: 克隆并编译
-
-```bash
-# 克隆仓库
-git clone https://github.com/your-org/cpp-remote-profiler.git
-cd cpp-remote-profiler
-
-# 编译
-mkdir build && cd build
-cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=ON
-
-make -j$(nproc)
-```
-
-### 步骤 3: 安装（可选）
-
-```bash
-sudo make install
-
-# 默认安装路径：
-#   /usr/local/lib/libprofiler_core.so
-#   /usr/local/include/cpp-remote-profiler/
-```
-
-### 步骤 4: 在你的项目中使用
-
-#### 方法 A: 使用已安装的库
-
-```cmake
-cmake_minimum_required(VERSION 3.15)
-project(MyApp)
-
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(PROFILER REQUIRED cpp-remote-profiler)
-
-add_executable(my_app main.cpp)
-target_include_directories(my_app PRIVATE ${PROFILER_INCLUDE_DIRS})
-target_link_libraries(my_app ${PROFILER_LIBRARIES})
-```
-
-#### 方法 B: 直接链接源码
-
-```cmake
-cmake_minimum_required(VERSION 3.15)
-project(MyApp)
-
-# 添加 cpp-remote-profiler 作为子目录
-add_subdirectory(/path/to/cpp-remote-profiler build/cpp-remote-profiler)
+find_package(cpp-remote-profiler REQUIRED)
 
 add_executable(my_app main.cpp)
 target_link_libraries(my_app cpp-remote-profiler::profiler_core)
 ```
 
+如果安装到非标准路径，需要在 CMake 配置时提示搜索路径：
+
+```bash
+cmake .. -Dcpp-remote-profiler_DIR=/opt/cpp-remote-profiler/lib/cmake/cpp-remote-profiler
+```
+
 ---
 
-## 方法 5: 系统包管理器
+## 方法 2: FetchContent 集成
 
-某些 Linux 发行版可能提供系统包。
+使用 CMake 内置的 FetchContent，无需预编译安装，适合快速集成。
 
-### Ubuntu (PPA)
+```cmake
+cmake_minimum_required(VERSION 3.15)
+project(MyApp)
 
-```bash
-sudo add-apt-repository ppa:your-org/cpp-remote-profiler
-sudo apt-get update
-sudo apt-get install libcpp-remote-profiler-dev
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+include(FetchContent)
+
+# 关闭 cpp-remote-profiler 自带的 examples/tests/install，避免冲突
+set(REMOTE_PROFILER_BUILD_EXAMPLES OFF CACHE BOOL "")
+set(REMOTE_PROFILER_BUILD_TESTS OFF CACHE BOOL "")
+set(REMOTE_PROFILER_INSTALL OFF CACHE BOOL "")
+
+FetchContent_Declare(
+    cpp-remote-profiler
+    GIT_REPOSITORY https://github.com/IronsDu/cpp-remote-profiler.git
+    GIT_TAG        v0.1.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(cpp-remote-profiler)
+
+add_executable(my_app main.cpp)
+
+# 仅使用核心 profiling 功能
+target_link_libraries(my_app profiler_core)
+
+# 如果需要 Web UI（需要系统安装 Drogon）
+# target_link_libraries(my_app profiler_web)
 ```
 
-### Arch Linux (AUR)
+> 完整示例参考 `cmake/examples/test_fetch_content/` 目录。
 
-```bash
-yay -S cpp-remote-profiler
-# 或
-paru -S cpp-remote-profiler
+---
+
+## 方法 3: add_subdirectory 集成
+
+将源码放在项目目录中，通过 `add_subdirectory` 引入。
+
+### 目录结构
+
+```
+my_project/
+├── CMakeLists.txt
+├── main.cpp
+└── third_party/
+    └── cpp-remote-profiler/   # git submodule 或源码
 ```
 
-### Fedora
+### CMakeLists.txt
 
-```bash
-sudo dnf install cpp-remote-profiler-devel
+```cmake
+cmake_minimum_required(VERSION 3.15)
+project(MyApp)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 关闭 cpp-remote-profiler 自带的 examples/tests/install
+set(REMOTE_PROFILER_BUILD_EXAMPLES OFF CACHE BOOL "")
+set(REMOTE_PROFILER_BUILD_TESTS OFF CACHE BOOL "")
+set(REMOTE_PROFILER_INSTALL OFF CACHE BOOL "")
+
+add_subdirectory(third_party/cpp-remote-profiler)
+
+add_executable(my_app main.cpp)
+target_link_libraries(my_app profiler_core)
 ```
+
+> 完整示例参考 `cmake/examples/test_fetch_content/` 目录（该示例使用 `add_subdirectory` 进行 CI 测试）。
 
 ---
 
 ## 验证安装
 
-### 检查库文件
+### 使用 find_package 验证（方法 1 安装后）
 
-```bash
-# 检查动态库
-ldconfig -p | grep profiler_core
+创建 `CMakeLists.txt`：
 
-# 或检查特定路径
-ls -l /usr/local/lib/libprofiler_core.*
+```cmake
+cmake_minimum_required(VERSION 3.15)
+project(test_install)
+set(CMAKE_CXX_STANDARD 20)
+find_package(cpp-remote-profiler REQUIRED)
+add_executable(test_install main.cpp)
+target_link_libraries(test_install cpp-remote-profiler::profiler_core)
 ```
 
-### 检查头文件
-
-```bash
-ls -l /usr/local/include/cpp-remote-profiler/
-# 应该看到：
-#   profiler_manager.h
-#   profiler/drogon_adapter.h
-#   version.h
-```
-
-### 测试程序
-
-创建测试文件 `test_install.cpp`:
+创建 `main.cpp`：
 
 ```cpp
 #include "profiler_manager.h"
@@ -414,44 +259,54 @@ ls -l /usr/local/include/cpp-remote-profiler/
 
 int main() {
     profiler::ProfilerManager profiler;
-
-    std::cout << "C++ Remote Profiler" << std::endl;
-    std::cout << "Version: " << REMOTE_PROFILER_VERSION << std::endl;
-    std::cout << "Installation successful!" << std::endl;
-
+    std::cout << "Installation OK" << std::endl;
     return 0;
 }
 ```
 
-编译并运行：
+编译运行：
 
 ```bash
-g++ -std=c++20 test_install.cpp -lprofiler_core -o test_install
+mkdir build && cd build
+cmake ..
+make
 ./test_install
 ```
 
 预期输出：
+
 ```
-C++ Remote Profiler
-Version: 0.1.0
-Installation successful!
+Installation OK
+```
+
+### 检查安装文件
+
+```bash
+# 检查库文件
+ls /usr/local/lib/libprofiler_core.*
+
+# 检查头文件
+ls /usr/local/include/cpp-remote-profiler/
+
+# 检查 CMake 配置
+ls /usr/local/lib/cmake/cpp-remote-profiler/
 ```
 
 ---
 
 ## 故障排除
 
-### 问题 1: 找不到库文件
+### 找不到共享库
 
-**错误**:
+**错误**：
 ```
 error while loading shared libraries: libprofiler_core.so: cannot open shared object file
 ```
 
-**解决方案**:
+**解决方案**：
 
 ```bash
-# 方法 1: 添加到 LD_LIBRARY_PATH
+# 方法 1: 添加到 LD_LIBRARY_PATH（临时）
 export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 # 方法 2: 永久添加
@@ -459,146 +314,56 @@ echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/cpp-remote-profiler.conf
 sudo ldconfig
 ```
 
----
+### CMake 找不到包
 
-### 问题 2: 找不到头文件
-
-**错误**:
+**错误**：
 ```
-fatal error: profiler_manager.h: No such file or directory
+Could not find a package configuration file provided by "cpp-remote-profiler"
 ```
 
-**解决方案**:
+**解决方案**：
+
+```bash
+# 指定安装路径前缀
+cmake .. -DCMAKE_PREFIX_PATH=/usr/local
+
+# 或直接指定 config 目录
+cmake .. -Dcpp-remote-profiler_DIR=/usr/local/lib/cmake/cpp-remote-profiler
+```
+
+### FetchContent 编译失败
+
+**可能原因**：缺少 vcpkg 管理的依赖（如 Drogon、absl、backward-cpp 等）
+
+**解决方案**：使用 `REMOTE_PROFILER_ENABLE_WEB=OFF` 关闭 Web 功能以减少依赖，或确保系统已安装所需依赖：
 
 ```cmake
-# 在 CMakeLists.txt 中明确指定
-target_include_directories(your_app PRIVATE /usr/local/include/cpp-remote-profiler)
+set(REMOTE_PROFILER_ENABLE_WEB OFF CACHE BOOL "")
 ```
 
----
+### gperftools 相关链接错误
 
-### 问题 3: CMake 找不到包
-
-**错误**:
+**错误**：
 ```
-Could not find package cpp-remote-profiler
+undefined reference to `ProfilerStart'
 ```
 
-**解决方案**:
+**解决方案**：确保系统安装了 gperftools：
 
 ```bash
-# vcpkg: 确保设置了工具链文件
-cmake .. -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+# Ubuntu/Debian
+sudo apt-get install libgoogle-perftools-dev
 
-# Conan: 先运行 conan install
-conan install . --output-folder=build
-
-# FetchContent: 检查网络连接和 Git 可用性
-git --version
-```
-
----
-
-### 问题 4: 依赖冲突
-
-**错误**:
-```
-Found both "libprofiler.a" and "libprofiler.so"
-```
-
-**解决方案**:
-
-```cmake
-# 明确指定使用共享库或静态库
-set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
-
-# 或在 find_package 前设置
-set(CMAKE_FIND_LIBRARY_SUFFIXES .so)
-```
-
----
-
-### 问题 5: 编译错误
-
-**错误**:
-```
-error: 'std::shared_ptr' does not name a type
-```
-
-**原因**: C++ 标准版本不对
-
-**解决方案**:
-
-```cmake
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-```
-
----
-
-## 最佳实践
-
-### 1. 生产环境
-
-```bash
-# 使用固定版本
-vcpkg install cpp-remote-profiler:x64-linux-release@0.1.0
-
-# 或使用锁文件
-conan lock create conanfile.py --user=your-org --channel=stable
-```
-
-### 2. 开发环境
-
-```bash
-# 使用 FetchContent，最简单
-# 或使用 git submodules
-git submodule add https://github.com/your-org/cpp-remote-profiler.git third_party/cpp-remote-profiler
-```
-
-### 3. CI/CD
-
-```yaml
-# GitHub Actions 示例
-- name: Install dependencies
-  run: |
-    vcpkg install cpp-remote-profiler --triplet=x64-linux-release
-
-- name: Configure CMake
-  run: |
-    cmake -B build \
-      -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
-```
-
----
-
-## 卸载
-
-### vcpkg
-
-```bash
-vcpkg remove cpp-remote-profiler --triplet=x64-linux-release
-```
-
-### Conan
-
-```bash
-conan remove cpp-remote-profiler --all
-```
-
-### 手动安装
-
-```bash
-sudo rm -rf /usr/local/include/cpp-remote-profiler
-sudo rm -f /usr/local/lib/libprofiler_core.*
-sudo ldconfig
+# Fedora/RHEL
+sudo dnf install gperftools-devel
 ```
 
 ---
 
 ## 更多信息
 
-- 📖 [快速开始指南](01_quick_start.md)
-- 📖 [API 参考手册](02_api_reference.md)
-- 📖 [集成示例](03_integration_examples.md)
-- 🏠 [返回文档首页](../README.md)
+- [快速开始指南](01_quick_start.md)
+- [API 参考手册](02_api_reference.md)
+- [集成示例](03_integration_examples.md)
+- [使用 find_package 集成](06_using_find_package.md)
+- [返回文档首页](../README.md)
