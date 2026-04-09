@@ -73,7 +73,18 @@ jobs:
       working-directory: build/release
       run: |
         ldd profiler_example
-        ldd libprofiler_lib.so
+        ldd libprofiler_core.so
+
+    - name: Test find_package integration
+      run: |
+        INSTALL_DIR=$(mktemp -d)
+        cmake --install build/release --prefix "$INSTALL_DIR"
+        cd cmake/examples/test_find_package
+        cmake -B build \
+          -Dcpp-remote-profiler_DIR="$INSTALL_DIR/lib/cmake/cpp-remote-profiler" \
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+        cmake --build build
+        echo "find_package integration test PASSED"
 
   # Code Coverage
   coverage:
@@ -213,4 +224,15 @@ jobs:
       working-directory: build/clang-release
       run: |
         ldd profiler_example
-        ldd libprofiler_lib.so
+        ldd libprofiler_core.so
+
+    - name: Test find_package integration
+      run: |
+        INSTALL_DIR=$(mktemp -d)
+        cmake --install build/clang-release --prefix "$INSTALL_DIR"
+        cd cmake/examples/test_find_package
+        cmake -B build \
+          -Dcpp-remote-profiler_DIR="$INSTALL_DIR/lib/cmake/cpp-remote-profiler" \
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+        cmake --build build
+        echo "find_package integration test PASSED"
