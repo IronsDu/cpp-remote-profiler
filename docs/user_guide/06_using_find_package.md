@@ -51,7 +51,6 @@ sudo make install DESTDIR=/opt/cpp-remote-profiler
         │   ├── drogon_adapter.h
         │   ├── http_handlers.h
         │   ├── log_sink.h
-        │   └── logger.h
         └── version.h
 ```
 

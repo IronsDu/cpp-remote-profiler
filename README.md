@@ -326,8 +326,7 @@ cpp-remote-profiler/
 │   └── profiler/
 │       ├── http_handlers.h     # 框架无关的 HTTP 处理器
 │       ├── drogon_adapter.h    # Drogon 适配层（可选）
-│       ├── log_sink.h          # 日志 Sink 接口
-│       └── logger.h            # 日志配置接口
+│       └── log_sink.h          # 日志 Sink 接口
 ├── src/
 │   ├── profiler_manager.cpp    # Profiler 管理器实现
 │   ├── symbolize.cpp           # 符号化引擎

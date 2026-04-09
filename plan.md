@@ -93,8 +93,7 @@ profiler.setLogLevel(profiler::LogLevel::Debug);
 #### 文件结构
 ```
 include/profiler/
-├── log_sink.h    # LogSink 接口 + LogLevel 枚举
-└── logger.h      # 仅 log 宏声明（日志配置移到 ProfilerManager 实例方法）
+└── log_sink.h    # LogSink 接口 + LogLevel 枚举
 
 src/internal/
 ├── log_manager.h         # 内部状态管理（非单例，由 ProfilerManager 持有）

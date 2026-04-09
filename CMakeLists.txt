@@ -113,7 +113,6 @@ set(PROFILER_CORE_SOURCES
 set(PROFILER_CORE_HEADERS
     include/profiler_manager.h
     include/profiler/log_sink.h
-    include/profiler/logger.h
     include/profiler/http_handlers.h
 )
 
@@ -286,7 +285,6 @@ if(REMOTE_PROFILER_INSTALL)
     # Install profiler subdirectory headers
     install(FILES
         include/profiler/log_sink.h
-        include/profiler/logger.h
         include/profiler/http_handlers.h
         DESTINATION include/cpp-remote-profiler/profiler
     )
