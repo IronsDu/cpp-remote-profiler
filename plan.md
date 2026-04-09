@@ -1681,7 +1681,13 @@ CI 中 `ldd` 步骤也引用了旧的 `libprofiler_lib.so`（应为 `libprofiler
 | 修改 | `cmake/cpp-remote-profiler-config.cmake.in` | 修复目标名、移除 PRIVATE 依赖、添加 profiler_web 支持 |
 | 新增 | `cmake/examples/test_find_package/CMakeLists.txt` | find_package 集成测试 CMake 配置 |
 | 新增 | `cmake/examples/test_find_package/main.cpp` | 最小验证程序 |
-| 修改 | `.github/workflows/ci.yml` | 添加集成测试步骤、修复 ldd 目标名 |
+| 新增 | `cmake/examples/test_fetch_content/CMakeLists.txt` | add_subdirectory 集成测试（模拟 FetchContent） |
+| 新增 | `cmake/examples/test_fetch_content/main.cpp` | 最小验证程序 |
+| 修改 | `.github/workflows/ci.yml` | 添加 find_package + add_subdirectory 集成测试、修复 ldd 目标名 |
+
+#### 发现的问题
+
+`add_subdirectory` 使用时 `profiler_version.h` 的 include 路径缺失。原因是主 CMakeLists.txt 使用全局 `include_directories(${CMAKE_CURRENT_BINARY_DIR})` 而非 target-specific 的 `target_include_directories`。后续需要修复。
 
 ---
 

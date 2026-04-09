@@ -86,6 +86,16 @@ jobs:
         cmake --build build
         echo "find_package integration test PASSED"
 
+    - name: Test add_subdirectory integration
+      run: |
+        cd cmake/examples/test_fetch_content
+        cmake -B build \
+          -DPROFILER_SOURCE_DIR="$GITHUB_WORKSPACE" \
+          -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/build/release/vcpkg_installed" \
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+        cmake --build build
+        echo "add_subdirectory integration test PASSED"
+
   # Code Coverage
   coverage:
     name: Code Coverage
