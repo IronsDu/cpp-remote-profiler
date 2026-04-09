@@ -1638,6 +1638,59 @@ yourFrameworkResponse.setBody(resp.body);
 
 ---
 
-**文档版本**: 1.3
-**最后更新**: 2026-04-07
+### 修复 cmake config 文件 & 添加 find_package 集成测试 (2026-04-09)
+
+#### 背景
+
+Drogon 解耦重构后，`cpp-remote-profiler-config.cmake.in` 未同步更新：
+1. 仍然引用旧目标名 `profiler_lib`（已改为 `profiler_core`/`profiler_web`）
+2. 尝试查找 Backward、absl 等 PRIVATE 依赖（消费者不需要）
+3. 没有处理可选的 `profiler_web` target
+4. 没有任何测试验证 `find_package` 的正确性
+
+CI 中 `ldd` 步骤也引用了旧的 `libprofiler_lib.so`（应为 `libprofiler_core.so`）。
+
+#### 变更内容
+
+1. **修复 `cmake/cpp-remote-profiler-config.cmake.in`**:
+   - 移除 Backward、absl 的查找（PRIVATE 依赖，不暴露给消费者）
+   - 只保留 gperftools（profiler_core 唯一的 PUBLIC 依赖）
+   - 添加可选 `profiler_web` target 检测（`CPP_REMOTE_PROFILER_WEB_AVAILABLE` 变量）
+   - 正确检查 `cpp-remote-profiler::profiler_core` target 是否存在
+
+2. **添加 `cmake/examples/test_find_package/`**:
+   - `CMakeLists.txt` — `find_package(cpp-remote-profiler REQUIRED)` + 链接 `profiler_core`
+   - 如果 `profiler_web` 可用，额外构建 `test_web` 目标
+   - `main.cpp` — 最小验证程序
+
+3. **更新 `.github/workflows/ci.yml`**:
+   - GCC 和 Clang job 各增加 `find_package` 集成测试步骤
+   - 修复 `ldd` 步骤：`libprofiler_lib.so` → `libprofiler_core.so`
+
+#### 测试验证
+
+- ✅ `find_package(cpp-remote-profiler)` 配置成功
+- ✅ `test_core`（链接 profiler_core）编译链接运行成功
+- ✅ `test_web`（链接 profiler_web）编译链接运行成功
+- ✅ 生成的 config 文件不再查找 Backward/absl
+
+#### 文件变更清单
+
+| 操作 | 文件 | 说明 |
+|------|------|------|
+| 修改 | `cmake/cpp-remote-profiler-config.cmake.in` | 修复目标名、移除 PRIVATE 依赖、添加 profiler_web 支持 |
+| 新增 | `cmake/examples/test_find_package/CMakeLists.txt` | find_package 集成测试 CMake 配置 |
+| 新增 | `cmake/examples/test_find_package/main.cpp` | 最小验证程序 |
+| 新增 | `cmake/examples/test_fetch_content/CMakeLists.txt` | add_subdirectory 集成测试（模拟 FetchContent） |
+| 新增 | `cmake/examples/test_fetch_content/main.cpp` | 最小验证程序 |
+| 修改 | `.github/workflows/ci.yml` | 添加 find_package + add_subdirectory 集成测试、修复 ldd 目标名 |
+
+#### 发现的问题
+
+`add_subdirectory` 使用时 `profiler_version.h` 的 include 路径缺失。原因是主 CMakeLists.txt 使用全局 `include_directories(${CMAKE_CURRENT_BINARY_DIR})` 而非 target-specific 的 `target_include_directories`。后续需要修复。
+
+---
+
+**文档版本**: 1.4
+**最后更新**: 2026-04-09
 **维护者**: Claude Code
