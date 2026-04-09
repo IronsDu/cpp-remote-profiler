@@ -13,12 +13,11 @@
    - 编译和运行
    - 下一步指引
 
-2. **[安装指南](user_guide/05_installation.md)** ⭐ 新增
-   - 方法 1: 使用 vcpkg（推荐）
-   - 方法 2: 使用 Conan
-   - 方法 3: 使用 FetchContent
-   - 方法 4: 手动编译
-   - 方法 5: 系统包管理器
+2. **[安装指南](user_guide/05_installation.md)**
+   - 方法 1: 从源码编译安装
+   - 方法 2: FetchContent 集成
+   - 方法 3: add_subdirectory 集成
+   - CMake 构建选项说明
    - 验证安装和故障排除
 
 3. **[使用 find_package](user_guide/06_using_find_package.md)** ⭐ 新增
@@ -84,7 +83,7 @@
 - **主 README**: [项目根目录 README](../README.md)
 - **项目规划**: [plan.md](../plan.md)
 - **开发规则**: [notes.md](../notes.md)
-- **GitHub 仓库**: [https://github.com/your-org/cpp-remote-profiler](https://github.com/your-org/cpp-remote-profiler)
+- **GitHub 仓库**: [https://github.com/IronsDu/cpp-remote-profiler](https://github.com/IronsDu/cpp-remote-profiler)
 
 ## 🔗 外部参考
 
