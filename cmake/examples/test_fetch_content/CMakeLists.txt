@@ -9,9 +9,27 @@ set(REMOTE_PROFILER_BUILD_EXAMPLES OFF CACHE BOOL "")
 set(REMOTE_PROFILER_BUILD_TESTS OFF CACHE BOOL "")
 set(REMOTE_PROFILER_INSTALL OFF CACHE BOOL "")
 
-# Use add_subdirectory to bring in cpp-remote-profiler
-# This simulates what FetchContent does at configure time
-# SOURCE_DIR is passed by the CI test step
+# ============================================================================
+# Option A: FetchContent (recommended for real projects)
+# ============================================================================
+#
+# include(FetchContent)
+# FetchContent_Declare(
+#     cpp-remote-profiler
+#     GIT_REPOSITORY https://github.com/IronsDu/cpp-remote-profiler.git
+#     GIT_TAG        v0.1.0
+#     GIT_SHALLOW    TRUE
+# )
+# FetchContent_MakeAvailable(cpp-remote-profiler)
+#
+# Then link:
+#   target_link_libraries(your_app profiler_core)        # core only
+#   target_link_libraries(your_app profiler_web)         # with Drogon web UI
+#
+# ============================================================================
+# Option B: add_subdirectory (used below for CI testing)
+# ============================================================================
+
 if(NOT DEFINED PROFILER_SOURCE_DIR)
     message(FATAL_ERROR "PROFILER_SOURCE_DIR must be set to the cpp-remote-profiler source directory")
 endif()
