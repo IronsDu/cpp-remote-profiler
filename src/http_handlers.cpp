@@ -454,15 +454,34 @@ HandlerResponse ProfilerHttpHandlers::handlePprofGrowth() {
 }
 
 HandlerResponse ProfilerHttpHandlers::handlePprofSymbol(const std::string& body) {
-    std::istringstream iss(body);
-    std::string address;
+    // Go pprof (symbolz protocol) sends addresses separated by '+'
+    // and expects tab-separated response: "0xaddr\tsymbol_name\n"
+    // Also support newline-separated addresses for backward compatibility.
+
+    std::vector<std::string> addresses;
+
+    // Split by '+' first (Go pprof format)
+    // If no '+' found, fall back to newline splitting
+    if (body.find('+') != std::string::npos) {
+        std::istringstream iss(body);
+        std::string addr;
+        while (std::getline(iss, addr, '+')) {
+            if (!addr.empty()) {
+                addresses.push_back(addr);
+            }
+        }
+    } else {
+        std::istringstream iss(body);
+        std::string addr;
+        while (std::getline(iss, addr)) {
+            if (!addr.empty() && addr[0] != '#') {
+                addresses.push_back(addr);
+            }
+        }
+    }
+
     std::ostringstream result;
-
-    while (std::getline(iss, address)) {
-        if (address.empty() || address[0] == '#')
-            continue;
-
-        std::string original = address;
+    for (const auto& address : addresses) {
         std::string addr_str = address;
         if (addr_str.size() > 2 && addr_str[0] == '0' && addr_str[1] == 'x') {
             addr_str = addr_str.substr(2);
@@ -471,9 +490,9 @@ HandlerResponse ProfilerHttpHandlers::handlePprofSymbol(const std::string& body)
         try {
             uintptr_t addr = std::stoull(addr_str, nullptr, 16);
             std::string symbol = profiler_.resolveSymbolWithBackward(reinterpret_cast<void*>(addr));
-            result << original << " " << symbol << "\n";
+            result << address << "\t" << symbol << "\n";
         } catch (...) {
-            result << original << " " << original << "\n";
+            result << address << "\t" << address << "\n";
         }
     }
 
