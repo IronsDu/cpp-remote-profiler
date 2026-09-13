@@ -139,6 +139,15 @@ void registerDrogonHandlers(profiler::ProfilerManager& profiler) {
     const CpuBusyPrecheck cpu_busy_pprof = makeCpuBusyPrecheck(true);
     const CpuBusyPrecheck cpu_busy_json = makeCpuBusyPrecheck(false);
 
+    // Heap analysis is exclusive for the same reason: it reconfigures the one
+    // process-global heap profiler, so a concurrent call would race for it.
+    auto heap_busy = [handlers]() -> std::optional<HandlerResponse> {
+        if (handlers->isHeapAnalyzerBusy()) {
+            return handlers->heapAnalyzerBusyResponse();
+        }
+        return std::nullopt;
+    };
+
     // Same, but offloaded to the executor: used for handlers that block for
     // seconds (sampling) or shell out to pprof/flamegraph.pl (rendering).
     auto registerGetAsync = [&](const std::string& path, auto fn) {
@@ -286,13 +295,14 @@ void registerDrogonHandlers(profiler::ProfilerManager& profiler) {
     // --- Heap analyze (blocking) ---
     drogon::app().registerHandler(
         "/api/heap/analyze",
-        [handlers, executor, cpu_busy_json](const drogon::HttpRequestPtr& req,
-                                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        [handlers, executor, heap_busy](const drogon::HttpRequestPtr& req,
+                                        std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
             std::string output_type = req->getParameter("output_type");
             if (output_type.empty())
                 output_type = "pprof";
-            runAsync(executor, req, std::move(callback),
-                     [handlers, output_type]() { return handlers->handleHeapAnalyze(output_type); });
+            runAsync(
+                executor, req, std::move(callback),
+                [handlers, output_type]() { return handlers->handleHeapAnalyze(output_type); }, heap_busy);
         },
         {drogon::Get});
 
@@ -301,17 +311,19 @@ void registerDrogonHandlers(profiler::ProfilerManager& profiler) {
     registerGetAsync("/api/heap/flamegraph_raw", &ProfilerHttpHandlers::handleHeapFlamegraphRaw);
 
     // --- Growth analyze (blocking: shells out to pprof/flamegraph.pl) ---
-    drogon::app().registerHandler(
-        "/api/growth/analyze",
-        [handlers, executor, cpu_busy_json](const drogon::HttpRequestPtr& req,
-                                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-            std::string output_type = req->getParameter("output_type");
-            if (output_type.empty())
-                output_type = "pprof";
-            runAsync(executor, req, std::move(callback),
-                     [handlers, output_type]() { return handlers->handleGrowthAnalyze(output_type); });
-        },
-        {drogon::Get});
+    drogon::app().registerHandler("/api/growth/analyze",
+                                  [handlers, executor](const drogon::HttpRequestPtr& req,
+                                                       std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                                      std::string output_type = req->getParameter("output_type");
+                                      if (output_type.empty())
+                                          output_type = "pprof";
+                                      // No precheck: growth stacks come from GetHeapGrowthStacks() and read
+                                      // no profiler session, so this may run alongside CPU sampling.
+                                      runAsync(executor, req, std::move(callback), [handlers, output_type]() {
+                                          return handlers->handleGrowthAnalyze(output_type);
+                                      });
+                                  },
+                                  {drogon::Get});
 
     // --- Growth raw / FlameGraph (blocking: shells out to pprof/flamegraph.pl) ---
     registerGetAsync("/api/growth/svg_raw", &ProfilerHttpHandlers::handleGrowthSvgRaw);

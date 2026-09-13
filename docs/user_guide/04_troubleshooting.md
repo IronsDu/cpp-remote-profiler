@@ -739,6 +739,8 @@ int main() {
 
 稍后重试即可。**正在进行的那个采样不受影响**，会正常完成。
 
+Heap 分析（`/api/heap/analyze`）出于同样的原因也独占，并发时返回 `409` + `{"error":"heap profiling already in use"}`。注意 `HeapProfilerStart()` 与 CPU profiler 不同——它**没有失败模式**，重复调用会静默替换输出前缀，所以必须在调用之前原子认领，而不是"先查询再启动"。`/api/growth/analyze` 不占用会话，不受限制。
+
 ### Q: 接口返回 500 "pprof did not generate valid SVG"
 **A**: 内置 pprof 脚本用 `dot`（graphviz）渲染，当 profile 采样点太少或数据异常时 `dot` 会失败并输出错误文本，因而被判定为"非 SVG"。请：① 安装 graphviz；② 加长采样时长（`?duration=30`）；③ 确认编译带 `-g`。这是已知的**既有缺陷**（错误信息未把 `dot` 的原始输出透出），记录在 [ROADMAP](../../ROADMAP.md)。
 

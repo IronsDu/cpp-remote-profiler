@@ -228,6 +228,94 @@ TEST(ConcurrentCpuProfilingTest, SessionIsReleasedAfterSampling) {
 }
 
 // ---------------------------------------------------------------------------
+// Concurrent heap analysis is exclusive
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Claim the heap-analysis slot using the real public API, on a helper thread.
+///
+/// analyzeHeapProfile() sleeps a fixed short window, so this reliably holds the
+/// claim long enough to observe how other requests behave.
+class HeapAnalysisHolder {
+public:
+    explicit HeapAnalysisHolder(profiler::ProfilerManager& profiler)
+        : future_(std::async(std::launch::async,
+                             [&profiler]() -> std::string { return profiler.analyzeHeapProfile("pprof"); })) {}
+
+    ~HeapAnalysisHolder() {
+        if (future_.valid()) {
+            future_.wait();
+        }
+    }
+
+    HeapAnalysisHolder(const HeapAnalysisHolder&) = delete;
+    HeapAnalysisHolder& operator=(const HeapAnalysisHolder&) = delete;
+
+private:
+    std::future<std::string> future_;
+};
+
+/// Wait until the heap-analysis slot is observed as claimed.
+bool waitForHeapClaim(const profiler::ProfilerManager& profiler) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!profiler.isHeapAnalysisInProgress() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return profiler.isHeapAnalysisInProgress();
+}
+
+} // namespace
+
+TEST(ConcurrentHeapAnalysisTest, SecondAnalysisIsRejectedNotRaced) {
+    // Regression guard. HeapProfilerStart() has no failure mode -- it silently
+    // replaces the output prefix -- so two callers that both observe "not
+    // running" would proceed together, leaving ONE snapshot that both then read.
+    // Measured before the fix: two concurrent calls produced identical prefixes
+    // and a single dump, and both callers returned the same bytes.
+    profiler::ProfilerManager profiler;
+
+    ASSERT_FALSE(profiler.isHeapAnalysisInProgress());
+
+    HeapAnalysisHolder holder{profiler};
+    ASSERT_TRUE(waitForHeapClaim(profiler)) << "helper never claimed the slot";
+
+    // Must be refused immediately, and must not touch the running analysis.
+    const auto t0 = std::chrono::steady_clock::now();
+    auto result = profiler.analyzeHeapProfile("pprof");
+    const auto elapsed = std::chrono::steady_clock::now() - t0;
+
+    EXPECT_NE(result.find("heap profiling already in use"), std::string::npos) << result;
+    EXPECT_LT(elapsed, std::chrono::milliseconds(100)) << "rejection must not wait for the running analysis";
+    EXPECT_TRUE(profiler.isHeapAnalysisInProgress()) << "the running analysis was disturbed";
+}
+
+TEST(ConcurrentHeapAnalysisTest, HandlerReportsConflict) {
+    profiler::ProfilerManager profiler;
+    profiler::ProfilerHttpHandlers handlers(profiler);
+
+    HeapAnalysisHolder holder{profiler};
+    ASSERT_TRUE(waitForHeapClaim(profiler));
+
+    auto resp = handlers.handleHeapAnalyze("pprof");
+
+    EXPECT_EQ(resp.status, 409);
+    EXPECT_NE(resp.body.find("heap profiling already in use"), std::string::npos) << resp.body;
+}
+
+TEST(ConcurrentHeapAnalysisTest, ClaimIsReleasedAfterwards) {
+    // The slot must not stay claimed, or heap analysis would work only once.
+    profiler::ProfilerManager profiler;
+
+    {
+        HeapAnalysisHolder holder{profiler};
+        ASSERT_TRUE(waitForHeapClaim(profiler));
+    }
+
+    EXPECT_FALSE(profiler.isHeapAnalysisInProgress());
+}
+
+// ---------------------------------------------------------------------------
 // Heap analysis API shape
 // ---------------------------------------------------------------------------
 
