@@ -257,6 +257,13 @@ endif()
 # Installation and Export
 # ============================================================================
 
+# GNUInstallDirs must be included BEFORE the install() rules below: it defines
+# CMAKE_INSTALL_LIBDIR (lib vs lib64), which the export/config destinations rely
+# on. Otherwise the libraries land in lib/ while the package config lands in
+# lib64/cmake/ and find_package() cannot locate the targets file.
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
 if(REMOTE_PROFILER_INSTALL)
     # Install core library
     install(TARGETS profiler_core
@@ -310,12 +317,8 @@ if(REMOTE_PROFILER_INSTALL)
     install(EXPORT cpp-remote-profiler-targets
         FILE cpp-remote-profiler-targets.cmake
         NAMESPACE cpp-remote-profiler::
-        DESTINATION lib/cmake/cpp-remote-profiler
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/cpp-remote-profiler
     )
-
-    # Create and install config files
-    include(CMakePackageConfigHelpers)
-    include(GNUInstallDirs)
 
     # Generate version file
     write_basic_package_version_file(
@@ -354,9 +357,9 @@ endif()
 if(BUILD_DOCS)
     find_package(Doxygen)
 
-    if(DOxygen_FOUND)
+    if(DOXYGEN_FOUND)
         # Check for dot (Graphviz) for diagrams
-        find_program(DOT_EXECUTABLE)
+        find_program(DOT_EXECUTABLE dot)
 
         if(DOT_EXECUTABLE)
             set(DOXYGEN_HAVE_DOT "YES")
@@ -373,7 +376,7 @@ if(BUILD_DOCS)
 
         # Add docs target
         add_custom_target(docs ALL
-            COMMAND ${DOxygen_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/docs/Doxyfile
+            COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/docs/Doxyfile
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
             COMMENT "Generating API documentation"
         )

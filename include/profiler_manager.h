@@ -36,8 +36,8 @@ enum class ProfilerType {
 struct ProfilerState {
     bool is_running;         ///< Whether profiling is currently active
     std::string output_path; ///< Path to the output profile file
-    uint64_t start_time;     ///< Unix timestamp when profiling started
-    uint64_t duration;       ///< Configured duration in seconds
+    uint64_t start_time;     ///< Unix timestamp (milliseconds) when profiling started
+    uint64_t duration;       ///< Elapsed duration in milliseconds
 };
 
 /// @struct ThreadStackTrace
@@ -126,14 +126,14 @@ public:
 
     /// @brief Analyze CPU profile and return SVG flame graph
     /// @param duration Sampling duration in seconds
-    /// @param output_type Output graph type: "flamegraph" (default), "iciclegraph", etc.
-    /// @return SVG content as string
+    /// @param output_type Output graph type: "flamegraph" (default) or "pprof"
+    /// @return SVG content as string, or a {"error":...} JSON string on failure
     std::string analyzeCPUProfile(int duration, const std::string& output_type = "flamegraph");
 
     /// @brief Analyze Heap profile and return SVG flame graph
-    /// @param duration Sampling duration in seconds
-    /// @param output_type Output graph type: "flamegraph" (default), "iciclegraph", etc.
-    /// @return SVG content as string
+    /// @param duration Sampling duration in seconds (currently ignored: a fixed 1s sample is used)
+    /// @param output_type Output graph type: "flamegraph" (default) or "pprof"
+    /// @return SVG content as string, or a {"error":...} JSON string on failure
     std::string analyzeHeapProfile(int duration, const std::string& output_type = "flamegraph");
 
     /// @brief Get raw CPU profile data (for /pprof/profile endpoint)
