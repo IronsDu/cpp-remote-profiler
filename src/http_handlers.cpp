@@ -151,6 +151,28 @@ HandlerResponse ProfilerHttpHandlers::handleCpuSvgRaw(int duration) {
     return resp;
 }
 
+/// Convert flamegraph.pl output into a response, or an error.
+///
+/// flamegraph.pl answers unusable input with a *valid* SVG whose only content is
+/// an "ERROR: ..." message, so a structural check for <?xml or <svg passes and a
+/// 200 carrying an error reaches the caller as if it were a graph. Four handlers
+/// render flame graphs, so the check lives here rather than being repeated (and
+/// forgotten) at each call site.
+static HandlerResponse flameGraphResponse(const std::string& svg) {
+    if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos) {
+        return errorResp(500, "Failed to generate FlameGraph");
+    }
+    if (auto pos = svg.find("ERROR:"); pos != std::string::npos) {
+        auto end = svg.find('<', pos);
+        std::string message = svg.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        return errorResp(500, "No stack samples to render (profile is empty). The sample window may have "
+                              "been too short or the process idle; increase the duration or sample under "
+                              "load. flamegraph.pl said: " +
+                                  message);
+    }
+    return HandlerResponse::svg(svg);
+}
+
 HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
     duration = clampDuration(duration, 1, 300);
 
@@ -200,8 +222,11 @@ HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
     std::string svg;
     profiler_.executeCommand(fg_cmd, svg);
 
-    if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate FlameGraph: insufficient CPU samples.");
+    {
+        auto checked = flameGraphResponse(svg);
+        if (checked.status != 200) {
+            return checked;
+        }
     }
 
     auto resp = HandlerResponse::svg(svg);
@@ -266,7 +291,13 @@ HandlerResponse ProfilerHttpHandlers::handleHeapSvgRaw(int duration, bool state_
     }
 
     std::string exe_path = profiler_.getExecutablePath();
-    std::string cmd = "./pprof --svg " + exe_path + " " + temp_file + " 2>/dev/null";
+    // --alloc_space, not the default --inuse_space: pprof's default reports what
+    // is live *now*, but a short collection window usually catches allocations
+    // that were already freed, giving a profile whose in-use column is zero. The
+    // render then fails with nothing useful to draw, even though the window did
+    // record real allocations. Report cumulative allocation instead, and capture
+    // the renderer's stderr so a genuine failure is not reduced to a bare status.
+    std::string cmd = "./pprof --svg --alloc_space " + exe_path + " " + temp_file + " 2>&1";
     std::string svg;
     profiler_.executeCommand(cmd, svg);
 
@@ -277,7 +308,9 @@ HandlerResponse ProfilerHttpHandlers::handleHeapSvgRaw(int duration, bool state_
         svg = svg.substr(pos);
 
     if (svg.empty() || svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate SVG");
+        return errorResp(500, "pprof could not render this heap sample into an SVG. "
+                              "Output: " +
+                                  svg);
     }
 
     auto resp = HandlerResponse::svg(svg);
@@ -333,11 +366,7 @@ HandlerResponse ProfilerHttpHandlers::handleHeapFlamegraphRaw(int duration, bool
     std::string svg;
     profiler_.executeCommand(fg_cmd, svg);
 
-    if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate FlameGraph");
-    }
-
-    auto resp = HandlerResponse::svg(svg);
+    auto resp = flameGraphResponse(svg);
     std::string ts = std::to_string(
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     resp.headers["Content-Disposition"] = "attachment; filename=heap_flamegraph_" + ts + ".svg";
@@ -382,8 +411,11 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthAnalyze(const std::string& out
             return errorResp(500, "Failed to execute flamegraph.pl command");
         }
 
-        if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos) {
-            return errorResp(500, "flamegraph.pl did not generate valid SVG");
+        {
+            auto checked = flameGraphResponse(svg);
+            if (checked.status != 200) {
+                return checked;
+            }
         }
     } else {
         std::ostringstream cmd;
@@ -481,11 +513,7 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthFlamegraphRaw() {
     std::string svg;
     profiler_.executeCommand(fg_cmd, svg);
 
-    if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate FlameGraph");
-    }
-
-    auto resp = HandlerResponse::svg(svg);
+    auto resp = flameGraphResponse(svg);
     std::string ts = std::to_string(
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     resp.headers["Content-Disposition"] = "attachment; filename=growth_flamegraph_" + ts + ".svg";

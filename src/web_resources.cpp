@@ -360,7 +360,10 @@ static const char INDEX_PAGE[] = R"HTML(
                     const a = document.createElement('a');
                     a.href = url;
                     a.download = `${filenamePrefix}_${duration}s.svg`;
+                    // 必须入 DOM：游离的 <a> 触发 click() 在部分浏览器上不会启动下载
+                    document.body.appendChild(a);
                     a.click();
+                    document.body.removeChild(a);
                     URL.revokeObjectURL(url);
 
                     // 恢复按钮，显示成功
@@ -499,9 +502,7 @@ static const char INDEX_PAGE[] = R"HTML(
             const originalText = btn.textContent;
             btn.textContent = '⏳ 准备下载...';
 
-            // 根据图表类型选择端点和文件名
-            const endpoint = heapChartEndpoint(chartType);
-            const duration = heapDuration();
+            // 端点与 source/duration 由 fetchHeapChart 统一决定
             const chartTypeName = chartType === 'flamegraph' ? 'FlameGraph' : 'pprof SVG';
             // 两个端点返回的都是【渲染后的图表】，不是原始 heap profile
             // （/pprof/heap 才是原始 profile，且需要 TCMALLOC_SAMPLE_PARAMETER）
@@ -521,14 +522,9 @@ static const char INDEX_PAGE[] = R"HTML(
                 btn.textContent = `⏳ 生成中 ${progress}% (${countdown}s)`;
             }, 1000);
 
-            // 使用 fetch 下载文件（带上采集窗口）
-            fetch(`${endpoint}?duration=${duration}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    }
-                    return response.blob();
-                })
+            // 与「查看图表」走同一份数据（同一 endpoint + source + duration）。
+            // 此前这里只拼 duration，选"状态式"时会静默拿到窗口数据。
+            fetchHeapChart()
                 .then(blob => {
                     // 清除倒计时
                     clearInterval(progressInterval);
@@ -540,7 +536,11 @@ static const char INDEX_PAGE[] = R"HTML(
                     a.href = url;
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
                     a.download = `${filenamePrefix}_${timestamp}.svg`;
+                    // 必须入 DOM：游离的 <a> 触发 click() 在部分浏览器上不会启动下载
+                    // （downloadHeapProfile 一直这么做，这几个旧函数漏了）。
+                    document.body.appendChild(a);
                     a.click();
+                    document.body.removeChild(a);
                     URL.revokeObjectURL(url);
 
                     // 恢复按钮，显示成功
@@ -605,7 +605,9 @@ static const char INDEX_PAGE[] = R"HTML(
                     a.href = url;
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
                     a.download = `${filenamePrefix}_${timestamp}.svg`;
+                    document.body.appendChild(a);
                     a.click();
+                    document.body.removeChild(a);
                     URL.revokeObjectURL(url);
 
                     // 恢复按钮，显示成功
