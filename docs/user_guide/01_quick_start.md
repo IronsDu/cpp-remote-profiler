@@ -13,14 +13,14 @@
 ## 前置要求
 
 ### 系统要求
-- **操作系统**: Linux (已在 Ubuntu 20.04+, WSL2 上测试)
+- **操作系统**: Linux (已在 Ubuntu 20.04+, WSL2 上测试)；不支持 macOS / Windows
 - **编译器**: g++ 10.0+ 或 clang++ 12.0+ (支持 C++20)
-- **CMake**: 3.15+
+- **CMake**: 3.15+（使用仓库自带的 `CMakePresets.json` 时需 3.20+）
 
 ### 依赖库
-- gperftools (libprofiler, libtcmalloc)
-- pthread (通常系统自带)
-- backward-cpp (可选，用于符号化)
+- gperftools (libprofiler, libtcmalloc) — 通过 pkg-config 查找，通常由系统包提供
+- backward-cpp、Abseil — 用于符号化，由 vcpkg 提供
+- perl — **运行时**依赖，用于生成图表（见根目录 README 的"运行时依赖"）
 
 ## 安装
 
@@ -29,33 +29,34 @@
 ```bash
 # 1. 安装系统依赖
 sudo apt-get update
-sudo apt-get install -y cmake build-essential git pkg-config graphviz libgoogle-perftools-dev
+sudo apt-get install -y cmake build-essential git pkg-config graphviz perl libgoogle-perftools-dev
 
 # 2. 克隆项目
-git clone https://github.com/your-org/cpp-remote-profiler.git
+git clone https://github.com/IronsDu/cpp-remote-profiler.git
 cd cpp-remote-profiler
 
 # 3. 初始化 vcpkg (如果还没有)
 if [ ! -d "vcpkg" ]; then
     git clone https://github.com/Microsoft/vcpkg.git
-    cd vcpkg
-    ./bootstrap-vcpkg.sh
-    cd ..
+    ./vcpkg/bootstrap-vcpkg.sh
 fi
 
-# 4. 编译库
-mkdir build && cd build
-cmake .. \
+# 4. 编译库（vcpkg.json 在仓库根目录，工具链会自动安装清单依赖）
+cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DVCPKG_TARGET_TRIPLET=x64-linux-release
+cmake --build build -j$(nproc)
 
-make -j$(nproc)
+# 5. 安装，供后续 find_package() 使用
+sudo cmake --install build
 ```
 
-### 方法 2: 直接集成源码
+### 方法 2: 直接引入源码
 
-将 `include/` 和 `src/` 目录复制到你的项目中，直接链接源码。
+用 `FetchContent` 或 `add_subdirectory` 把仓库加进你的工程，无需预先安装。
+完整写法见 [使用 find_package](06_using_find_package.md#示例-3fetchcontent-直接引入源码)
+或 [安装指南](05_installation.md)。
 
 ## 最简单的示例
 
@@ -101,11 +102,20 @@ int main() {
 
 ## 编译你的项目
 
+下面的例子用 `find_package()` 引用本库，所以**必须先完成上一步的编译 + 安装**（安装到默认前缀 `/usr/local`）：
+
+```bash
+# 在 cpp-remote-profiler 仓库内
+sudo cmake --install build
+```
+
+如果不想安装，请改看 [安装指南](05_installation.md) 中的 `FetchContent` / `add_subdirectory` 方式。
+
 ### CMakeLists.txt 配置
 
 ```cmake
-cmake_minimum_required(VERSION 3.15)
-project(MyProfilerApp VERSION 1.0.0)
+cmake_minimum_required(VERSION 3.20)
+project(MyProfilerApp VERSION 1.0.0 CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -114,16 +124,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(cpp-remote-profiler REQUIRED)
 
 add_executable(my_app my_profiler_app.cpp)
-target_link_libraries(my_app cpp-remote-profiler::profiler_core)
+target_link_libraries(my_app PRIVATE cpp-remote-profiler::profiler_core)
 ```
 
 ### 编译命令
 
 ```bash
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make
-./my_app
+cmake -S . -B build
+cmake --build build
+./build/my_app
 ```
 
 ## 运行第一个 profiling
@@ -231,9 +240,6 @@ Heap profiling 需要设置环境变量：
 #include "profiler_manager.h"
 
 int main() {
-    // 设置环境变量 (在程序启动前)
-    setenv("TCMALLOC_SAMPLE_PARAMETER", "524288", 1);
-
     profiler::ProfilerManager profiler;
 
     profiler.startHeapProfiler("heap.prof");
@@ -253,12 +259,16 @@ int main() {
 }
 ```
 
-或者直接在命令行设置环境变量：
+环境变量必须在**启动进程之前**设置（tcmalloc 在初始化阶段读取它，默认 `0` 表示关闭采样）：
 
 ```bash
-export TCMALLOC_SAMPLE_PARAMETER=524288
+export TCMALLOC_SAMPLE_PARAMETER=524288   # 512KB
 ./my_app
 ```
+
+> ⚠️ 在 `main()` 里调用 `setenv("TCMALLOC_SAMPLE_PARAMETER", ...)` **不会生效**。
+
+Heap Growth 采集（`getRawHeapGrowthStacks()`）不需要该变量。
 
 ## 下一步
 

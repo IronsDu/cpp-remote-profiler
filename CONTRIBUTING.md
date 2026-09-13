@@ -14,7 +14,9 @@
 
 ## 行为准则
 
-本项目采用贡献者公约作为行为准则。参与此项目即表示你同意遵守其条款。请阅读并遵守行为准则，帮助我们一起维护开放和友好的社区环境。
+请保持专业、友善的沟通，尊重不同背景和经验的参与者。技术讨论对事不对人。
+
+> 本项目尚未添加 `CODE_OF_CONDUCT.md`（采用贡献者公约的正式文本），该事项记录在 [ROADMAP.md](ROADMAP.md) 中。
 
 ## 如何贡献
 
@@ -23,12 +25,13 @@
 如果你发现了 bug，请通过 [GitHub Issues](https://github.com/IronsDu/cpp-remote-profiler/issues) 提交。提交前请：
 
 1. 搜索现有的 Issues，确认该问题未被报告
-2. 使用 Issue 模板，提供以下信息：
+2. 在 Issue 中提供以下信息（仓库暂未配置 Issue 模板，请直接按此清单填写）：
    - 操作系统和版本
    - 编译器和版本
    - 复现步骤
    - 期望行为和实际行为
    - 相关日志或错误信息
+   - 使用的版本/commit
 
 ### 提出新功能
 
@@ -54,54 +57,54 @@
 ### 安装依赖
 
 ```bash
-# 安装系统依赖
+# 安装系统依赖（gperftools 与 graphviz 是必需的；graphviz 供 Doxygen 画图）
 sudo apt-get update
-sudo apt-get install -y cmake build-essential git pkg-config wget
+sudo apt-get install -y cmake build-essential git pkg-config wget graphviz perl libgoogle-perftools-dev
 
-# 克隆项目（包含 vcpkg 子模块）
+# 克隆项目（vcpkg 为 git submodule）
 git clone https://github.com/IronsDu/cpp-remote-profiler.git
 cd cpp-remote-profiler
-
-# 初始化 vcpkg（如果未自动初始化）
 git submodule update --init --recursive
 
-# 安装 vcpkg 依赖
-cd vcpkg
-./bootstrap-vcpkg.sh
-./vcpkg install --triplet=x64-linux-release
-cd ..
+# 初始化 vcpkg
+./vcpkg/bootstrap-vcpkg.sh
 ```
+
+> `vcpkg.json` 在仓库根目录，**不要**在 `vcpkg/` 目录里执行 `./vcpkg install`
+> ——那里没有清单文件。CMake 工具链会在首次 configure 时自动安装清单依赖。
 
 ### 构建项目
 
 ```bash
-# 创建构建目录
-mkdir build && cd build
+# 方式 1（推荐）：使用与 CI 一致的 CMake Presets
+cmake --preset=debug
+cmake --build build/debug -j$(nproc)
+ctest --test-dir build/debug --output-on-failure
 
-# 配置 CMake
-cmake .. \
+# 方式 2：手动配置
+cmake -S . -B build/debug \
   -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
-  -DVCPKG_TARGET_TRIPLET=x64-linux-release \
-  -DBUILD_SHARED_LIBS=ON \
-  -DREMOTE_PROFILER_BUILD_EXAMPLES=ON \
-  -DREMOTE_PROFILER_BUILD_TESTS=ON
-
-# 编译
-make -j$(nproc)
-
-# 运行测试
-ctest --output-on-failure
+  -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_TARGET_TRIPLET=x64-linux-release
+cmake --build build/debug -j$(nproc)
+ctest --test-dir build/debug --output-on-failure
 ```
+
+可用预设：`debug`、`release`、`relwithdebinfo`、`coverage`、`clang-debug`、`clang-release`。
 
 ### CMake 构建选项
 
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
-| `BUILD_SHARED_LIBS` | ON | 构建动态库 |
+| `BUILD_SHARED_LIBS` | ON | 构建动态库（OFF 则构建静态库） |
 | `REMOTE_PROFILER_INSTALL` | ON | 生成安装目标 |
 | `REMOTE_PROFILER_BUILD_EXAMPLES` | ON | 构建示例程序 |
 | `REMOTE_PROFILER_BUILD_TESTS` | ON | 构建测试程序 |
+| `REMOTE_PROFILER_ENABLE_WEB` | ON | 编译 Web 层（OFF 则不依赖 Drogon） |
+| `ENABLE_COVERAGE` | OFF | 生成覆盖率报告 |
+| `BUILD_DOCS` | OFF | 生成 Doxygen API 文档 |
+
+完整说明见 [README 的 CMake 构建选项](README.md#cmake-构建选项)。
 
 ## 代码风格
 
@@ -113,17 +116,26 @@ ctest --output-on-failure
 
 ### 命名约定
 
-- **类名**: PascalCase (例如: `ProfilerManager`)
-- **函数名**: snake_case (例如: `start_cpu_profile`)
-- **变量名**: snake_case (例如: `profile_duration`)
-- **常量**: UPPER_SNAKE_CASE (例如: `MAX_PROFILE_DURATION`)
-- **成员变量**: 带 `_` 后缀 (例如: `server_running_`)
+- **类/结构体名**: PascalCase (例如: `ProfilerManager`, `HandlerResponse`)
+- **函数/方法名**: camelCase (例如: `startCPUProfiler`, `analyzeCPUProfile`)
+- **局部变量**: snake_case (例如: `profile_path`)
+- **常量**: UPPER_SNAKE_CASE (例如: `PROFILER_VERSION_MAJOR`)
+- **成员变量**: 带 `_` 后缀 (例如: `profile_dir_`, `profiler_states_`, `cpu_profiling_in_progress_`)
 
 ### 格式化
 
+格式以仓库根目录的 `.clang-format` 为准，不要手工调整：
+
 - 缩进使用 4 个空格
-- 每行最多 100 字符
+- 每行最多 **120** 字符（`.clang-format` 的 `ColumnLimit`）
 - 大括号放在同一行
+
+提交前请运行：
+
+```bash
+./scripts/check-format.sh        # 检查
+./scripts/check-format.sh --fix  # 自动修复
+```
 
 ### 注释
 
@@ -222,18 +234,33 @@ fix: 修复 CPU profiling 信号处理冲突
 
 7. **创建 Pull Request**
    - 前往 GitHub 创建 PR
-   - 填写 PR 模板
+   - 说明改动的动机、影响范围与测试方式（仓库暂未配置 PR 模板）
    - 等待 CI 通过和代码审查
 
 ### CI 检查
 
 每个 PR 都会自动运行以下检查：
 
-- **构建测试**: GCC 和 Clang 编译
-- **单元测试**: 所有测试用例
-- **代码质量**: AddressSanitizer、UBSan、Clang-Tidy
+**`.github/workflows/ci.yml`**
 
-请确保所有检查通过。如果失败，请在 PR 中修复问题。
+- **build-gcc** — Ubuntu + GCC 构建与测试
+- **build-clang** — Ubuntu + Clang 构建与测试
+- **coverage** — 覆盖率采集并上传 Codecov
+
+**`.github/workflows/code-quality.yml`**
+
+- **format-check** — clang-format（固定版本 18）
+- **asan** — AddressSanitizer
+- **ubsan** — UndefinedBehaviorSanitizer（严格模式）
+- **tsan** — ThreadSanitizer（当前被 `if: false` 禁用）
+- **static-analysis** — clang-tidy
+- **warnings-check** — 编译警告检查
+
+CI 中还会运行 `cmake/examples/` 下的 `find_package` 与 `add_subdirectory` 集成测试。
+
+请确保所有启用的检查通过。如果失败，请在 PR 中修复问题。
+
+> 本地提交前至少跑一遍 `./scripts/check-format.sh`，格式问题是最常见的 CI 失败原因。
 
 ## 测试要求
 

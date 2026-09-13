@@ -45,8 +45,11 @@ include_directories(/path/to/cpp-remote-profiler/include)
 方法 3: 如果已安装到系统
 ```cmake
 find_package(cpp-remote-profiler REQUIRED)
-target_link_libraries(your_app cpp-remote-profiler::cpp-remote-profiler)
+target_link_libraries(your_app PRIVATE cpp-remote-profiler::profiler_core)
 ```
+
+方法 1 和 2 只解决了头文件路径问题，**不会**带来 gperftools 等链接依赖；
+推荐始终使用 `find_package()` + 导入目标（方法 3）。
 
 ---
 
@@ -339,8 +342,10 @@ nm your_app | grep main  # 应该能看到符号
 
 1. **安装系统调试符号** (Ubuntu):
 ```bash
-sudo apt-get install-dbgsym
-sudo apt-get install libc6-dbg
+sudo apt-get install libc6-dbg        # glibc 调试符号
+# 需要任意包的 -dbgsym 时，先装 debian-goodies 才有 apt-get install-dbgsym
+sudo apt-get install debian-goodies
+sudo apt-get install-dbgsym <package>
 ```
 
 2. **降低优化级别**:
@@ -451,16 +456,16 @@ cleanupOldProfiles("/tmp/profiling", 10);
 
 **解决方案**:
 
-1. **设置环境变量**:
+1. **设置环境变量**（必须在**进程启动前**，见下方说明）:
 ```bash
 export TCMALLOC_SAMPLE_PARAMETER=524288  # 512KB
 ./your_app
 ```
 
-或在代码中设置：
-```cpp
-setenv("TCMALLOC_SAMPLE_PARAMETER", "524288", 1);
-```
+> ⚠️ **不能在代码里设置**。tcmalloc 在进程初始化阶段通过 `GetenvBeforeMain()` 读取该变量
+> （`gperftools-src/src/sampler.cc:74-75`），其默认值为 `0`，即**默认关闭采样**。
+> 因此 `setenv("TCMALLOC_SAMPLE_PARAMETER", ...)` 写在 `main()` 里已经太晚，不会生效。
+> 只能通过 shell 环境变量、容器 env、systemd `Environment=` 或进程启动器传入。
 
 2. **确保链接 tcmalloc**:
 ```cmake
@@ -564,19 +569,25 @@ HTTP/1.1 500 Internal Server Error
 ./profiler_example 2>&1 | tee server.log
 ```
 
-2. **检查 pprof 工具**:
+2. **检查工作目录下的 pprof 脚本**:
+
+本库**不需要**外部安装 pprof —— `ProfilerManager` 构造时会把内置的 pprof 脚本写到进程当前工作目录：
+
 ```bash
-which pprof
-# 如果未安装
-go install github.com/google/pprof@latest
+ls -l ./pprof ./flamegraph.pl
+# 若不存在，说明工作目录不可写（例如从 / 或只读挂载启动）
+# 检查: touch ./writetest && rm ./writetest
 ```
 
-3. **检查 FlameGraph 工具**:
+真正的运行时依赖是 **perl**（pprof 与 flamegraph.pl 都是 Perl 脚本）：
+
 ```bash
-ls -l /tmp/FlameGraph/flamegraph.pl
-# 如果不存在
-git clone https://github.com/brendangregg/FlameGraph /tmp/FlameGraph
+perl --version
+# 未安装: sudo apt-get install -y perl
 ```
+
+> `go install github.com/google/pprof@latest` 安装的 `pprof` 是**另一个工具**（Go 版），
+> 用于分析 `/pprof/*` 接口导出的原始 profile 文件，与这里的 `./pprof` 脚本无关。
 
 ---
 
@@ -636,12 +647,25 @@ profiler::ProfilerManager::setStackCaptureSignal(SIGUSR2);
 启用详细日志：
 
 ```cpp
-// 在启动时设置环境变量
-setenv("VERBOSE_LOGGING", "1", 1);
+#include "profiler_manager.h"
 
-// 或在 CMakeLists.txt 中
-add_definitions(-DVERBOSE_LOGGING)
+int main() {
+    profiler::ProfilerManager profiler;
+
+    // 提高日志级别（默认 Info）
+    profiler.setLogLevel(profiler::LogLevel::Debug);   // 或 LogLevel::Trace
+
+    // 可选：把日志接入你自己的日志系统
+    profiler.setLogSink(std::make_shared<MyLogSink>());
+
+    // ...
+}
 ```
+
+默认 sink 会把 `Trace`/`Debug`/`Info` 写到 stdout、`Warning` 及以上写到 stderr，
+因此直接 `./your_app 2>&1 | tee app.log` 就能拿到完整日志。
+
+> 本库没有 `VERBOSE_LOGGING` 环境变量或同名编译宏，日志行为只由 `setLogLevel()` / `setLogSink()` 控制。
 
 ### 报告问题
 
@@ -682,30 +706,35 @@ int main() {
 
 ## 常见问题 FAQ
 
-### Q: 可以在 Windows 上使用吗？
-**A**: 目前主要支持 Linux。Windows 支持正在开发中。可以使用 WSL2 作为替代方案。
+### Q: 支持 macOS / Windows 吗？
+**A**: 不支持。实现依赖 Linux 专有接口：`/proc/self/exe` 与 `/proc/self/task`（`src/profiler_manager.cpp:288-297`、`932-939`）、`sigaction`/`ucontext` 信号栈捕获。WSL2 可用。
 
 ### Q: 可以在生产环境使用吗？
 **A**: 当前版本是 v0.x.x（开发阶段），不建议用于生产环境。等待 v1.0.0 稳定版。
 
 ### Q: Profiling 会影响性能吗？
-**A**: CPU profiling 通常有 1-5% 的性能开销。Heap profiling 开销取决于采样频率。
+**A**: CPU profiling 通常有 1-5% 的性能开销；采样频率可用 `CPUPROFILE_FREQUENCY` 调整（gperftools 默认 100Hz）。Heap profiling 开销取决于 `TCMALLOC_SAMPLE_PARAMETER` 的采样间隔。
 
 ### Q: 可以同时进行 CPU 和 Heap profiling 吗？
-**A**: 可以，但会增加开销。建议分开进行。
+**A**: CPU 与 Heap 是两套独立的 profiling 状态，可以并存。但**同一时刻只能有一个 CPU 采样会话**：`analyzeCPUProfile()` 会先停掉正在运行的 CPU profiler 再启动自己的采样，并发调用会互相破坏结果。
+
+### Q: `/api/heap/analyze?duration=10` 为什么感觉没采样 10 秒？
+**A**: 该接口**不接受** `duration` 参数，内部固定采样 1 秒（`src/http_handlers.cpp:171`）。需要更长采样时请改用 `/pprof/heap` 或 `/api/heap/svg_raw` 配合其他方式采集。
+
+### Q: 为什么 `?output_type=flamegraph` 才是火焰图？
+**A**: C++ API 的形参默认值是 `"flamegraph"`，但 HTTP 路由在未显式传参时默认 `"pprof"`，返回的是 pprof 脚本渲染的图形而非 FlameGraph 火焰图。想稳定拿到火焰图请显式指定 `output_type=flamegraph`。
 
 ### Q: Profile 文件很大怎么办？
-**A**: 可以使用压缩：
+**A**: 可以压缩后交给 pprof（`pprof` 支持从 stdin 读取）：
 ```bash
 gzip my_profile.prof
-# 使用时解压
-gunzip -c my_profile.prof.gz | pprof -http=:8080 -
+gunzip -c my_profile.prof.gz | go tool pprof -http=:8080 -
 ```
 
 ---
 
 ## 更多信息
 
-- 📖 [API 参考手册](02_api_reference.md)
-- 💡 [集成示例](03_integration_examples.md)
-- 🏠 [快速开始](01_quick_start.md)
+- [API 参考手册](02_api_reference.md)
+- [集成示例](03_integration_examples.md)
+- [快速开始](01_quick_start.md)

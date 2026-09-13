@@ -1,545 +1,223 @@
 # C++ Remote Profiler
 
-类似 Go pprof 和 brpc pprof service 的 C++ 远程性能分析工具，基于 gperftools 和 Drogon 框架（可选）实现。
+类似 Go pprof 和 brpc pprof service 的 C++ 远程性能分析库：在被分析进程内嵌入 HTTP 接口，远程采集 CPU / Heap profile，并直接产出火焰图 SVG。
+
+核心 profiling 基于 [gperftools](https://github.com/gperftools/gperftools)；Web 层基于 [Drogon](https://github.com/drogonframework/drogon)，**可选**。
+
+**当前版本**: v0.1.0（开发阶段，API 可能随时变化，不建议用于生产环境）
 
 ## 目录
 
-- [版本说明](#-版本说明)
-- [功能特性](#-功能特性)
-- [设计理念](#-设计理念)
-- [快速开始](#-快速开始)
-- [CMake 构建选项](#-cmake-构建选项)
-- [安装](#-安装)
-- [使用方法](#-使用方法)
-- [如何查看火焰图](#-如何查看火焰图)
-- [API 端点](#-api-端点)
-- [项目结构](#-项目结构)
-- [运行测试](#-运行测试)
-- [代码格式检查](#-代码格式检查)
-- [集成到你的项目](#-集成到你的项目)
-- [配置说明](#-配置说明)
-- [注意事项](#-注意事项)
-- [与其他工具的对比](#-与其他工具的对比)
-- [许可证](#-许可证)
+- [功能特性](#功能特性)
+- [设计理念](#设计理念)
+- [快速开始](#快速开始)
+- [运行时依赖](#运行时依赖)
+- [CMake 构建选项](#cmake-构建选项)
+- [安装与集成](#安装与集成)
+- [API 端点](#api-端点)
+- [配置说明](#配置说明)
+- [注意事项](#注意事项)
+- [项目结构](#项目结构)
+- [开发](#开发)
+- [许可证](#许可证)
 
-**当前版本**: v0.1.0 (开发阶段)
+## 功能特性
 
-> ⚠️ **注意**: 当前项目处于开发阶段（v0.x.x），API 可能随时变化。不建议用于生产环境。
+- **CPU Profiling** — 基于 gperftools 的采样式 CPU 分析
+- **Heap Profiling** — 堆内存分配分析与泄漏检测
+- **Heap Growth Profiling** — 堆增长栈分析，无需 `TCMALLOC_SAMPLE_PARAMETER`
+- **线程堆栈捕获** — 采集进程内所有线程的调用栈，支持动态线程数
+- **标准 pprof 接口** — `/pprof/*` 兼容 Go pprof 工具链
+- **一键分析** — `/api/*/analyze` 直接返回火焰图 SVG，浏览器可看
+- **框架无关** — `ProfilerHttpHandlers` 返回普通结构体，可接入任意 Web 框架
+- **可选 Web 层** — 核心库不依赖任何 Web 框架
+- **可配置日志** — 实现 `LogSink` 即可接入宿主应用的日志系统
+- **信号安全** — 保存并恢复宿主程序原有的信号处理器
 
-## 📋 版本说明
+## 设计理念
 
-### 当前版本: v0.1.0
+参考 Go pprof 提供两种互补的使用方式：
 
-本项目使用语义化版本号 (Semantic Versioning)：`MAJOR.MINOR.PATCH`
+1. **标准 pprof 模式** — `/pprof/profile`、`/pprof/heap` 返回原始 profile 文件，交给 `go tool pprof` 分析
+2. **一键分析模式** — `/api/cpu/analyze` 等直接返回 SVG，适合浏览器即时查看
 
-- **当前阶段**: v0.x.x (开发阶段)
-  - API 可能随时变化
-  - 不保证向后兼容
-  - 欢迎反馈和建议
+架构上分为两层，边界清晰：
 
-- **稳定版本**: v1.0.0 (未来)
-  - 承诺 API 向后兼容
-  - 推荐用于生产环境
+- `profiler_core` — 纯 profiling 核心，**不依赖** Drogon/spdlog，可独立使用
+- `profiler_web` — 可选的 Drogon 适配层，仅做路由注册与请求/响应转换
+- `ProfilerHttpHandlers` — 位于核心库中，返回 `HandlerResponse{status, content_type, body, headers}`，不绑定任何框架
+- `ProfilerManager` — 普通类而非单例，生命周期由使用者管理
 
-### 版本检查
+接口命名规则：`/pprof/*` 为 Go pprof 标准接口；`/api/*` 为项目自定义的分析/辅助接口；`/show_*.html` 为内置的 SVG 查看页。
 
-```cpp
-#include "version.h"
-
-#if REMOTE_PROFILER_VERSION_AT_LEAST(0, 2, 0)
-    // 使用新 API
-#else
-    // 使用旧 API
-#endif
-```
-
-详见 `plan.md` 中的 [API 稳定性策略](#api-稳定性策略)。
-
-## 🎯 功能特性
-
-- ✅ **CPU Profiling**: 使用 gperftools 进行 CPU 性能分析
-- ✅ **Heap Profiling**: 内存使用分析和内存泄漏检测（调用 tcmalloc sample）
-- ✅ **Heap Growth Profiling**: 堆增长分析，无需 TCMALLOC_SAMPLE_PARAMETER 环境变量
-- ✅ **线程堆栈捕获**: 获取所有线程的调用堆栈，支持动态线程数
-- ✅ **标准 pprof 接口**: 支持 Go pprof 工具直接访问
-- ✅ **Web 界面**: 美观的 Web 控制面板，支持一键式火焰图分析
-- ✅ **框架无关**: ProfilerHttpHandlers 提供框架无关的 handler，可集成任意 Web 框架
-- ✅ **Drogon 可选**: Web 界面依赖 Drogon，但核心 profiling 功能完全独立
-- ✅ **可配置日志系统**: 支持自定义 LogSink，集成到应用日志系统
-- ✅ **RESTful API**: 完整的 HTTP API 接口
-- ✅ **依赖管理**: 使用 vcpkg 管理所有依赖
-- ✅ **信号处理器安全**: 保存并恢复用户程序的信号处理器
-
-## 🎯 设计理念
-
-本项目参考 Go pprof 标准接口设计，提供两种使用方式：
-
-1. **标准 pprof 模式**: 提供 `/pprof/profile`、`/pprof/heap` 接口，返回原始 profile 文件，兼容 Go pprof 工具
-2. **一键分析模式**: 提供 `/api/cpu/analyze` 等接口，直接返回 SVG，适合浏览器查看
-
-**架构特点**:
-- **核心库与 Web 解耦**: `profiler_core` 不依赖任何 Web 框架，`profiler_web` 是可选的 Drogon 适配层
-- **框架无关的 Handler**: `ProfilerHttpHandlers` 返回 `HandlerResponse` 结构体，可与任意 Web 框架集成
-- **非单例设计**: `ProfilerManager` 是普通类，用户自行管理生命周期
-
-**接口命名规则**:
-- `/pprof/*` - 标准 Go pprof 接口
-- `/api/*` - 自定义分析接口（浏览器直接查看）
-
-## 🚀 快速开始
+## 快速开始
 
 ### 前置要求
 
-- Linux 系统 (已在 WSL2 和 Ubuntu 上测试)
-- CMake 3.15+
-- g++ (支持 C++20)
-- git
+- Linux（已在 Ubuntu 与 WSL2 上测试；实现依赖 `/proc/self/exe`、`/proc/self/task` 与 `sigaction`，**不支持 macOS/Windows**）
+- CMake 3.15+（使用 `CMakePresets.json` 时需 3.20+）
+- g++ 10+ 或 clang++ 12+（需 C++20）
+- git、pkg-config、graphviz
 
 ### 1. 安装系统依赖
 
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
-sudo apt-get install -y \
-    cmake \
-    build-essential \
-    git \
-    pkg-config \
-    graphviz \
-    libgoogle-perftools-dev
+sudo apt-get install -y cmake build-essential git pkg-config graphviz libgoogle-perftools-dev
+
+# Fedora/RHEL/CentOS
+sudo dnf install -y cmake gcc-c++ make git pkg-config graphviz gperftools-devel
 ```
 
-```bash
-# Fedora/RHEL/CentOS
-sudo dnf install -y \
-    cmake \
-    gcc-c++ \
-    make \
-    git \
-    pkg-config \
-    graphviz \
-    gperftools-devel
-```
+其余依赖（drogon、gtest、nlohmann-json、openssl、zlib、protobuf、backward-cpp）由 vcpkg 提供。
 
 ### 2. 初始化 vcpkg
 
 ```bash
-# 克隆项目（如果还没有）
-git clone <your-repo-url>
-cd cpp-remote-profiler
-
-# 如果 vcpkg 目录不存在，初始化它
 if [ ! -d "vcpkg" ]; then
     git clone https://github.com/Microsoft/vcpkg.git
-    cd vcpkg
-    ./bootstrap-vcpkg.sh
-    cd ..
+    ./vcpkg/bootstrap-vcpkg.sh
 fi
 ```
 
-### 3. 安装 vcpkg 依赖
+`vcpkg.json` 位于仓库根目录，CMake 工具链会在首次 configure 时自动安装清单里的依赖，无需手动 `vcpkg install`。
+
+### 3. 编译
+
+推荐使用 CMake Presets（与 CI 一致）：
 
 ```bash
-cd vcpkg
-./vcpkg install --triplet=x64-linux-release
+cmake --preset=release
+cmake --build build/release -j$(nproc)
 ```
 
-这将自动安装以下依赖：
-- drogon (Web 框架，可选)
-- gtest (测试框架)
-- nlohmann-json (JSON 库)
-- openssl
-- zlib
-- protobuf
-- backward-cpp (栈回溯)
-- gperftools (CPU/Heap 性能分析)
-
-### 4. 编译项目
-
-项目提供了便捷的构建脚本：
+或手动指定：
 
 ```bash
-./build.sh
-```
-
-或者手动编译：
-
-```bash
-mkdir build && cd build
-cmake .. \
+cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DVCPKG_TARGET_TRIPLET=x64-linux-release
-make -j$(nproc)
+cmake --build build -j$(nproc)
 ```
 
-**构建类型说明**（`CMAKE_BUILD_TYPE`）：
+`build.sh` 是等价的便捷脚本（内部同样走 vcpkg 工具链）。
+
+构建类型（`CMAKE_BUILD_TYPE`，默认 `RelWithDebInfo`）：
 
 | 构建类型 | 说明 |
 |---------|------|
-| `Release` | 优化编译（`-O2`），适合生产使用 |
-| `Debug` | 无优化（`-O0`），适合调试 |
-| `RelWithDebInfo` | 优化编译且包含调试符号（**默认**），推荐用于 profiling |
+| `Release` | `-O2 -g`，适合生产与 profiling |
+| `RelWithDebInfo` | `-O2 -g`（**默认**），推荐用于 profiling |
+| `Debug` | `-O0 -g`，适合调试 |
 
-> 所有构建类型默认包含 `-g` 调试符号，以确保 profiling 结果能正确显示函数名。
+> 所有构建类型都带 `-g`：缺少调试符号时火焰图只能显示地址而非函数名。
 
-## ⚙️ CMake 构建选项
+### 4. 运行示例服务
 
-项目提供以下 CMake 选项，可通过 `-D<Option>=<Value>` 在配置时指定。
+```bash
+./start.sh
+# 或
+cd build && ./profiler_example
+```
 
-### 选项列表
+服务监听 `http://localhost:8080`。
+
+## 运行时依赖
+
+`ProfilerManager` 构造时会**向进程当前工作目录写入两个脚本**，分析接口通过相对路径调用它们：
+
+| 文件 | 用途 | 依赖 |
+|------|------|------|
+| `./pprof` | 解析 gperftools profile，生成 SVG / collapsed 格式 | `perl` |
+| `./flamegraph.pl` | 由 collapsed 数据渲染火焰图 | `perl` |
+
+由此带来三点要求：
+
+1. **工作目录必须可写**。以只读目录（如 `/`）为 CWD 启动会导致脚本写入失败，所有 `/api/*/analyze`、`/api/*/svg_raw`、`/api/*/flamegraph_raw` 接口返回 500。
+2. **必须安装 perl**：`sudo apt-get install -y perl`。
+3. **不要删除这两个文件**，每个进程实例都会重新生成。
+
+不需要图表功能时（例如只用 `/pprof/profile` 拿原始 profile 文件），上述依赖不影响使用。
+
+## CMake 构建选项
 
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
-| `BUILD_SHARED_LIBS` | `ON` | 构建动态库（`.so`），设为 `OFF` 则构建静态库（`.a`） |
-| `REMOTE_PROFILER_INSTALL` | `ON` | 生成 install target，设为 `OFF` 则不生成安装规则 |
-| `REMOTE_PROFILER_BUILD_EXAMPLES` | `ON` | 构建示例程序（`profiler_example`） |
+| `BUILD_SHARED_LIBS` | `ON` | `ON` 构建动态库（`.so`），`OFF` 构建静态库（`.a`） |
+| `REMOTE_PROFILER_INSTALL` | `ON` | 生成 install 规则 |
+| `REMOTE_PROFILER_BUILD_EXAMPLES` | `ON` | 构建示例程序 `profiler_example` |
 | `REMOTE_PROFILER_BUILD_TESTS` | `ON` | 构建测试程序 |
-| `REMOTE_PROFILER_ENABLE_WEB` | `ON` | 启用 Web UI（依赖 Drogon），设为 `OFF` 则无需 Drogon |
-| `ENABLE_COVERAGE` | `OFF` | 启用代码覆盖率报告（需要 GCC 或 Clang） |
-| `BUILD_DOCS` | `OFF` | 构建 API 文档（需要 Doxygen） |
+| `REMOTE_PROFILER_ENABLE_WEB` | `ON` | 编译 Web 层（需 Drogon），`OFF` 则完全不依赖 Drogon |
+| `ENABLE_COVERAGE` | `OFF` | 生成覆盖率报告 |
+| `BUILD_DOCS` | `OFF` | 生成 Doxygen API 文档（输出到 `build/docs/html/`） |
 
-### 常见构建场景
-
-**完整构建**（默认，含 Web UI 和所有组件）：
+常见场景：
 
 ```bash
-cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+# 仅核心库，不依赖 Drogon、不构建示例与测试
+cmake -S . -B build -DREMOTE_PROFILER_ENABLE_WEB=OFF \
+    -DREMOTE_PROFILER_BUILD_EXAMPLES=OFF -DREMOTE_PROFILER_BUILD_TESTS=OFF \
+    -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DVCPKG_TARGET_TRIPLET=x64-linux-release
 ```
 
-**最小化构建**（仅核心 profiling 库，不需要 Drogon）：
+> vcpkg 清单中的依赖是**无条件**查找的，即使关掉 `REMOTE_PROFILER_BUILD_TESTS` 也仍需要 gtest 等包在工具链中可见；用 `REMOTE_PROFILER_ENABLE_WEB=OFF` 才能真正去掉 Drogon。
+
+## 安装与集成
 
 ```bash
-cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
-    -DVCPKG_TARGET_TRIPLET=x64-linux-release \
-    -DREMOTE_PROFILER_ENABLE_WEB=OFF \
-    -DREMOTE_PROFILER_BUILD_EXAMPLES=OFF \
-    -DREMOTE_PROFILER_BUILD_TESTS=OFF
-```
-
-**仅构建核心库（用于集成到其他项目）**：
-
-```bash
-cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
-    -DVCPKG_TARGET_TRIPLET=x64-linux-release \
-    -DREMOTE_PROFILER_ENABLE_WEB=OFF \
-    -DREMOTE_PROFILER_BUILD_EXAMPLES=OFF \
-    -DREMOTE_PROFILER_BUILD_TESTS=OFF \
-    -DBUILD_SHARED_LIBS=OFF
-```
-
-> 构建静态库（`BUILD_SHARED_LIBS=OFF`）后可使用 `cmake --install` 安装，其他项目通过 `find_package` 集成。详见 [集成到你的项目](#-集成到你的项目)。
-
-**构建带 API 文档的版本**：
-
-```bash
-cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
-    -DVCPKG_TARGET_TRIPLET=x64-linux-release \
-    -DBUILD_DOCS=ON
-```
-
-文档生成后位于 `build/docs/html/` 目录。
-
-## 📦 安装
-
-```bash
-# 安装到默认路径（通常为 /usr/local）
-cmake --install build
-
-# 安装到指定路径
+cmake --install build                  # 默认前缀 /usr/local
 cmake --install build --prefix /opt/cpp-remote-profiler
 ```
 
-安装后的文件布局：
+安装布局（`<libdir>` 在 Debian/Ubuntu 上为 `lib`，在 Fedora/RHEL 上为 `lib64`）：
 
 ```
 <prefix>/
-├── include/cpp-remote-profiler/    # 头文件
-│   ├── profiler_manager.h
-│   ├── profiler_version.h
-│   ├── version.h
-│   └── profiler/
-│       ├── http_handlers.h
-│       └── log_sink.h
-├── lib/
-│   ├── libprofiler_core.so         # 核心库
-│   ├── libprofiler_web.so          # Web 库（如果启用）
-│   └── cmake/cpp-remote-profiler/  # CMake 配置文件
-│       ├── cpp-remote-profiler-config.cmake
-│       ├── cpp-remote-profiler-config-version.cmake
-│       └── cpp-remote-profiler-targets.cmake
-└── share/doc/cpp-remote-profiler/  # 文档（如果启用 BUILD_DOCS）
+├── include/cpp-remote-profiler/
+│   ├── profiler_manager.h  profiler_version.h  version.h
+│   └── profiler/{http_handlers.h, log_sink.h, drogon_adapter.h}
+├── <libdir>/
+│   ├── libprofiler_core.so
+│   ├── libprofiler_web.so                      # 启用 Web 时
+│   └── cmake/cpp-remote-profiler/              # CMake package 配置
+└── share/doc/cpp-remote-profiler/              # 启用 BUILD_DOCS 时
 ```
 
-> 安装后，其他项目可通过 `find_package(cpp-remote-profiler)` 直接使用。详见 [集成到你的项目](#-集成到你的项目)。
-
-### 5. 运行服务
-
-```bash
-./start.sh
-```
-
-或直接运行：
-
-```bash
-cd build
-./profiler_example
-```
-
-服务将在 `http://localhost:8080` 启动。
-
-## 📖 使用方法
-
-### 方法 1: 使用 Go pprof 工具（推荐）
-
-```bash
-# CPU 采样 10 秒
-go tool pprof http://localhost:8080/pprof/profile?seconds=10
-
-# 或者先下载 profile 文件
-curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
-go tool pprof -http=:8081 cpu.prof
-
-# Heap profile（需要先设置环境变量）
-curl http://localhost:8080/pprof/heap > heap.prof
-go tool pprof -http=:8081 heap.prof
-```
-
-### 方法 2: 通过 Web 界面（快速查看）
-
-1. 在浏览器中打开 `http://localhost:8080`
-2. 点击"分析 CPU"按钮，等待采样完成（默认 10 秒）
-3. 查看生成的火焰图
-4. 可选择"下载 SVG"保存结果
-
-### 方法 3: 通过 API 获取 SVG
-
-```bash
-# CPU 火焰图
-curl http://localhost:8080/api/cpu/analyze?duration=10
-
-# Heap 火焰图
-curl http://localhost:8080/api/heap/analyze?duration=10
-```
-
-## 📊 如何查看火焰图
-
-### 方法 1: 使用内置 Web 界面（最简单）
-
-访问 `http://localhost:8080`，点击"分析 CPU"或"分析 Heap"按钮，自动生成并显示火焰图
-
-### 方法 2: 使用 Go pprof 工具（功能强大）
-
-安装 Go 和 pprof：
-```bash
-# 安装 Go
-wget https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
-export PATH=$PATH:/usr/local/go/bin
-
-# 安装 pprof
-go install github.com/google/pprof@latest
-```
-
-使用 pprof：
-```bash
-# 直接从 URL 分析
-go tool pprof -http=:8081 http://localhost:8080/pprof/profile?seconds=10
-
-# 或者先下载
-curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
-go tool pprof -http=:8081 cpu.prof
-```
-
-### 方法 3: 使用 Speedscope
-
-1. 下载 profile 文件：
-   ```bash
-   curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
-   ```
-
-2. 访问 [https://www.speedscope.app/](https://www.speedscope.app/)
-
-3. 上传 `cpu.prof` 文件
-
-4. 查看交互式火焰图！
-
-## 🔧 API 端点
-
-| 端点 | 方法 | 描述 | 状态 |
-|------|------|------|------|
-| **标准 pprof 接口** ||||
-| `/pprof/profile` | GET | CPU profile（兼容 Go pprof） | ✅ |
-| `/pprof/heap` | GET | Heap profile（兼容 Go pprof） | ✅ |
-| `/pprof/growth` | GET | Heap growth stacks（兼容 Go pprof） | ✅ |
-| `/pprof/symbol` | POST | 符号化接口（兼容 Go pprof） | ✅ |
-| **一键分析接口** ||||
-| `/api/cpu/analyze` | GET | 采样并返回 CPU 火焰图 SVG | ✅ |
-| `/api/heap/analyze` | GET | 采样并返回 Heap 火焰图 SVG | ✅ |
-| `/api/growth/analyze` | GET | Heap Growth 火焰图 SVG | ✅ |
-| **原始 SVG 下载接口** ||||
-| `/api/cpu/svg_raw` | GET | CPU 原始 SVG（pprof 生成，下载） | ✅ |
-| `/api/heap/svg_raw` | GET | Heap 原始 SVG（pprof 生成，下载） | ✅ |
-| `/api/growth/svg_raw` | GET | Growth 原始 SVG（pprof 生成，下载） | ✅ |
-| `/api/cpu/flamegraph_raw` | GET | CPU FlameGraph 原始 SVG（下载） | ✅ |
-| `/api/heap/flamegraph_raw` | GET | Heap FlameGraph 原始 SVG（下载） | ✅ |
-| `/api/growth/flamegraph_raw` | GET | Growth FlameGraph 原始 SVG（下载） | ✅ |
-| **线程分析接口** ||||
-| `/api/thread/stacks` | GET | 获取所有线程的调用堆栈 | ✅ |
-| **辅助接口** ||||
-| `/` | GET | Web 主界面 | ✅ |
-| `/api/status` | GET | 获取全局状态 | ✅ |
-
-### 使用示例
-
-```bash
-# CPU profile（返回原始文件，用于 pprof 工具）
-curl http://localhost:8080/pprof/profile?seconds=10 > cpu.prof
-
-# Heap profile（返回原始文件，用于 pprof 工具）
-# 注意：需要设置 TCMALLOC_SAMPLE_PARAMETER 环境变量
-curl http://localhost:8080/pprof/heap > heap.prof
-
-# Heap growth stacks（返回调用堆栈）
-curl http://localhost:8080/pprof/growth
-
-# CPU 火焰图（返回 SVG，浏览器可直接显示）
-curl http://localhost:8080/api/cpu/analyze?duration=10
-
-# Heap 火焰图（返回 SVG，浏览器可直接显示）
-curl http://localhost:8080/api/heap/analyze?duration=10
-
-# 获取所有线程的调用堆栈
-curl http://localhost:8080/api/thread/stacks
-```
-
-## 📁 项目结构
-
-```
-cpp-remote-profiler/
-├── CMakeLists.txt              # 构建配置
-├── README.md                   # 项目文档
-├── build.sh                    # 构建脚本
-├── start.sh                    # 启动脚本
-├── include/
-│   ├── profiler_manager.h      # Profiler 管理器（非单例）
-│   ├── profiler_version.h.in   # 版本信息模板（CMake 生成）
-│   ├── version.h               # 版本宏（向后兼容）
-│   └── profiler/
-│       ├── http_handlers.h     # 框架无关的 HTTP 处理器
-│       ├── drogon_adapter.h    # Drogon 适配层（可选）
-│       └── log_sink.h          # 日志 Sink 接口
-├── src/
-│   ├── profiler_manager.cpp    # Profiler 管理器实现
-│   ├── symbolize.cpp           # 符号化引擎
-│   ├── http_handlers.cpp       # HTTP 处理器实现（框架无关）
-│   ├── drogon_adapter.cpp      # Drogon 适配层实现（可选）
-│   ├── web_resources.cpp       # 嵌入的 Web 资源
-│   └── internal/               # 内部实现（不对外暴露）
-│       ├── log_manager.h/cpp   # 日志管理器
-│       ├── default_log_sink.h/cpp # 默认日志实现（std::cout/cerr）
-│       ├── log_macros.h        # 内部日志宏
-│       └── ...                 # 其他内部头文件
-├── example/
-│   ├── main.cpp                # 示例程序主入口
-│   ├── workload.cpp            # 工作负载示例
-│   ├── workload.h
-│   └── custom_signal.cpp       # 自定义信号示例
-├── tests/
-│   ├── test_cpu_profile.cpp    # CPU profiling 测试
-│   ├── test_full_flow.cpp      # 完整流程测试
-│   └── test_logger.cpp         # 日志系统测试
-├── docs/                       # 用户文档
-│   ├── README.md               # 文档索引
-│   └── user_guide/             # 用户指南
-│       ├── 01_quick_start.md
-│       ├── 02_api_reference.md
-│       ├── 03_integration_examples.md
-│       ├── 04_troubleshooting.md
-│       ├── 05_installation.md
-│       └── 06_using_find_package.md
-├── scripts/
-│   └── check-format.sh         # 代码格式检查脚本
-└── vcpkg/                      # vcpkg 包管理器
-```
-
-## 🧪 运行测试
-
-```bash
-cd build
-ctest --output-on-failure
-# 或单独运行：
-./test_cpu_profile
-./test_full_flow
-./test_logger
-```
-
-运行完整的火焰图测试：
-
-```bash
-# 确保服务正在运行
-./start.sh
-
-# 在浏览器访问
-http://localhost:8080
-```
-
-## 🎨 代码格式检查
-
-项目使用 `clang-format` 进行代码格式检查。提供的脚本会自动检测本地 clang-format 版本，如果版本匹配 CI（版本 18）则使用本地版本，否则使用 Docker 容器确保版本一致。
-
-### 检查代码格式
-
-检查所有源文件是否符合格式规范：
-
-```bash
-./scripts/check-format.sh
-```
-
-如果代码格式不符合规范，脚本会显示差异并提示修复方法。
-
-### 自动格式化代码
-
-如果代码格式有问题，可以自动修复所有文件：
-
-```bash
-./scripts/check-format.sh --fix
-```
-
-这会原地修改 `src/`、`include/`、`tests/`、`example/` 目录下的所有 `.cpp`、`.h`、`.hpp`、`.cc`、`.cxx` 文件。
-
-### 格式检查范围
-
-脚本会检查以下目录中的 C/C++ 源文件：
-- `src/`
-- `include/`
-- `tests/`
-- `example/`
-- `cmake/examples/`
-
-### CI 集成
-
-代码格式检查已集成到 CI 流程中，提交代码前请确保格式正确，否则 CI 会失败。
-
-## 💡 集成到你的项目
-
-### 选项 1: 仅使用核心 profiling 功能（无 Web 依赖）
-
-只需链接 `profiler_core`，不需要 Drogon：
+### 方式 1：`find_package`（推荐）
 
 ```cmake
 find_package(cpp-remote-profiler REQUIRED)
-target_link_libraries(my_app cpp-remote-profiler::profiler_core)
+target_link_libraries(my_app PRIVATE cpp-remote-profiler::profiler_core)
 ```
+
+安装到非标准前缀时用 `CMAKE_PREFIX_PATH` 指向它，**不要**用 `cpp-remote-profiler_DIR` 硬编码 `lib` 路径（lib64 发行版上会失效）。
+
+需要 Web 层时显式链接 Drogon —— `profiler_web` 对 Drogon 是私有依赖，**不会**自动传递：
+
+```cmake
+find_package(cpp-remote-profiler REQUIRED)
+find_package(Drogon CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE
+    cpp-remote-profiler::profiler_web
+    Drogon::Drogon)
+```
+
+### 方式 2：`FetchContent` / `add_subdirectory`
+
+```cmake
+set(REMOTE_PROFILER_BUILD_EXAMPLES OFF CACHE BOOL "")
+set(REMOTE_PROFILER_BUILD_TESTS    OFF CACHE BOOL "")
+set(REMOTE_PROFILER_INSTALL        OFF CACHE BOOL "")
+add_subdirectory(third_party/cpp-remote-profiler)
+target_link_libraries(my_app PRIVATE profiler_core)
+```
+
+两种方式同样需要 vcpkg 工具链（或系统里已有 gtest/Backward/absl/OpenSSL/zlib）。可运行示例见 `cmake/examples/`。
+
+### 嵌入方式 A：仅核心 profiling
 
 ```cpp
 #include "profiler_manager.h"
@@ -547,28 +225,13 @@ target_link_libraries(my_app cpp-remote-profiler::profiler_core)
 int main() {
     profiler::ProfilerManager profiler;
 
-    // 启动 CPU profiling
     profiler.startCPUProfiler("cpu.prof");
-
-    // ... 运行你的代码 ...
-
+    // ... 你的业务代码 ...
     profiler.stopCPUProfiler();
-    return 0;
 }
 ```
 
-### 选项 2: 使用 Drogon Web 界面（推荐）
-
-链接 `profiler_web` 即可获得完整的 Web 控制面板：
-
-```cmake
-find_package(cpp-remote-profiler REQUIRED)
-find_package(Drogon CONFIG REQUIRED)
-target_link_libraries(my_app
-    cpp-remote-profiler::profiler_web
-    Drogon::Drogon
-)
-```
+### 嵌入方式 B：完整 Web 界面
 
 ```cpp
 #include "profiler_manager.h"
@@ -577,14 +240,14 @@ target_link_libraries(my_app
 
 int main() {
     profiler::ProfilerManager profiler;
-    profiler::registerDrogonHandlers(profiler);
+    profiler::registerDrogonHandlers(profiler);   // 注册全部 /pprof/* 与 /api/* 路由
     drogon::app().addListener("0.0.0.0", 8080).run();
 }
 ```
 
-### 选项 3: 与任意 Web 框架集成
+### 嵌入方式 C：接入任意 Web 框架
 
-使用框架无关的 `ProfilerHttpHandlers`，只链接 `profiler_core`：
+核心库的 `ProfilerHttpHandlers` 只依赖标准库，也可用 `dispatch()` 按路径统一分发：
 
 ```cpp
 #include "profiler_manager.h"
@@ -593,128 +256,184 @@ int main() {
 profiler::ProfilerManager profiler;
 profiler::ProfilerHttpHandlers handlers(profiler);
 
-// 调用 handler，获得框架无关的响应
 auto resp = handlers.handleCpuAnalyze(10, "flamegraph");
-// resp.status, resp.content_type, resp.body → 用你的框架包装
+// resp.status / resp.content_type / resp.body / resp.headers → 用你的框架包一层
 ```
 
-### 配置信号（可选）
-
-如果你的程序已经使用了 `SIGUSR1` 或 `SIGUSR2`，可以配置其他信号：
+### 可选配置
 
 ```cpp
-#include "profiler_manager.h"
+// 采集线程栈所用的信号，默认 SIGUSR1
+profiler::ProfilerManager::setStackCaptureSignal(SIGRTMIN + 5);
 
-int main() {
-    // 在创建 ProfilerManager 之前设置信号
-    profiler::ProfilerManager::setStackCaptureSignal(SIGRTMIN + 5);
-
-    profiler::ProfilerManager profiler;
-
-    // ... 正常使用 profiler ...
-}
-```
-
-**可用信号选项**：
-- `SIGUSR1` (默认) - 大多数程序可用
-- `SIGUSR2` - Drogon 可能使用 SIGUSR2
-- `SIGRTMIN` 到 `SIGRTMAX` - 实时信号，更安全
-
-**示例程序**：参考 `example/custom_signal.cpp` 查看详细用法。
-
-### 配置日志（可选）
-
-可以自定义日志输出，集成到你的应用日志系统：
-
-```cpp
-#include "profiler_manager.h"
-#include "profiler/log_sink.h"
-
-class MyAppLogSink : public profiler::LogSink {
+// 接入宿主日志系统
+class MyLogSink : public profiler::LogSink {
 public:
     void log(profiler::LogLevel level, const char* file, int line,
              const char* function, const char* message) override {
-        // 转发到你的日志系统
         MY_APP_LOG("[Profiler] {}:{} - {}", file, line, message);
     }
 };
-
-int main() {
-    profiler::ProfilerManager profiler;
-    profiler.setLogSink(std::make_shared<MyAppLogSink>());
-    profiler.setLogLevel(profiler::LogLevel::Debug);
-
-    // ... 正常使用 profiler ...
-}
+profiler.setLogSink(std::make_shared<MyLogSink>());
+profiler.setLogLevel(profiler::LogLevel::Debug);
 ```
 
-## ⚙️ 配置说明
+默认 sink 将 Trace/Debug/Info 写到 stdout，Warning 及以上写到 stderr。完整 API 见 [API 参考手册](docs/user_guide/02_api_reference.md)。
 
-### 环境变量
+## API 端点
 
-**TCMALLOC_SAMPLE_PARAMETER**:
-- 作用：设置 tcmalloc heap sampling 的采样间隔
-- 单位：字节
-- 默认值：524288 (512KB)
-- 推荐值：
-  - 开发环境：524288 (512KB)
-  - 生产环境：2097152 (2MB) 或更大，减少开销
-- 设置方式：
-  ```bash
-  # 方式 1: 导出环境变量
-  export TCMALLOC_SAMPLE_PARAMETER=524288
-  ./build/profiler_example
+由 `registerDrogonHandlers()` 注册的全部路由：
 
-  # 方式 2: 直接在命令行设置
-  env TCMALLOC_SAMPLE_PARAMETER=524288 ./build/profiler_example
-  ```
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| **标准 pprof 接口** | | |
+| `/pprof/profile` | GET | CPU profile 原始文件；`?seconds=N`，默认 **30**，范围 1–300 |
+| `/pprof/heap` | GET | Heap 采样原始文本；需 `TCMALLOC_SAMPLE_PARAMETER` |
+| `/pprof/growth` | GET | Heap growth 栈原始文本；无需上述环境变量 |
+| `/pprof/symbol` | POST | 符号化接口（Go pprof symbolz 协议） |
+| **一键分析（返回 SVG）** | | |
+| `/api/cpu/analyze` | GET/POST | 采样并返回 CPU 图；`?duration=N` 默认 10，范围 1–300 |
+| `/api/heap/analyze` | GET | 返回 Heap 图（固定 1 秒采样，**不接受** `duration`） |
+| `/api/growth/analyze` | GET | 返回 Heap Growth 图 |
+| **原始 SVG 下载** | | |
+| `/api/cpu/svg_raw` | GET | pprof 生成的 CPU SVG；`?duration=N` 默认 10 |
+| `/api/heap/svg_raw` | GET | pprof 生成的 Heap SVG |
+| `/api/growth/svg_raw` | GET | pprof 生成的 Growth SVG |
+| `/api/cpu/flamegraph_raw` | GET | FlameGraph 渲染的 CPU SVG；`?duration=N` 默认 10 |
+| `/api/heap/flamegraph_raw` | GET | FlameGraph 渲染的 Heap SVG |
+| `/api/growth/flamegraph_raw` | GET | FlameGraph 渲染的 Growth SVG |
+| **线程分析** | | |
+| `/api/thread/stacks` | GET | 所有线程的调用栈 |
+| **辅助与页面** | | |
+| `/` | GET | Web 控制面板 |
+| `/api/status` | GET | 各 profiler 的运行状态与输出路径（JSON） |
+| `/show_svg.html` | GET | CPU SVG 查看页 |
+| `/show_heap_svg.html` | GET | Heap SVG 查看页 |
+| `/show_growth_svg.html` | GET | Growth SVG 查看页 |
 
-**注意**: 只有设置此环境变量后，heap profiling 才能正常工作。
+所有分析类接口都接受 `?output_type=flamegraph|pprof`：
 
-### vcpkg 依赖版本
+- `pprof` — 由内置 pprof 脚本渲染的图形（**HTTP 层的默认值**）
+- `flamegraph` — 由 FlameGraph 渲染的火焰图
 
-所有依赖版本在 `vcpkg.json` 中定义，当前基线：`2cf2bcc60add50f79b2c418487d9cd1b6c7c1fec`
+> 注意默认值差异：C++ API `analyzeCPUProfile()` 的形参默认是 `"flamegraph"`，而 HTTP 路由在未传 `output_type` 时使用 `"pprof"`。想稳定拿到火焰图请显式写 `?output_type=flamegraph`。
 
-如需更新依赖版本：
+### 使用示例
 
 ```bash
-cd vcpkg
-./vcpkg upgrade --triplet=x64-linux-release
+# CPU：拿原始 profile 交给 pprof 工具（默认 30 秒）
+curl 'http://localhost:8080/pprof/profile?seconds=10' > cpu.prof
+go tool pprof -http=:8081 cpu.prof
+
+# CPU 火焰图（显式指定 output_type）
+curl 'http://localhost:8080/api/cpu/analyze?duration=10&output_type=flamegraph' -o cpu.svg
+
+# Heap（需先设置 TCMALLOC_SAMPLE_PARAMETER）
+curl 'http://localhost:8080/api/heap/analyze?output_type=flamegraph' -o heap.svg
+
+# 所有线程调用栈
+curl 'http://localhost:8080/api/thread/stacks'
 ```
 
-## ⚠️ 注意事项
+也支持直接让 pprof 从 URL 拉取：
 
-1. **编译选项**: 使用 `-g` 编译选项保留调试符号，以便正确显示函数名
-2. **性能开销**: CPU profiler 会有 1-5% 的性能开销
-3. **Heap Profiler**: 需要 tcmalloc 内存分配器和 `TCMALLOC_SAMPLE_PARAMETER` 环境变量
-4. **Heap Growth**: 无需 `TCMALLOC_SAMPLE_PARAMETER`，可即时获取堆增长数据
-5. **生产环境**: 谨慎使用，建议在开发/测试环境中使用
-6. **并发限制**: 同一时间只能有一个 CPU profiling 请求
-7. **信号冲突**: 默认使用 SIGUSR1，如与你的程序冲突，请使用 `setStackCaptureSignal()` 配置其他信号
-8. **线程安全**: 所有公共 API 都是线程安全的
+```bash
+go tool pprof -http=:8081 'http://localhost:8080/pprof/profile?seconds=10'
+```
 
-## 🎨 与其他工具的对比
+## 配置说明
 
-| 功能 | Go pprof | brpc pprof | C++ Remote Profiler |
-|------|---------|-----------|---------------------|
-| CPU Profiling | ✓ | ✓ | ✓ |
-| Heap Profiling | ✓ | ✓ | ✓ |
-| Thread Stack Capturing | ✓ | ✗ | ✓ |
-| 标准接口 | ✓ | ✓ | ✓ |
-| Web 界面 | ✓ | ✗ | ✓ |
-| 一键分析 SVG | ✗ | ✗ | ✓ |
-| 远程分析 | ✓ | ✓ | ✓ |
-| Goroutine Profiling | ✓ | ✗ | ✗ |
-| Growth Profiling | ✓ | ✓ | ✓ |
+### 环境变量 `TCMALLOC_SAMPLE_PARAMETER`
 
-## 📝 许可证
+控制 tcmalloc 的堆采样间隔（单位字节）。**默认值为 `0`，即关闭采样**——不设置它，`/pprof/heap`、`/api/heap/*` 会因拿不到采样数据而失败。
+
+tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用环境变量传入，**在代码里调用 `setenv()` 是无效的**：
+
+```bash
+export TCMALLOC_SAMPLE_PARAMETER=524288      # 512KB，开发环境常用
+./build/profiler_example
+```
+
+| 场景 | 建议值 |
+|------|--------|
+| 开发/调试 | `524288`（512KB） |
+| 生产 | `2097152`（2MB）或更大，降低开销 |
+
+Heap Growth 采集（`/pprof/growth`、`/api/growth/*`）走 `GetHeapGrowthStacks()`，**不需要**该变量。
+
+### 依赖版本
+
+依赖清单固定在 `vcpkg.json`，`builtin-baseline` 为 `2cf2bcc60add50f79b2c418487d9cd1b6c7c1fec`（与 CI 中 `lukka/run-vcpkg` 的 `vcpkgGitCommitId` 一致）。升级依赖时同步更新两者。
+
+## 注意事项
+
+1. **编译时保留调试符号**（`-g`，项目默认开启），否则火焰图只显示地址
+2. **CPU profiler 有 1–5% 性能开销**；采样频率可用 `CPUPROFILE_FREQUENCY` 调整
+3. **同一时刻只允许一个 CPU 采样会话**：`analyzeCPUProfile()` 会先停掉正在运行的 CPU profiler 再启动自己的，并发调用会互相破坏结果
+4. **信号冲突**：默认 `SIGUSR1`；宿主程序若已占用，请用 `setStackCaptureSignal()` 换一个（推荐 `SIGRTMIN+n`）
+5. **线程安全**：所有公共 API 可在任意线程调用，但第 3 条的单会话限制依然成立
+6. **工作目录需可写**，见[运行时依赖](#运行时依赖)
+7. **开发阶段软件**，不建议用于生产环境
+
+## 项目结构
+
+```
+cpp-remote-profiler/
+├── CMakeLists.txt              # 构建配置（核心库 / Web 层 / 示例 / 测试）
+├── CMakePresets.json           # 与 CI 一致的构建预设
+├── vcpkg.json                  # 依赖清单与 baseline
+├── build.sh  start.sh          # 便捷构建 / 启动脚本
+├── include/
+│   ├── profiler_manager.h      # ProfilerManager 公共 API
+│   ├── profiler_version.h.in   # 版本信息模板（CMake 生成）
+│   ├── version.h               # 版本宏兼容层
+│   └── profiler/
+│       ├── http_handlers.h     # 框架无关的 HTTP 处理器
+│       ├── drogon_adapter.h    # Drogon 适配层（可选）
+│       └── log_sink.h          # 日志 Sink 接口
+├── src/
+│   ├── profiler_manager.cpp    # 核心实现
+│   ├── http_handlers.cpp       # 处理器实现（框架无关）
+│   ├── drogon_adapter.cpp      # 路由注册 + 请求/响应转换
+│   ├── symbolize.cpp           # 符号化引擎（absl → dladdr → backward-cpp）
+│   ├── web_resources.cpp       # 内置 Web 资源
+│   └── internal/               # 内部实现：日志、符号化、内嵌 pprof / flamegraph.pl
+├── example/  tests/            # 示例与 GoogleTest 测试
+├── cmake/
+│   ├── cpp-remote-profiler-config.cmake.in
+│   └── examples/               # find_package / FetchContent 集成验证
+├── docs/
+│   ├── mainpage.dox  Doxyfile.in
+│   └── user_guide/             # 用户文档（安装、API、集成、排错）
+├── scripts/check-format.sh     # clang-format 检查（CI 使用 18）
+└── .github/workflows/          # CI：构建、测试、ASan/UBSan、clang-tidy、格式检查
+```
+
+## 开发
+
+```bash
+cmake --preset=debug
+cmake --build build/debug -j$(nproc)
+ctest --test-dir build/debug --output-on-failure
+
+./scripts/check-format.sh          # 检查格式
+./scripts/check-format.sh --fix    # 自动修复
+```
+
+贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)；版本历史见 [CHANGELOG.md](CHANGELOG.md)；后续计划见 [ROADMAP.md](ROADMAP.md)。
+
+## 文档索引
+
+| 文档 | 内容 |
+|------|------|
+| [快速开始](docs/user_guide/01_quick_start.md) | 5 分钟集成 |
+| [API 参考](docs/user_guide/02_api_reference.md) | 完整函数签名与语义 |
+| [集成示例](docs/user_guide/03_integration_examples.md) | 5 类集成场景 |
+| [安装指南](docs/user_guide/05_installation.md) | 三种安装/引入方式 |
+| [find_package 集成](docs/user_guide/06_using_find_package.md) | CMake 包使用细节 |
+| [故障排除](docs/user_guide/04_troubleshooting.md) | 常见问题与排查 |
+| [设计文档](plan.md) | 架构设计与技术决策 |
+
+## 许可证
 
 MIT License
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📞 联系方式
-
-如有问题，请在 GitHub 上提 Issue。

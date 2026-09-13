@@ -1,26 +1,28 @@
 /**
- * @mainpage cpp-remote-profiler Documentation
+ * @mainpage cpp-remote-profiler
  *
  * @section intro Introduction
  *
- * cpp-remote-profiler is a C++ remote profiling tool similar to Go pprof
- * and brpc pprof service. It is built on gperftools and the Drogon framework.
+ * cpp-remote-profiler is a C++ remote profiling library similar to Go pprof and
+ * the brpc pprof service. It embeds HTTP endpoints into the profiled process so
+ * that CPU and heap profiles can be collected remotely and rendered directly as
+ * flame-graph SVG.
+ *
+ * The profiling core is built on gperftools. The web layer is based on Drogon and
+ * is @b optional: @c profiler_core has no web-framework dependency at all.
  *
  * @section features Features
  *
- * - @b CPU @b Profiling: CPU performance analysis using gperftools
- * - @b Heap @b Profiling: Memory usage analysis and leak detection
- * - @b Heap @b Growth @b Profiling: Heap growth analysis (no env var needed)
- * - @b Thread @b Stack @b Capture: Get call stacks of all threads
- * - @b Standard @b pprof @b Interface: Compatible with Go pprof tools
- * - @b Framework @b Agnostic: ProfilerHttpHandlers work with any web framework
- * - @b Web @b Interface: Beautiful web control panel with one-click flame graph
- * - @b RESTful @b API: Complete HTTP API endpoints
- * - @b Configurable @b Logging: Custom LogSink integration
+ * - @b CPU @b Profiling via gperftools sampling
+ * - @b Heap @b Profiling with allocation analysis and leak detection
+ * - @b Heap @b Growth @b Profiling (no @c TCMALLOC_SAMPLE_PARAMETER required)
+ * - @b Thread @b Stack @b Capture across all threads
+ * - @b Standard @b pprof @b Interface compatible with the Go pprof toolchain
+ * - @b Framework @b Agnostic: @c ProfilerHttpHandlers return a plain response struct
+ * - @b Optional @b Web @b Layer: a Drogon adapter is provided, others are supported
+ * - @b Configurable @b Logging through the @c LogSink interface
  *
- * @section getting_started Getting Started
- *
- * @subsection quick_example Quick Example
+ * @section getting_started Quick Example
  *
  * @code{.cpp}
  * #include "profiler_manager.h"
@@ -37,24 +39,33 @@
  *
  * @section api_endpoints API Endpoints
  *
- * | Endpoint | Description |
- * |----------|-------------|
- * | /pprof/profile | CPU profile (Go pprof compatible) |
- * | /pprof/heap | Heap profile (Go pprof compatible) |
- * | /pprof/symbol | Symbolization interface |
- * | /api/cpu/analyze | CPU flame graph SVG |
- * | /api/heap/analyze | Heap flame graph SVG |
- * | /api/thread/stacks | Get all thread call stacks |
+ * The canonical, always-current endpoint list lives in the project README under
+ * "API 端点" (README.md). Summary:
  *
- * @section installation Installation
+ * - Standard pprof: @c /pprof/profile, @c /pprof/heap, @c /pprof/growth, @c /pprof/symbol
+ * - One-click analysis (SVG): @c /api/{cpu,heap,growth}/analyze
+ * - Raw SVG download: @c /api/{cpu,heap,growth}/svg_raw and @c .../flamegraph_raw
+ * - Thread stacks: @c /api/thread/stacks
+ * - Panel and viewers: @c /, @c /show_svg.html, @c /show_heap_svg.html, @c /show_growth_svg.html
  *
- * See @ref docs/user_guide/05_installation.md for detailed installation instructions.
+ * @section runtime_dependencies Runtime Dependencies
+ *
+ * @c ProfilerManager writes the @c pprof and @c flamegraph.pl Perl scripts into the
+ * process working directory on construction and invokes them with relative paths.
+ * The working directory must therefore be writable, and @c perl must be installed.
+ *
+ * @section installation Installation and Documentation
+ *
+ * Build instructions and the full user guide are in the repository:
+ * README.md (build, endpoints, configuration),
+ * docs/user_guide/02_api_reference.md (API reference),
+ * docs/user_guide/05_installation.md (installation methods).
  *
  * @section license License
  *
  * MIT License
  *
- * @section links Useful Links
+ * @section links Links
  *
  * - GitHub: https://github.com/IronsDu/cpp-remote-profiler
  * - Issue Tracker: https://github.com/IronsDu/cpp-remote-profiler/issues

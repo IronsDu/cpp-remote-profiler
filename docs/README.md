@@ -1,109 +1,34 @@
 # C++ Remote Profiler 文档
 
-欢迎来到 C++ Remote Profiler 文档中心！
+本项目文档分三层：根目录 `README.md` 是入口与速查，`docs/user_guide/` 是面向使用者的详解，`plan.md` 是面向维护者的设计与决策记录。
 
-## 📚 文档目录
+## 用户指南
 
-### 用户指南
-适合所有库用户，从入门到精通。
+按推荐阅读顺序排列：
 
-1. **[快速开始指南](user_guide/01_quick_start.md)**
-   - 5 分钟快速集成
-   - 最简单的示例
-   - 编译和运行
-   - 下一步指引
+1. **[快速开始](user_guide/01_quick_start.md)** — 5 分钟跑通第一个 profiling
+2. **[安装指南](user_guide/05_installation.md)** — 源码安装 / FetchContent / add_subdirectory 三种引入方式，含 CMake 选项
+3. **[使用 find_package](user_guide/06_using_find_package.md)** — 已安装场景下的 CMake 包用法与排错
+4. **[API 参考手册](user_guide/02_api_reference.md)** — `ProfilerManager` / `ProfilerHttpHandlers` / `LogSink` 完整签名
+5. **[集成示例](user_guide/03_integration_examples.md)** — 5 类集成场景，含框架无关接入
+6. **[故障排除](user_guide/04_troubleshooting.md)** — 编译、链接、符号化、性能、多线程问题
 
-2. **[安装指南](user_guide/05_installation.md)**
-   - 方法 1: 从源码编译安装
-   - 方法 2: FetchContent 集成
-   - 方法 3: add_subdirectory 集成
-   - CMake 构建选项说明
-   - 验证安装和故障排除
+## 设计与维护
 
-3. **[使用 find_package](user_guide/06_using_find_package.md)** ⭐ 新增
-   - 基本用法
-   - 使用 Web 功能
-   - 完整示例
-   - 故障排除
+- **[设计文档 (plan.md)](../plan.md)** — 架构设计、技术决策记录、已知限制
+- **[贡献指南](../CONTRIBUTING.md)** — 开发环境、代码规范、PR 流程
+- **[版本历史](../CHANGELOG.md)** — 已发布版本的变更记录
+- **[路线图](../ROADMAP.md)** — 待办与改进方向
 
-4. **[API 参考手册](user_guide/02_api_reference.md)**
-   - ProfilerManager API
-   - CPU/Heap Profiling API
-   - 线程堆栈 API
-   - 符号化 API
-   - 完整的函数签名和参数说明
+## 外部参考
 
-5. **[集成示例](user_guide/03_integration_examples.md)**
-   - 场景 1: 仅使用核心功能
-   - 场景 2: 集成 Web 界面
-   - 场景 3: 与现有服务器集成
-   - 场景 4: 定时 profiling
-   - 场景 5: 条件触发 profiling
-   - 场景 6: 多进程 profiling
+- [gperftools](https://github.com/gperftools/gperftools) — CPU / Heap profiling 底层实现
+- [Go pprof](https://github.com/google/pprof) — profile 格式与可视化工具
+- [FlameGraph](https://github.com/brendangregg/FlameGraph) — 火焰图渲染
+- [Drogon](https://github.com/drogonframework/drogon) — 可选 Web 框架
 
-6. **[故障排除指南](user_guide/04_troubleshooting.md)**
-   - 编译问题
-   - 链接问题
-   - 运行时错误
-   - 符号化问题
-   - 性能问题
-   - 常见问题 FAQ
+## 版本
 
-### 库 API 文档
-详细的 API 文档（待完善）。
+**当前版本**: v0.1.0（开发阶段，API 可能变化，不建议用于生产环境）
 
-- [ProfilerManager API](library_api/profiler_manager.md)
-- [HTTP Handlers API](library_api/http_handlers.md)
-- [Log Sink API](library_api/log_sink.md)
-
-### 开发者指南
-贡献者和维护者文档。
-
-- [开发者指南](developer_guide/README.md)
-
-## 🚀 快速导航
-
-### 我是新用户
-👉 从 [快速开始指南](user_guide/01_quick_start.md) 开始
-
-### 我想了解 API
-👉 查看 [API 参考手册](user_guide/02_api_reference.md)
-
-### 我想看集成示例
-👉 阅读 [集成示例](user_guide/03_integration_examples.md)
-
-### 我遇到了问题
-👉 参考 [故障排除指南](user_guide/04_troubleshooting.md)
-
-### 我想贡献代码
-👉 阅读 [开发者指南](developer_guide/README.md)
-
-## 📖 相关资源
-
-- **主 README**: [项目根目录 README](../README.md)
-- **项目规划**: [plan.md](../plan.md)
-- **开发规则**: [notes.md](../notes.md)
-- **GitHub 仓库**: [https://github.com/IronsDu/cpp-remote-profiler](https://github.com/IronsDu/cpp-remote-profiler)
-
-## 🔗 外部参考
-
-- [gperftools 文档](https://github.com/gperftools/gperftools)
-- [FlameGraph 工具](https://github.com/brendangregg/FlameGraph)
-- [Go pprof 文档](https://github.com/google/pprof)
-- [Drogon 框架](https://github.com/drogonframework/drogon)
-
-## 📝 版本说明
-
-**当前版本**: v0.1.0 (开发阶段)
-
-⚠️ **注意**: API 可能随时变化，不建议用于生产环境。
-
-详见 [版本管理](../plan.md#api-稳定性策略)。
-
-## 🤝 贡献
-
-欢迎贡献文档！请参阅 [开发者指南](developer_guide/README.md)。
-
----
-
-**最后更新**: 2026-02-05
+API 兼容性承诺见 [设计文档中的版本策略](../plan.md#api-稳定性策略)。
