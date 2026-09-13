@@ -399,18 +399,56 @@ TEST_F(HttpHandlersTest, HeapAnalysisTakesACollectionWindow) {
                                       profiler::ProfilerHttpHandlers*, int, const std::string&>,
                   "handleHeapAnalyze must take (duration, output_type)");
 
-    // The renderers take one too, since each runs its own sampling window.
-    static_assert(std::is_invocable_v<decltype(&profiler::ProfilerHttpHandlers::handleHeapSvgRaw),
-                                      profiler::ProfilerHttpHandlers*, int>,
-                  "handleHeapSvgRaw must take a duration");
-    static_assert(std::is_invocable_v<decltype(&profiler::ProfilerHttpHandlers::handleHeapFlamegraphRaw),
-                                      profiler::ProfilerHttpHandlers*, int>,
-                  "handleHeapFlamegraphRaw must take a duration");
+    // The renderers take one too, since each can run its own sampling window.
+    // Their full signature (duration, state_based) is asserted separately in
+    // HeapRenderersCanDrawEitherSource.
 }
 
 TEST_F(HttpHandlersTest, HeapAnalyzeRejectsInvalidOutputType) {
     auto resp = handlers.handleHeapAnalyze(1, "bogus");
     EXPECT_EQ(resp.status, 400);
+}
+
+TEST_F(HttpHandlersTest, HeapRenderersCanDrawEitherSource) {
+    // Both renderers must be invocable for either heap source, so the UI can
+    // offer a graph for the state-based snapshot too -- not only the raw text.
+    using H = profiler::ProfilerHttpHandlers;
+
+    auto svg = static_cast<profiler::HandlerResponse (H::*)(int, bool)>(&H::handleHeapSvgRaw);
+    EXPECT_TRUE((std::is_invocable_v<decltype(svg), H*, int, bool>));
+
+    auto fg = static_cast<profiler::HandlerResponse (H::*)(int, bool)>(&H::handleHeapFlamegraphRaw);
+    EXPECT_TRUE((std::is_invocable_v<decltype(fg), H*, int, bool>));
+}
+
+TEST_F(HttpHandlersTest, StateBasedRenderingReportsTheMissingSamplingVariable) {
+    // The two sources fail differently, and the message must say which one was
+    // asked for: the state-based path needs TCMALLOC_SAMPLE_PARAMETER before
+    // process start, the window-based one does not need it at all.
+    //
+    // These tests run without that variable set, so getRawHeapSample() yields
+    // nothing while the window path can still collect.
+    profiler::ProfilerManager plain;
+
+    ASSERT_TRUE(plain.getRawHeapSample().empty()) << "precondition: sampling is off in the test process";
+
+    profiler::ProfilerHttpHandlers h(plain);
+    auto state = h.handleHeapSvgRaw(1, /*state_based=*/true);
+    EXPECT_EQ(state.status, 500);
+    EXPECT_NE(state.body.find("TCMALLOC_SAMPLE_PARAMETER"), std::string::npos) << state.body;
+}
+
+TEST_F(HttpHandlersTest, WindowBasedRenderingDoesNotMentionTheVariable) {
+    profiler::ProfilerManager plain;
+    profiler::ProfilerHttpHandlers h(plain);
+
+    // Duration is clamped, and the window path must not blame the environment
+    // variable it does not depend on.
+    auto resp = h.handleHeapSvgRaw(0, /*state_based=*/false);
+    if (resp.status == 500) {
+        EXPECT_EQ(resp.body.find("TCMALLOC_SAMPLE_PARAMETER"), std::string::npos)
+            << "window-based failure must not blame a variable it does not need: " << resp.body;
+    }
 }
 
 // ---------------------------------------------------------------------------

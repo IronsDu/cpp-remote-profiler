@@ -103,13 +103,19 @@ public:
     ///        process start -- but a longer window covers more allocations.
     HandlerResponse handleHeapAnalyze(int duration, const std::string& output_type);
 
-    /// @brief Render the current heap sample with the pprof script
-    /// @param duration Collection window in seconds (clamped 1..300)
-    HandlerResponse handleHeapSvgRaw(int duration);
+    /// @brief Render a heap sample with the pprof script
+    /// @param duration Collection window in seconds (clamped 1..300); used only
+    ///        when @p state_based is false
+    /// @param state_based Which of the two heap sources to render:
+    ///        - false (default): run a collection window, no startup config needed
+    ///        - true: render tcmalloc's cumulative snapshot of the live heap
+    ///          (getRawHeapSample()), which requires TCMALLOC_SAMPLE_PARAMETER
+    HandlerResponse handleHeapSvgRaw(int duration, bool state_based = false);
 
-    /// @brief Render the current heap sample as a FlameGraph
+    /// @brief Render a heap sample as a FlameGraph
     /// @param duration Collection window in seconds (clamped 1..300)
-    HandlerResponse handleHeapFlamegraphRaw(int duration);
+    /// @param state_based See @ref handleHeapSvgRaw
+    HandlerResponse handleHeapFlamegraphRaw(int duration, bool state_based = false);
 
     // --- Growth endpoints ---
     HandlerResponse handleGrowthAnalyze(const std::string& output_type);

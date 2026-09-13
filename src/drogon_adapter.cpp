@@ -329,8 +329,11 @@ void registerDrogonHandlers(profiler::ProfilerManager& profiler) {
                         duration = std::stoi(dp);
                     } catch (...) {}
                 }
+                // source=state renders tcmalloc's cumulative snapshot of the
+                // live heap instead of running a collection window.
+                const bool state_based = req->getParameter("source") == "state";
                 runAsync(executor, req, std::move(callback),
-                         [handlers, fn, duration]() { return ((*handlers).*fn)(duration); });
+                         [handlers, fn, duration, state_based]() { return ((*handlers).*fn)(duration, state_based); });
             },
             {drogon::Get});
     };

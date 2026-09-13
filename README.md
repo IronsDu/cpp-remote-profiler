@@ -324,10 +324,10 @@ profiler.setLogLevel(profiler::LogLevel::Debug);
 | `/api/growth/analyze` | GET | 返回 Heap Growth 图 |
 | **原始 SVG 下载** | | |
 | `/api/cpu/svg_raw` | GET | pprof 生成的 CPU SVG；`?duration=N` 默认 10 |
-| `/api/heap/svg_raw` | GET | **窗口式**：pprof 渲染的 Heap SVG；`?duration=N` 默认 1 |
+| `/api/heap/svg_raw` | GET | Heap SVG（pprof 渲染）；`?duration=N` 默认 1；`?source=state` 改为渲染**当前堆快照** |
 | `/api/growth/svg_raw` | GET | pprof 生成的 Growth SVG |
 | `/api/cpu/flamegraph_raw` | GET | FlameGraph 渲染的 CPU SVG；`?duration=N` 默认 10 |
-| `/api/heap/flamegraph_raw` | GET | **窗口式**：FlameGraph 渲染的 Heap SVG；`?duration=N` 默认 1 |
+| `/api/heap/flamegraph_raw` | GET | Heap SVG（FlameGraph 渲染）；`?duration=N` 默认 1；`?source=state` 同上 |
 | `/api/growth/flamegraph_raw` | GET | FlameGraph 渲染的 Growth SVG |
 | **线程分析** | | |
 | `/api/thread/stacks` | GET | 所有线程的调用栈 |
@@ -422,11 +422,15 @@ tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用�
 `duration` 只决定**采集多久**。分配稀疏的进程需要更长的窗口才能采到东西，所以它是"覆盖度"参数
 而不是"精度"参数。默认 1 秒，范围 1–300。
 
-Web 控制面板的 Heap 区把两者分成了两张卡片：
+Web 控制面板的 Heap 区用一个**数据源**下拉在两套机制间切换，两者都能出图：
 
-- **窗口式**（可选采集窗口 + 图表类型）—— 三个按钮分别走 `/api/heap/analyze`（内嵌查看）、
-  以及 `/api/heap/{svg_raw,flamegraph_raw}`（查看/下载）
-- **状态式：当前堆的累计快照** —— `GET /pprof/heap`（可查看/下载，需 `TCMALLOC_SAMPLE_PARAMETER`）
+| 数据源 | 图表接口 | 说明 |
+|--------|----------|------|
+| 窗口式 | `/api/heap/{svg_raw,flamegraph_raw}?duration=N` | 采集 N 秒后渲染 |
+| 状态式 | `/api/heap/{svg_raw,flamegraph_raw}?source=state` | 渲染当前堆累计快照（对应 `/pprof/heap`） |
+
+面板提供「🔍 查看图表」「📥 下载图表 (SVG)」，以及「📄 查看原始 profile」「📥 下载 profile 文本」
+（后者走 `/pprof/heap`，用于交给 `go tool pprof` 分析）。
 
 ### 依赖版本
 

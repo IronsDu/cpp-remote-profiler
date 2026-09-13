@@ -211,12 +211,14 @@ static const char INDEX_PAGE[] = R"HTML(
         <div class="section">
             <h2>Heap Profiler</h2>
             <div class="card">
-                <h3>窗口式：采集一段时间内的分配</h3>
-                <span class="hint">
-                    ⚠️ 只记录<b>采集窗口内发生的分配</b>，不反映此刻已经在堆里的内存。若进程内存虽高但已停止分配，
-                    结果会是空的（返回 "No heap profile data was produced"）。分配稀疏时把窗口调长一些。
-                </span>
                 <div class="input-group">
+                    <label for="heap-source">数据源:</label>
+                    <select id="heap-source" onchange="onHeapSourceChange()">
+                        <option value="window">窗口式：采集一段时间内的分配</option>
+                        <option value="state">状态式：当前堆的累计快照</option>
+                    </select>
+                </div>
+                <div class="input-group" id="heap-duration-group">
                     <label for="heap-duration">采集窗口(秒):</label>
                     <input type="number" id="heap-duration" value="1" min="1" max="300">
                 </div>
@@ -227,20 +229,11 @@ static const char INDEX_PAGE[] = R"HTML(
                         <option value="flamegraph">FlameGraph (Brendan Gregg)</option>
                     </select>
                 </div>
-                <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成Heap火焰图</button>
+                <span class="hint" id="heap-source-hint"></span>
                 <button class="view-btn" onclick="viewHeapChart()">🔍 查看图表</button>
-                <button class="download-btn" id="heap-download-btn" onclick="downloadHeapChart()">📥 下载 Heap 图表 (SVG)</button>
-            </div>
-            <div class="card">
-                <h3>状态式：当前堆的累计快照</h3>
-                <span class="hint">
-                    对应 <code>GET /pprof/heap</code>，返回 tcmalloc 的累计采样，反映<b>堆里现存的内存</b>
-                    ——与上面的"1 秒内分配"是两套机制，结果不同属正常。
-                    <b>需要</b>在进程启动前设置 <code>TCMALLOC_SAMPLE_PARAMETER</code>，否则返回 500。
-                    下载后可用 <code>go tool pprof ./your_app heap.prof</code> 分析。
-                </span>
-                <button class="view-btn" onclick="viewHeapProfile()">🔍 查看当前堆快照</button>
-                <button class="download-btn" id="heap-profile-btn" onclick="downloadHeapProfile()">📥 下载 heap.prof</button>
+                <button class="download-btn" id="heap-download-btn" onclick="downloadHeapChart()">📥 下载图表 (SVG)</button>
+                <button class="view-btn" id="heap-raw-btn" onclick="viewHeapProfile()">📄 查看原始 profile</button>
+                <button class="download-btn" id="heap-profile-btn" onclick="downloadHeapProfile()">📥 下载 profile 文本</button>
             </div>
         </div>
 
@@ -289,10 +282,15 @@ static const char INDEX_PAGE[] = R"HTML(
         }
 
         function analyzeHeap() {
+            if (heapSource() === 'state') {
+                // 状态式由 /pprof/heap 提供，走 *_raw 端点渲染（查看图表按钮）
+                log('💡 状态式数据源请用「🔍 查看图表」——/api/heap/analyze 只做窗口式采集。');
+                viewHeapChart();
+                return;
+            }
             const chartType = document.getElementById('heap-chart-type').value;
             const duration = heapDuration();
             log(`🚀 正在获取Heap火焰图 (图表类型: ${chartType}, 采集窗口: ${duration}秒)...`);
-            // 打开独立的SVG查看器页面，传递 output_type 与 duration 参数
             window.open(`/show_heap_svg.html?output_type=${chartType}&duration=${duration}`, '_blank');
             log('✅ Heap火焰图查看器已在新标签页打开');
             log(`💡 提示：当前使用 ${chartType === 'flamegraph' ? 'Brendan Gregg FlameGraph' : 'pprof SVG'}`);
@@ -306,6 +304,9 @@ static const char INDEX_PAGE[] = R"HTML(
             log('✅ Heap Growth火焰图查看器已在新标签页打开');
             log(`💡 提示：当前使用 ${chartType === 'flamegraph' ? 'Brendan Gregg FlameGraph' : 'pprof SVG'}`);
         }
+
+        // 页面载入时渲染当前数据源的说明
+        document.addEventListener('DOMContentLoaded', onHeapSourceChange);
 
         function log(message) {
             const output = document.getElementById('output');
@@ -342,7 +343,7 @@ static const char INDEX_PAGE[] = R"HTML(
             }, 1000);
 
             // 使用 fetch 下载文件
-            fetch(`${endpoint}?duration=${duration}`)
+            fetch(`${endpoint}?${heapQuery()}`)
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -377,10 +378,14 @@ static const char INDEX_PAGE[] = R"HTML(
                 });
         }
 
-        // 窗口式：图表类型 → 渲染端点。analyze 端点返回 SVG 供内嵌查看，
-        // 两个 *_raw 端点返回可下载的 SVG（同样的采样，只是渲染器不同）。
+        // 图表类型 → 渲染端点。两个 *_raw 端点都支持 source 参数选择数据源，
+        // 因此"状态式"也能出图，而不是只能看原始文本。
         function heapChartEndpoint(chartType) {
             return chartType === 'flamegraph' ? '/api/heap/flamegraph_raw' : '/api/heap/svg_raw';
+        }
+
+        function heapSource() {
+            return document.getElementById('heap-source').value;
         }
 
         function heapDuration() {
@@ -388,15 +393,39 @@ static const char INDEX_PAGE[] = R"HTML(
             return Number.isFinite(v) && v >= 1 ? Math.min(v, 300) : 1;
         }
 
-        // 与"下载"按钮走同样的端点，只是把结果展示出来而不是保存
+        const HEAP_SOURCE_HINTS = {
+            window: '⚠️ 只记录<b>采集窗口内发生的分配</b>，不反映此刻已经在堆里的内存。若进程内存虽高但已停止分配，' +
+                    '结果会是空的。分配稀疏时把窗口调长一些。<b>无需</b>启动前设置采样变量。',
+            state: '📌 反映<b>堆里现存的内存</b>（tcmalloc 累计采样），与"窗口内分配"是两套机制，结果不同属正常。' +
+                   '<b>需要</b>在进程启动前设置 <code>TCMALLOC_SAMPLE_PARAMETER</code>，否则返回 500。' +
+                   '刚启动进程时可能显示 <code>0: 0 [0: 0]</code>——那是采样尚未累计，稍等再试即可。'
+        };
+
+        function onHeapSourceChange() {
+            const state = heapSource() === 'state';
+            // 采集窗口只对窗口式有意义
+            document.getElementById('heap-duration-group').style.display = state ? 'none' : '';
+            document.getElementById('heap-source-hint').innerHTML = HEAP_SOURCE_HINTS[heapSource()];
+        }
+
+        // 组装一次请求所需的查询串
+        function heapQuery() {
+            const p = new URLSearchParams();
+            p.set('duration', String(heapDuration()));
+            if (heapSource() === 'state') p.set('source', 'state');
+            return p.toString();
+        }
+
         function viewHeapChart() {
             const chartType = document.getElementById('heap-chart-type').value;
-            const duration = heapDuration();
             const endpoint = heapChartEndpoint(chartType);
-            log(`🚀 正在渲染 Heap ${chartType} 图表 (采集窗口 ${duration} 秒)...`);
-            window.open(`${endpoint}?duration=${duration}`, '_blank');
-            log(`✅ 已在新标签页打开 ${endpoint}?duration=${duration}\n` +
-                `   提示：该端点会在服务端采集 ${duration} 秒后再渲染，标签页会稍等片刻。`);
+            const url = `${endpoint}?${heapQuery()}`;
+            const state = heapSource() === 'state';
+            log(`🚀 正在渲染 Heap ${chartType} 图表（数据源: ${state ? '当前堆快照' : '窗口 ' + heapDuration() + ' 秒'}）...`);
+            window.open(url, '_blank');
+            log(`✅ 已在新标签页打开 ${url}\n` +
+                (state ? '   数据来自 /pprof/heap，需已设置 TCMALLOC_SAMPLE_PARAMETER。'
+                       : `   服务端会先采集 ${heapDuration()} 秒再渲染，标签页会稍等片刻。`));
         }
 
         // 状态式 heap 快照（/pprof/heap）：与上面的窗口式分析是两套机制。
