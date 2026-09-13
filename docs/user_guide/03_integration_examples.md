@@ -222,37 +222,52 @@ int main() {
 
 ### 示例：与 oat++ 集成
 
+> ⚠️ 下面只是**思路示意**，不是可直接编译的代码。真实接入请用 oat++ 的 `ENDPOINT`
+> 宏注册路由，并用 `request->getPathTail()` / `getQueryParameter()` 取路径与参数——
+> HTTP 请求里**没有**名为 `PATH` 的请求头。
+
+核心做法是给每个端点写一个薄适配函数：
+
 ```cpp
 #include "profiler_manager.h"
 #include "profiler/http_handlers.h"
-#include "oatpp/web/server/HttpConnectionHandler.hpp"
+#include "oatpp/web/server/api/ApiController.hpp"
 
-class ProfilerController : public oatpp::web::server::handler::RequestHandler {
+class ProfilerController : public oatpp::web::server::api::ApiController {
     profiler::ProfilerManager profiler_;
     profiler::ProfilerHttpHandlers handlers_;
 
 public:
-    ProfilerController() : handlers_(profiler_) {}
+    ProfilerController(const std::shared_ptr<ObjectMapper>& objectMapper)
+        : ApiController(objectMapper), handlers_(profiler_) {}
 
-    std::shared_ptr<OutgoingResponse> handle(const std::shared_ptr<IncomingRequest>& request) override {
-        std::string path = request->getHeader("PATH");
-        profiler::HandlerResponse resp;
-
-        if (path == "/api/status") {
-            resp = handlers_.handleStatus();
-        } else if (path == "/api/cpu/analyze") {
-            int duration = /* parse from request */ 10;
-            resp = handlers_.handleCpuAnalyze(duration, "pprof");
-        }
-        // ... 其他路由
-
-        auto response = OutgoingResponse::createStatic(
-            Status(resp.status, "OK"),
-            resp.body
-        );
+    // 把框架无关的 HandlerResponse 转成 oat++ 的响应
+    std::shared_ptr<OutgoingResponse> toOat(const profiler::HandlerResponse& resp) {
+        auto response = createResponse(Status(resp.status), resp.body);
         response->putHeader("Content-Type", resp.content_type.c_str());
+        for (const auto& [k, v] : resp.headers) {
+            response->putHeader(k.c_str(), v.c_str());
+        }
         return response;
     }
+
+    ENDPOINT("GET", "/api/status", status) {
+        return toOat(handlers_.handleStatus());
+    }
+
+    ENDPOINT("GET", "/api/cpu/analyze", cpuAnalyze,
+             QUERY(Int32, duration, "duration", "10"),
+             QUERY(String, output_type, "output_type", "flamegraph")) {
+        return toOat(handlers_.handleCpuAnalyze(duration, output_type));
+    }
+
+    ENDPOINT("GET", "/pprof/profile", pprofProfile,
+             QUERY(Int32, seconds, "seconds", "30")) {
+        return toOat(handlers_.handlePprofProfile(seconds));
+    }
+
+    // 也可以用 dispatch() 统一按路径 + 查询参数分发，避免逐个写端点
+    // auto resp = handlers_.dispatch(method, path, params, body);
 };
 ```
 
@@ -261,7 +276,8 @@ public:
 - `ProfilerHttpHandlers` 不依赖任何 Web 框架
 - 只需链接 `profiler_core`（不需要 Drogon）
 - 每个 handler 方法返回 `HandlerResponse`（`status`, `content_type`, `body`, `headers`）
-- 你负责从请求中提取参数，调用 handler，然后包装响应
+- 你负责从请求中提取参数、调用 handler、包装响应；`resp.headers` 也要一并转发（下载类接口依赖 `Content-Disposition`）
+- `dispatch(method, path, params, body)` 可按路径一次性分发，认不出的路径返回 404
 
 ---
 
@@ -436,36 +452,44 @@ profiler::ProfilerManager profiler;
 ### 2. 环境隔离
 
 ```cpp
-// 开发环境启用 profiling
-#ifdef DEBUG_MODE
+// 通过编译期宏控制：在 CMake 里用 target_compile_definitions(app PRIVATE ENABLE_PROFILING)
+#ifdef ENABLE_PROFILING
     profiler::ProfilerManager profiler;
     profiler.startCPUProfiler("debug.prof");
-#else
-    // 生产环境默认不启用
 #endif
 ```
 
-### 3. 线程安全
+> 宏名由你自己定义，本库不提供 `DEBUG_MODE` 之类的开关。
+
+### 3. 并发调用：注意 CPU 采样是互斥的
 
 ```cpp
-// 所有 API 都是线程安全的
 profiler::ProfilerManager profiler;
 
 void thread1() {
-    profiler.startCPUProfiler("thread1.prof");
+    if (!profiler.isProfilerRunning(profiler::ProfilerType::CPU)) {
+        profiler.startCPUProfiler("thread1.prof");
+    }
 }
 
 void thread2() {
+    // ❌ 不要与 thread1 的采样并发：analyzeCPUProfile() 会先停掉正在运行的
+    //    CPU profiler 再启动自己的采样，两者互相破坏结果
     profiler.analyzeCPUProfile(10);
 }
-
-// 两个线程可以安全地同时调用
 ```
+
+所有公共 API 都可在任意线程调用，也都有锁保护，但 **CPU 采样会话在语义上是独占的**：
+`analyzeCPUProfile()` 会先停止已有会话（`src/profiler_manager.cpp:410-429`），而 gperftools 的
+`ProfilerStart()` 在采样进行中会失败。要先判断状态（`isProfilerRunning()` 或 `/api/status`），
+或者干脆把 profiling 操作串行化到一个专用线程里。
+
+Heap 与 CPU 之间没有这层互斥，可以并存。
 
 ---
 
 ## 更多信息
 
-- 📖 [API 参考手册](02_api_reference.md)
-- 🔧 [故障排除指南](04_troubleshooting.md)
-- 🏠 [返回主文档](../README.md)
+- [API 参考手册](02_api_reference.md)
+- [故障排除指南](04_troubleshooting.md)
+- [返回主文档](../../README.md)

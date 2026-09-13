@@ -40,7 +40,9 @@ profiler::ProfilerManager profiler;
 ~ProfilerManager();
 ```
 
-**说明**: 析构时自动清理资源，包括停止正在运行的 profiler 和恢复信号处理器。
+**说明**: 析构时停止正在运行的 **CPU** profiler，并恢复构造函数之外由本对象安装的信号处理器。
+
+> ⚠️ **已知缺陷**: 析构函数对 heap profiler 只调用了查询函数 `IsHeapProfilerRunning()`，**并未调用 `HeapProfilerStop()`**（`src/profiler_manager.cpp:94-96`）。因此 heap profiler 不会随对象销毁而停止，需要显式调用 `stopHeapProfiler()`。修复计划见 [ROADMAP](../../ROADMAP.md)。
 
 ---
 
@@ -137,12 +139,14 @@ Profiler 状态结构。
 
 ```cpp
 struct ProfilerState {
-    bool is_running;        // 是否正在运行
+    bool is_running;         // 是否正在运行
     std::string output_path; // 输出文件路径
-    uint64_t start_time;    // 开始时间戳（Unix 时间）
-    uint64_t duration;      // 采样时长（秒）
+    uint64_t start_time;     // 开始时间戳（Unix 时间，**毫秒**）
+    uint64_t duration;       // 已运行时长（**毫秒**，非秒）
 };
 ```
+
+> ⚠️ `start_time` 与 `duration` 的单位都是**毫秒**（`src/profiler_manager.cpp:189-191`、`214`），HTTP 层 `/api/status` 返回的 JSON 键名也相应为 `duration_ms`。`include/profiler_manager.h:40` 的注释写作 "seconds"，属过时注释。
 
 ---
 
@@ -206,7 +210,7 @@ void setLogSink(std::shared_ptr<LogSink> sink);
 
 **说明**:
 - 设置后，profiler 的所有日志将输出到自定义 sink
-- 默认 sink 输出到 stderr（使用 `std::cerr`）
+- 默认 sink 按级别分流：`Trace`/`Debug`/`Info` 写 **stdout**，`Warning`/`Error`/`Fatal` 写 **stderr**（`src/internal/default_log_sink.cpp:70-74`）
 - 设置 `nullptr` 可恢复默认行为
 
 **示例**:
@@ -384,7 +388,7 @@ std::string getRawHeapGrowthStacks();
 std::string getThreadCallStacks();
 ```
 
-**说明**: 使用 backward-cpp 进行详细符号化。
+**说明**: 逐个地址调用 `symbolizeAddress()` 做符号化，该函数**优先使用 Abseil**（`absl::Symbolize`），失败后再回退到 `resolveSymbolWithBackward()`（`src/profiler_manager.cpp:1112-1121`、`1311-1314`）。
 
 ---
 
@@ -398,7 +402,14 @@ std::string getThreadCallStacks();
 std::string resolveSymbolWithBackward(void* address);
 ```
 
-**说明**: 多层符号化策略：backward-cpp → dladdr → addr2line → 原始地址
+**说明**: 实际的符号化链及顺序为（`src/symbolize.cpp:30`、`42`、`66`）：
+
+1. `absl::Symbolize` — 最可靠，命中即返回函数名（源文件记为 `??`、行号为 0）
+2. `dladdr` + `abi::__cxa_demangle` — 回退，可拿到所在模块名
+3. **backward-cpp** — 再回退，可解析出源文件与行号
+4. 全部失败时返回原始地址
+
+> 注意顺序：backward-cpp 是**最后**的回退项，而不是首选。
 
 ---
 
@@ -438,7 +449,7 @@ std::string getExecutablePath();
 static void setStackCaptureSignal(int signal);
 ```
 
-**说明**: 必须在第一次使用 profiler 之前调用，默认使用 SIGUSR1。
+**说明**: 默认使用 `SIGUSR1`。推荐在第一次捕获线程栈之前调用；若处理器已安装后再调用，实现会先恢复旧处理器并打印一条 `[WARN]` 日志，然后切换（`src/profiler_manager.cpp:112-128`）。
 
 ```cpp
 profiler::ProfilerManager::setStackCaptureSignal(SIGUSR2);
@@ -490,19 +501,24 @@ int main() {
 
 ## 线程安全
 
-所有公共 API 都是线程安全的，可以多线程同时调用。
+所有公共 API 都可在任意线程调用，但存在一条**功能层面的互斥约束**：
+
+**同一时刻只能有一个 CPU 采样会话。** `analyzeCPUProfile()` 会先停掉正在运行的 CPU profiler 再启动自己的采样（`src/profiler_manager.cpp:410-429`）；而 `gperftools` 的 `ProfilerStart()` 在已有采样进行时会失败。因此多线程并发调用 `startCPUProfiler()` / `analyzeCPUProfile()` 会互相破坏结果，应先用 `isProfilerRunning()` 或 `/api/status` 判断。
+
+`getRawCPUProfile()` 内部有独立的并发保护（`src/profiler_manager.cpp:822-825`），`cpu_profiling_in_progress_` 标志仅作用于该路径。
 
 ---
 
 ## 错误处理
 
-- 大多数方法返回 `bool` 表示成功/失败
-- 字符串方法在失败时返回空字符串
+- 大多数控制类方法（`start*` / `stop*`）返回 `bool` 表示成功/失败
+- 原始数据获取方法（`getRawCPUProfile`、`getRawHeapSample`、`getRawHeapGrowthStacks`、`getThreadCallStacks`）在失败时返回**空字符串**
+- ⚠️ 但 `analyzeCPUProfile()` / `analyzeHeapProfile()` 在失败时返回的是形如 `{"error":"..."}` 的 **JSON 字符串**，而非空串（`src/profiler_manager.cpp:427`、`469`、`475`、`491`、`520`）。HTTP 层正是靠 `{"` 前缀识别它并转成 500（`src/http_handlers.cpp:69-71`）——自行调用这两个 API 时需要做同样的判断
 - `HandlerResponse::error()` 返回包含错误信息的 JSON 响应
 
 ---
 
 ## 更多信息
 
-- 💡 查看 [集成示例](03_integration_examples.md) 了解更多使用场景
-- 🔧 遇到问题？查看 [故障排除指南](04_troubleshooting.md)
+- 查看 [集成示例](03_integration_examples.md) 了解更多使用场景
+- 遇到问题？查看 [故障排除指南](04_troubleshooting.md)

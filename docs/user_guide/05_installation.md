@@ -49,7 +49,7 @@ sudo dnf install -y \
     gperftools-devel
 ```
 
-### 步骤 2: 初始化 vcpkg 并安装依赖
+### 步骤 2: 初始化 vcpkg
 
 ```bash
 # 克隆项目
@@ -59,24 +59,28 @@ cd cpp-remote-profiler
 # 初始化 vcpkg
 if [ ! -d "vcpkg" ]; then
     git clone https://github.com/Microsoft/vcpkg.git
-    cd vcpkg && ./bootstrap-vcpkg.sh && cd ..
+    ./vcpkg/bootstrap-vcpkg.sh
 fi
-
-# 安装依赖
-cd vcpkg
-./vcpkg install --triplet=x64-linux-release
-cd ..
 ```
+
+> `vcpkg.json` 位于**仓库根目录**，因此不需要（也不能）在 `vcpkg/` 里执行 `./vcpkg install`
+> ——那里没有清单文件。CMake 工具链会在首次 configure 时自动读取根目录清单并安装全部依赖。
 
 ### 步骤 3: 配置并编译
 
 ```bash
-mkdir build && cd build
-cmake .. \
+cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DVCPKG_TARGET_TRIPLET=x64-linux-release
-make -j$(nproc)
+cmake --build build -j$(nproc)
+```
+
+或使用与 CI 一致的预设（需 CMake 3.20+）：
+
+```bash
+cmake --preset=release
+cmake --build build/release -j$(nproc)
 ```
 
 可用的 CMake 选项：
@@ -115,7 +119,7 @@ sudo cmake --install .
 cmake --install . --prefix /opt/cpp-remote-profiler
 ```
 
-安装后的文件布局：
+安装后的文件布局（`<libdir>` 在 Debian/Ubuntu 上为 `lib`，在 Fedora/RHEL 上为 `lib64`）：
 
 ```
 <prefix>/
@@ -123,10 +127,13 @@ cmake --install . --prefix /opt/cpp-remote-profiler
 │   ├── profiler_manager.h
 │   ├── profiler_version.h
 │   ├── version.h
+│   ├── http_handlers.h             # 扁平副本
+│   ├── log_sink.h                  # 扁平副本
 │   └── profiler/
 │       ├── http_handlers.h
-│       └── log_sink.h
-├── lib/
+│       ├── log_sink.h
+│       └── drogon_adapter.h        # 仅启用 Web 时安装
+├── <libdir>/
 │   ├── libprofiler_core.so         # 核心库
 │   ├── libprofiler_web.so          # Web 库（如果启用）
 │   └── cmake/cpp-remote-profiler/  # CMake 配置文件
@@ -139,8 +146,8 @@ cmake --install . --prefix /opt/cpp-remote-profiler
 ### 步骤 5: 在项目中使用
 
 ```cmake
-cmake_minimum_required(VERSION 3.15)
-project(MyApp)
+cmake_minimum_required(VERSION 3.20)
+project(MyApp CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -148,14 +155,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(cpp-remote-profiler REQUIRED)
 
 add_executable(my_app main.cpp)
-target_link_libraries(my_app cpp-remote-profiler::profiler_core)
+target_link_libraries(my_app PRIVATE cpp-remote-profiler::profiler_core)
 ```
 
-如果安装到非标准路径，需要在 CMake 配置时提示搜索路径：
+如果安装到非标准路径，用 `CMAKE_PREFIX_PATH` 告诉 CMake 去哪里找：
 
 ```bash
-cmake .. -Dcpp-remote-profiler_DIR=/opt/cpp-remote-profiler/lib/cmake/cpp-remote-profiler
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/opt/cpp-remote-profiler
 ```
+
+> 静态库（`BUILD_SHARED_LIBS=OFF`）的导出目标会带上 `$<LINK_ONLY:...>` 形式的私有依赖，
+> 下游链接时需要能找到 Backward / Abseil 等包。若遇到 "target was not found" 类错误，
+> 请改用共享库构建，或确保这些依赖在工具链中可见。
 
 ---
 
@@ -164,8 +175,8 @@ cmake .. -Dcpp-remote-profiler_DIR=/opt/cpp-remote-profiler/lib/cmake/cpp-remote
 使用 CMake 内置的 FetchContent，无需预编译安装，适合快速集成。
 
 ```cmake
-cmake_minimum_required(VERSION 3.15)
-project(MyApp)
+cmake_minimum_required(VERSION 3.20)
+project(MyApp CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -180,21 +191,26 @@ set(REMOTE_PROFILER_INSTALL OFF CACHE BOOL "")
 FetchContent_Declare(
     cpp-remote-profiler
     GIT_REPOSITORY https://github.com/IronsDu/cpp-remote-profiler.git
-    GIT_TAG        v0.1.0
+    GIT_TAG        main        # 仓库目前没有 tag；固定 commit 哈希更利于复现
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(cpp-remote-profiler)
 
 add_executable(my_app main.cpp)
 
-# 仅使用核心 profiling 功能
-target_link_libraries(my_app profiler_core)
+# 源码内构建时使用无命名空间的目标名
+target_link_libraries(my_app PRIVATE profiler_core)
 
-# 如果需要 Web UI（需要系统安装 Drogon）
-# target_link_libraries(my_app profiler_web)
+# 如果需要 Web UI（需 Drogon::Drogon，且不会自动传递）
+# target_link_libraries(my_app PRIVATE profiler_web Drogon::Drogon)
 ```
 
-> 完整示例参考 `cmake/examples/test_fetch_content/` 目录。
+> ⚠️ 仍需要 vcpkg 工具链（或系统内已有 gtest/Backward/Abseil/OpenSSL/zlib）：
+> `-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake`。
+> `REMOTE_PROFILER_BUILD_TESTS=OFF` 只是不构建测试，不会跳过这些 `find_package()`。
+>
+> 示例工程见 `cmake/examples/test_fetch_content/`（该示例实际以 `add_subdirectory`
+> 方式引入本仓库，以便在 CI 中直接测试源码树）。
 
 ---
 
@@ -215,8 +231,8 @@ my_project/
 ### CMakeLists.txt
 
 ```cmake
-cmake_minimum_required(VERSION 3.15)
-project(MyApp)
+cmake_minimum_required(VERSION 3.20)
+project(MyApp CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -229,7 +245,7 @@ set(REMOTE_PROFILER_INSTALL OFF CACHE BOOL "")
 add_subdirectory(third_party/cpp-remote-profiler)
 
 add_executable(my_app main.cpp)
-target_link_libraries(my_app profiler_core)
+target_link_libraries(my_app PRIVATE profiler_core)
 ```
 
 > 完整示例参考 `cmake/examples/test_fetch_content/` 目录（该示例使用 `add_subdirectory` 进行 CI 测试）。
@@ -243,12 +259,12 @@ target_link_libraries(my_app profiler_core)
 创建 `CMakeLists.txt`：
 
 ```cmake
-cmake_minimum_required(VERSION 3.15)
-project(test_install)
+cmake_minimum_required(VERSION 3.20)
+project(test_install CXX)
 set(CMAKE_CXX_STANDARD 20)
 find_package(cpp-remote-profiler REQUIRED)
 add_executable(test_install main.cpp)
-target_link_libraries(test_install cpp-remote-profiler::profiler_core)
+target_link_libraries(test_install PRIVATE cpp-remote-profiler::profiler_core)
 ```
 
 创建 `main.cpp`：
@@ -267,10 +283,9 @@ int main() {
 编译运行：
 
 ```bash
-mkdir build && cd build
-cmake ..
-make
-./test_install
+cmake -S . -B build
+cmake --build build
+./build/test_install
 ```
 
 预期输出：
@@ -281,15 +296,12 @@ Installation OK
 
 ### 检查安装文件
 
+注意 `<libdir>` 在 Fedora/RHEL 上是 `lib64`：
+
 ```bash
-# 检查库文件
-ls /usr/local/lib/libprofiler_core.*
-
-# 检查头文件
+ls /usr/local/lib*/libprofiler_core.*
 ls /usr/local/include/cpp-remote-profiler/
-
-# 检查 CMake 配置
-ls /usr/local/lib/cmake/cpp-remote-profiler/
+ls /usr/local/lib*/cmake/cpp-remote-profiler/
 ```
 
 ---
@@ -306,7 +318,7 @@ error while loading shared libraries: libprofiler_core.so: cannot open shared ob
 **解决方案**：
 
 ```bash
-# 方法 1: 添加到 LD_LIBRARY_PATH（临时）
+# 方法 1: 添加到 LD_LIBRARY_PATH（临时；lib64 发行版请相应替换）
 export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 # 方法 2: 永久添加
@@ -324,18 +336,25 @@ Could not find a package configuration file provided by "cpp-remote-profiler"
 **解决方案**：
 
 ```bash
-# 指定安装路径前缀
-cmake .. -DCMAKE_PREFIX_PATH=/usr/local
+# 指定安装路径前缀（推荐）
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/opt/cpp-remote-profiler
 
-# 或直接指定 config 目录
-cmake .. -Dcpp-remote-profiler_DIR=/usr/local/lib/cmake/cpp-remote-profiler
+# 或直接指定 config 目录（注意 <libdir> 可能是 lib64）
+cmake -S . -B build \
+  -Dcpp-remote-profiler_DIR=/usr/local/lib/cmake/cpp-remote-profiler
 ```
 
 ### FetchContent 编译失败
 
-**可能原因**：缺少 vcpkg 管理的依赖（如 Drogon、absl、backward-cpp 等）
+**可能原因**：缺少 gtest / Backward / Abseil / OpenSSL / zlib（即使关掉测试与 Web 也会查找）
 
-**解决方案**：使用 `REMOTE_PROFILER_ENABLE_WEB=OFF` 关闭 Web 功能以减少依赖，或确保系统已安装所需依赖：
+**解决方案**：挂上 vcpkg 工具链：
+
+```bash
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+```
+
+或用 `REMOTE_PROFILER_ENABLE_WEB=OFF` 去掉 Drogon 依赖：
 
 ```cmake
 set(REMOTE_PROFILER_ENABLE_WEB OFF CACHE BOOL "")
