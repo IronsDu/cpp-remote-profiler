@@ -35,6 +35,29 @@ static int clampDuration(int duration, int lo, int hi) {
 
 ProfilerHttpHandlers::ProfilerHttpHandlers(ProfilerManager& profiler) : profiler_(profiler) {}
 
+bool ProfilerHttpHandlers::isCpuProfilerBusy() const {
+    return profiler_.isCPUProfilingInProgress();
+}
+
+HandlerResponse ProfilerHttpHandlers::cpuProfilerBusyResponse(bool pprof_style) const {
+    if (!pprof_style) {
+        // Our own /api/* endpoints: an accurate status code is allowed here.
+        return HandlerResponse::error(409, "cpu profiling already in use");
+    }
+
+    // Mirrors Go's net/http/pprof, which answers a second concurrent CPU profile
+    // request with 500 + text/plain + this exact wording, plus an X-Go-Pprof
+    // marker. The marker tells `go tool pprof` that the body is an error message
+    // rather than profile data, and no Content-Disposition is set so nothing is
+    // treated as a downloadable profile.
+    HandlerResponse resp;
+    resp.status = 500;
+    resp.content_type = "text/plain; charset=utf-8";
+    resp.body = "Could not enable CPU profiling: cpu profiling already in use\n";
+    resp.headers["X-Go-Pprof"] = "1";
+    return resp;
+}
+
 // --- Status ---
 
 HandlerResponse ProfilerHttpHandlers::handleStatus() {
@@ -60,6 +83,11 @@ HandlerResponse ProfilerHttpHandlers::handleStatus() {
 HandlerResponse ProfilerHttpHandlers::handleCpuAnalyze(int duration, const std::string& output_type) {
     duration = clampDuration(duration, 1, 300);
 
+    // Fail fast instead of waiting behind (or disturbing) an in-flight session.
+    if (profiler_.isCPUProfilingInProgress()) {
+        return cpuProfilerBusyResponse(false);
+    }
+
     if (!validateOutputType(output_type)) {
         return errorResp(400, "Invalid output_type. Must be 'flamegraph' or 'pprof'");
     }
@@ -75,6 +103,10 @@ HandlerResponse ProfilerHttpHandlers::handleCpuAnalyze(int duration, const std::
 
 HandlerResponse ProfilerHttpHandlers::handleCpuSvgRaw(int duration) {
     duration = clampDuration(duration, 1, 300);
+
+    if (profiler_.isCPUProfilingInProgress()) {
+        return cpuProfilerBusyResponse(false);
+    }
 
     std::string profile_data = profiler_.getRawCPUProfile(duration);
     if (profile_data.empty()) {
@@ -109,6 +141,10 @@ HandlerResponse ProfilerHttpHandlers::handleCpuSvgRaw(int duration) {
 
 HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
     duration = clampDuration(duration, 1, 300);
+
+    if (profiler_.isCPUProfilingInProgress()) {
+        return cpuProfilerBusyResponse(false);
+    }
 
     std::string profile_data = profiler_.getRawCPUProfile(duration);
     if (profile_data.empty()) {
@@ -168,7 +204,8 @@ HandlerResponse ProfilerHttpHandlers::handleHeapAnalyze(const std::string& outpu
         return errorResp(400, "Invalid output_type. Must be 'flamegraph' or 'pprof'");
     }
 
-    std::string svg = profiler_.analyzeHeapProfile(1, output_type);
+    // No duration argument: heap profiling is allocation driven, not time driven.
+    std::string svg = profiler_.analyzeHeapProfile(output_type);
 
     if (svg.size() > 10 && svg[0] == '{' && svg[1] == '"') {
         return errorResp(500, "Failed to generate heap flame graph");
@@ -415,8 +452,18 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthFlamegraphRaw() {
 HandlerResponse ProfilerHttpHandlers::handlePprofProfile(int seconds) {
     seconds = clampDuration(seconds, 1, 300);
 
+    // A concurrent CPU profile request must fail fast rather than wait for (or
+    // disturb) the in-progress session.
+    if (profiler_.isCPUProfilingInProgress()) {
+        return cpuProfilerBusyResponse(true);
+    }
+
     std::string data = profiler_.getRawCPUProfile(seconds);
     if (data.empty()) {
+        // Either the session was claimed in the meantime, or profiling failed.
+        if (profiler_.isCPUProfilingInProgress()) {
+            return cpuProfilerBusyResponse(true);
+        }
         return errorResp(500, "Failed to generate CPU profile");
     }
 
