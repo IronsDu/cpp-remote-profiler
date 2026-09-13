@@ -40,6 +40,8 @@ PROFILER_NAMESPACE_BEGIN
 // Static member initialization
 // Process-global, like the gperftools sampling session it guards.
 std::atomic<bool> ProfilerManager::cpu_profiling_in_progress_{false};
+std::atomic<bool> ProfilerManager::heap_analysis_in_progress_{false};
+std::atomic<uint64_t> ProfilerManager::heap_prefix_sequence_{0};
 std::atomic<bool> ProfilerManager::capture_in_progress_{false};
 SharedStackTrace* ProfilerManager::shared_stacks_ = nullptr;
 int ProfilerManager::stack_array_size_ = 0;
@@ -417,6 +419,10 @@ bool ProfilerManager::isCPUProfilingInProgress() const {
     return cpu_profiling_in_progress_.load();
 }
 
+bool ProfilerManager::isHeapAnalysisInProgress() const {
+    return heap_analysis_in_progress_.load();
+}
+
 std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& output_type) {
     std::string profile_path = profile_dir_ + "/cpu_analyze.prof";
 
@@ -592,22 +598,52 @@ std::string ProfilerManager::analyzeHeapProfile(const std::string& output_type) 
 
     PROFILER_INFO("=== Starting Heap Profile Analysis ===");
 
-    // Step 1: Stop any existing heap profiler
+    // Step 1: Claim the process-global heap profiler.
+    //
+    // Reading "is a heap profiler running?" and then calling HeapProfilerStart()
+    // is not enough to exclude concurrent calls: HeapProfilerStart() has no
+    // failure mode -- it silently replaces the output prefix -- so two callers
+    // could both observe "not running" and both proceed, leaving one snapshot
+    // that both of them then read. Claim first, unconditionally.
+    {
+        bool expected = false;
+        if (!heap_analysis_in_progress_.compare_exchange_strong(expected, true)) {
+            PROFILER_ERROR("Heap analysis already in progress; rejecting this request");
+            return R"({"error": "heap profiling already in use"})";
+        }
+    }
+
+    // Release the claim on every exit path (including the early returns below).
+    // The guard is the scope, not the call, so an early return cannot leak it.
+    struct ClaimGuard {
+        static void release() {
+            heap_analysis_in_progress_.store(false);
+        }
+        ~ClaimGuard() {
+            release();
+        }
+    } claim_guard;
+
+    // Step 2: Stop any existing heap profiler (e.g. one opened by
+    // startHeapProfiler()) so this analysis takes over cleanly.
     if (profiler_states_[ProfilerType::HEAP].is_running) {
         PROFILER_INFO("Stopping existing heap profiler...");
         stopHeapProfiler();
         usleep(100000);
     }
 
-    // Step 2: Unique prefix per run so the dumped file can be located reliably
+    // Step 3: Unique prefix per run so the dumped file can be located reliably
     // (gperftools appends its own sequence number: "<prefix>.0001.heap").
+    // A timestamp plus a counter: two analyses can begin in the same
+    // millisecond, and identical prefixes make them share one snapshot file.
     auto now = std::chrono::system_clock::now();
     auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    std::string prefix_basename = "heap_analyze_" + std::to_string(timestamp);
+    uint64_t seq = heap_prefix_sequence_.fetch_add(1);
+    std::string prefix_basename = "heap_analyze_" + std::to_string(timestamp) + "_" + std::to_string(seq);
     std::string profile_prefix = profile_dir_ + "/" + prefix_basename;
     PROFILER_INFO("Profile prefix: {}", profile_prefix);
 
-    // Step 3: Start recording
+    // Step 4: Start recording
     PROFILER_DEBUG("Calling HeapProfilerStart()...");
     HeapProfilerStart(profile_prefix.c_str());
 
@@ -638,6 +674,10 @@ std::string ProfilerManager::analyzeHeapProfile(const std::string& output_type) 
         profiler_states_[ProfilerType::HEAP].duration =
             static_cast<uint64_t>(stop_ms) - profiler_states_[ProfilerType::HEAP].start_time;
     }
+
+    // The heap session is over; rendering below only reads files, so release now
+    // rather than making another analysis wait for pprof/flamegraph.pl.
+    ClaimGuard::release();
 
     // Step 6: Check whether gperftools actually produced a snapshot.
     // Restrict the search to this run's prefix so a profile left behind by an

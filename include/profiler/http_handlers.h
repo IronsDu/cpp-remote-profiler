@@ -81,6 +81,18 @@ public:
     ///  - false — HTTP 409 with a JSON error, for the custom /api/* endpoints
     HandlerResponse cpuProfilerBusyResponse(bool pprof_style) const;
 
+    /// @brief Whether a heap analysis is already running
+    ///
+    /// Heap analysis reconfigures the single process-global heap profiler, so
+    /// concurrent calls are exclusive for the same reason CPU profiling is.
+    bool isHeapAnalyzerBusy() const;
+
+    /// @brief The response to use when @ref isHeapAnalyzerBusy is true
+    ///
+    /// Mirrors @ref cpuProfilerBusyResponse but for heap analysis, which has no
+    /// Go pprof equivalent to match: HTTP 409 with a JSON error.
+    HandlerResponse heapAnalyzerBusyResponse() const;
+
     HandlerResponse handleCpuAnalyze(int duration, const std::string& output_type);
     HandlerResponse handleCpuSvgRaw(int duration);
     HandlerResponse handleCpuFlamegraphRaw(int duration);

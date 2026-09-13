@@ -39,6 +39,14 @@ bool ProfilerHttpHandlers::isCpuProfilerBusy() const {
     return profiler_.isCPUProfilingInProgress();
 }
 
+bool ProfilerHttpHandlers::isHeapAnalyzerBusy() const {
+    return profiler_.isHeapAnalysisInProgress();
+}
+
+HandlerResponse ProfilerHttpHandlers::heapAnalyzerBusyResponse() const {
+    return HandlerResponse::error(409, "heap profiling already in use");
+}
+
 HandlerResponse ProfilerHttpHandlers::cpuProfilerBusyResponse(bool pprof_style) const {
     if (!pprof_style) {
         // Our own /api/* endpoints: an accurate status code is allowed here.
@@ -200,6 +208,12 @@ HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
 // --- Heap endpoints ---
 
 HandlerResponse ProfilerHttpHandlers::handleHeapAnalyze(const std::string& output_type) {
+    // Heap analysis reconfigures the process-global heap profiler, so refuse
+    // immediately rather than racing another analysis for it.
+    if (profiler_.isHeapAnalysisInProgress()) {
+        return heapAnalyzerBusyResponse();
+    }
+
     if (!validateOutputType(output_type)) {
         return errorResp(400, "Invalid output_type. Must be 'flamegraph' or 'pprof'");
     }

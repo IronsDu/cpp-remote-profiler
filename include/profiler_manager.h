@@ -131,6 +131,16 @@ public:
     ///       held only while sampling, not while rendering the result
     bool isCPUProfilingInProgress() const;
 
+    /// @brief Whether a heap analysis is currently in progress
+    ///
+    /// analyzeHeapProfile() reconfigures the single process-global heap profiler
+    /// (start, snapshot, stop), so two concurrent calls would fight over it: the
+    /// second start silently replaces the first's output prefix and both would
+    /// read one snapshot. Concurrent calls are therefore rejected.
+    ///
+    /// @return true while an analyzeHeapProfile() call holds the heap profiler
+    bool isHeapAnalysisInProgress() const;
+
     /// @brief Resolve an address to its symbol name using backward-cpp
     /// @param address The instruction pointer to resolve
     /// @return Human-readable symbol string
@@ -258,6 +268,17 @@ private:
     /// process. A per-instance flag would let two managers each "win" the claim and
     /// then race on ProfilerStart().
     static std::atomic<bool> cpu_profiling_in_progress_;
+
+    /// Heap-analysis claim, static for the same reason as above.
+    ///
+    /// analyzeHeapProfile() reconfigures the process-global heap profiler
+    /// (HeapProfilerStart silently replaces the output prefix rather than
+    /// refusing), so concurrent calls must be excluded, not merely detected.
+    static std::atomic<bool> heap_analysis_in_progress_;
+
+    /// Disambiguates heap snapshot prefixes when several analyses start within
+    /// the same millisecond; a timestamp alone is not unique enough.
+    static std::atomic<uint64_t> heap_prefix_sequence_;
 
     static std::atomic<bool> capture_in_progress_; ///< Stack capture in progress flag
     static SharedStackTrace* shared_stacks_;       ///< Shared stack trace array
