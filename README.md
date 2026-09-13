@@ -305,25 +305,29 @@ profiler.setLogLevel(profiler::LogLevel::Debug);
 
 ## API 端点
 
-由 `registerDrogonHandlers()` 注册的全部路由：
+由 `registerDrogonHandlers()` 注册的全部路由。
+
+> **Heap 的两套机制**（详见[下方说明](#heap-的两个端点语义相反)）：
+> `/pprof/heap` 是**状态式**（当前堆的累计快照），`/api/heap/*` 是**窗口式**（默认 1 秒内发生的分配）。
+> 二者不可互相替代，且**环境变量依赖相反**。
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | **标准 pprof 接口** | | |
 | `/pprof/profile` | GET | CPU profile 原始文件；`?seconds=N`，默认 **30**，范围 1–300 |
-| `/pprof/heap` | GET | Heap 采样原始文本；需 `TCMALLOC_SAMPLE_PARAMETER` |
+| `/pprof/heap` | GET | **状态式**：当前堆的累计采样快照（原始文本，交给 `go tool pprof`）；**需** `TCMALLOC_SAMPLE_PARAMETER` |
 | `/pprof/growth` | GET | Heap growth 栈原始文本；无需上述环境变量 |
 | `/pprof/symbol` | POST | 符号化接口（Go pprof symbolz 协议） |
 | **一键分析（返回 SVG）** | | |
 | `/api/cpu/analyze` | GET/POST | 采样并返回 CPU 图；`?duration=N` 默认 10，范围 1–300 |
-| `/api/heap/analyze` | GET | 返回 Heap 图（固定 1 秒采样，**不接受** `duration`） |
+| `/api/heap/analyze` | GET | **窗口式**：采样 1 秒后渲染；**不接受** `duration`；**无需**环境变量 |
 | `/api/growth/analyze` | GET | 返回 Heap Growth 图 |
 | **原始 SVG 下载** | | |
 | `/api/cpu/svg_raw` | GET | pprof 生成的 CPU SVG；`?duration=N` 默认 10 |
-| `/api/heap/svg_raw` | GET | pprof 生成的 Heap SVG |
+| `/api/heap/svg_raw` | GET | **窗口式**：pprof 渲染的 Heap SVG；**需** `TCMALLOC_SAMPLE_PARAMETER` |
 | `/api/growth/svg_raw` | GET | pprof 生成的 Growth SVG |
 | `/api/cpu/flamegraph_raw` | GET | FlameGraph 渲染的 CPU SVG；`?duration=N` 默认 10 |
-| `/api/heap/flamegraph_raw` | GET | FlameGraph 渲染的 Heap SVG |
+| `/api/heap/flamegraph_raw` | GET | **窗口式**：FlameGraph 渲染的 Heap SVG；**无需**环境变量 |
 | `/api/growth/flamegraph_raw` | GET | FlameGraph 渲染的 Growth SVG |
 | **线程分析** | | |
 | `/api/thread/stacks` | GET | 所有线程的调用栈 |
@@ -368,21 +372,54 @@ go tool pprof -http=:8081 'http://localhost:8080/pprof/profile?seconds=10'
 
 ### 环境变量 `TCMALLOC_SAMPLE_PARAMETER`
 
-控制 tcmalloc 的堆采样间隔（单位字节）。**默认值为 `0`，即关闭采样**——不设置它，`/pprof/heap`、`/api/heap/*` 会因拿不到采样数据而失败。
-
-tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用环境变量传入，**在代码里调用 `setenv()` 是无效的**：
+控制 tcmalloc 的堆采样间隔（单位字节）。**默认值为 `0`，即关闭采样**。它影响的是**状态式**拉取路径
+（`GetHeapSample()`），也就是 `/pprof/heap` 与 `/api/heap/svg_raw`：
 
 ```bash
 export TCMALLOC_SAMPLE_PARAMETER=524288      # 512KB，开发环境常用
 ./build/profiler_example
 ```
 
+tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用环境变量传入，**在代码里调用 `setenv()` 是无效的**。
+
 | 场景 | 建议值 |
 |------|--------|
 | 开发/调试 | `524288`（512KB） |
 | 生产 | `2097152`（2MB）或更大，降低开销 |
 
-Heap Growth 采集（`/pprof/growth`、`/api/growth/*`）走 `GetHeapGrowthStacks()`，**不需要**该变量。
+**不受该变量影响的路径**（它们走 `HeapProfilerStart/Dump`，由
+`HEAP_PROFILE_ALLOCATION_INTERVAL`（默认 1MB）等控制）：`/api/heap/analyze`、
+`/api/heap/flamegraph_raw`。Heap Growth（`/pprof/growth`、`/api/growth/*`）走
+`GetHeapGrowthStacks()`，也不需要该变量。
+
+> ⚠️ 因此同一进程内可能出现"一个 heap 端点成功、另一个失败"：
+> 不设该变量时 `/api/heap/analyze` 与 `/api/heap/flamegraph_raw` 正常返回 SVG，
+> 而 `/api/heap/svg_raw` 返回 500 —— 它们的数据源不同，不是同一个缺陷。
+
+### Heap 的两个端点语义相反
+
+这两个端点容易混淆，因为名字里都有 "heap"，但记录的是**完全不同的东西**：
+
+| | `/pprof/heap` | `/api/heap/analyze` |
+|---|---|---|
+| 语义 | **状态式**：当前堆里的累计采样 | **窗口式**：1 秒内**发生的分配** |
+| 底层 | `GetHeapSample()` 拉取 | `HeapProfilerStart()` → dump → `Stop()` |
+| 是否建 profiler 会话 | 否 | 是（独占，并发返回 409） |
+| 输出 | 原始 profile 文本，**客户端**用 `go tool pprof` 渲染 | 服务端渲染好的 SVG |
+| `TCMALLOC_SAMPLE_PARAMETER` | **必需** | 不需要 |
+
+关键差别在于**"存量"与"流量"**：
+
+- 进程已占 500MB 但停止分配 → `/pprof/heap` 能看到这 500MB；`/api/heap/analyze` 返回**空**并报
+  `No heap profile data was produced`
+- 进程频繁 malloc/free，dump 时已全部释放 → `/api/heap/analyze` **能看到**这些分配；`/pprof/heap`
+  的当前堆则可能很小
+
+所以窗口式分析需要**被分析进程在采样窗口内确实有分配**。窗口目前固定为 1 秒；需要更长窗口时，
+请用 `startHeapProfiler()` / `stopHeapProfiler()` 自行掌控时机。
+
+Web 控制面板里的两个 Heap 按钮走的是**窗口式**（`/api/heap/analyze` 与
+`/api/heap/{svg_raw,flamegraph_raw}`），面板上已标注这一点。
 
 ### 依赖版本
 

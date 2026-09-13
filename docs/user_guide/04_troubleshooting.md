@@ -724,7 +724,21 @@ int main() {
 该接口内部只开一个固定的 1 秒窗口让应用自身的分配被记录，然后 dump。要提高采样精度，请**在启动前**设置 `TCMALLOC_SAMPLE_PARAMETER=524288`（默认 `0` 表示不采样，此时快照会明显偏稀疏）。
 
 ### Q: heap 图是空的 / 报 "No heap profile data was produced"？
-**A**: 说明在这 1 秒窗口内进程没有发生内存分配。heap profiler 只记录**运行期间**发生的分配，不会凭空造出数据。请确保被分析进程正处于负载中，或在窗口内制造真实分配后再试。
+**A**: 说明这 1 秒窗口内进程**没有发生内存分配**。heap profiler 记录的是**窗口内的分配事件**，不是当前堆的内容，所以不会凭空造出数据。请确保被分析进程正处于负载中，或在窗口内制造真实分配后再试。
+
+### Q: 进程内存很高，为什么 heap 图却是空的？
+**A**: 因为 `/api/heap/analyze`（以及 Web 面板上的 Heap 按钮）是**窗口式**的：只记录采样窗口内**新发生**的分配。如果内存是在采样开始前分配的、窗口内已经停止分配，结果就是空的。
+
+想看**当前堆的累计快照**，请改用**状态式**的 `/pprof/heap`：
+
+```bash
+# 需在启动前设置该变量（默认 0 = 关闭采样）
+export TCMALLOC_SAMPLE_PARAMETER=524288
+curl 'http://localhost:8080/pprof/heap' -o heap.prof
+go tool pprof -http=:8081 ./your_app heap.prof
+```
+
+两者语义相反、不可互相替代；详见 [README 的说明](../../README.md#heap-的两个端点语义相反)。
 
 ### Q: 为什么长时间采样期间，其它接口还能正常返回？
 **A**: 因为 Drogon 适配层不把 profiling 放在事件循环线程上执行。所有会产生图表的接口（`/pprof/profile`、`/api/*/analyze`、`/api/*/svg_raw`、`/api/*/flamegraph_raw`）都被投递到一个后台工作线程，完成后用 `queueInLoop()` 把响应送回事件循环。因此一个 300 秒的采样不会拖住 `/api/status` 或首页。

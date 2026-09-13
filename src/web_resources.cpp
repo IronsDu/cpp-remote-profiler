@@ -145,6 +145,18 @@ static const char INDEX_PAGE[] = R"HTML(
             display: inline-block;
             margin: 5px;
         }
+        .hint {
+            display: block;
+            margin: 6px 0 10px;
+            color: #666;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .hint code {
+            background: #eee;
+            padding: 1px 4px;
+            border-radius: 3px;
+        }
         .input-group label {
             margin-right: 5px;
         }
@@ -168,6 +180,10 @@ static const char INDEX_PAGE[] = R"HTML(
                     <label for="cpu-duration">采样时长(秒):</label>
                     <input type="number" id="cpu-duration" value="10" min="1" max="300">
                 </div>
+                <span class="hint">
+                    两种图表类型都按上面的时长采样，区别只在渲染方式（pprof 脚本 vs FlameGraph）。
+                    CPU 采样是<b>独占</b>的：若已有请求或宿主程序正在采样，本次会被拒绝（409 / 500）。
+                </span>
                 <div class="input-group">
                     <label for="cpu-chart-type">图表类型:</label>
                     <select id="cpu-chart-type">
@@ -183,6 +199,13 @@ static const char INDEX_PAGE[] = R"HTML(
         <div class="section">
             <h2>Heap Profiler</h2>
             <div>
+                <span class="hint">
+                    ⚠️ 这里的两个按钮都是<b>窗口式</b>分析：采样 1 秒并记录<b>这段时间内发生的分配</b>，
+                    不反映此刻已经在堆里的内存。若进程内存虽高但已停止分配，结果会是空的（返回
+                    "No heap profile data was produced"）。想看<b>当前堆的累计快照</b>，请用
+                    <code>GET /pprof/heap</code> 导出原始 profile（需在启动前设置
+                    <code>TCMALLOC_SAMPLE_PARAMETER</code>）。
+                </span>
                 <div class="input-group">
                     <label for="heap-chart-type">图表类型:</label>
                     <select id="heap-chart-type">
@@ -191,7 +214,7 @@ static const char INDEX_PAGE[] = R"HTML(
                     </select>
                 </div>
                 <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成Heap火焰图</button>
-                <button class="download-btn" id="heap-download-btn" onclick="downloadHeapChart()">📥 下载 Heap 图表</button>
+                <button class="download-btn" id="heap-download-btn" onclick="downloadHeapChart()">📥 下载 Heap 图表 (SVG)</button>
             </div>
         </div>
 
@@ -339,7 +362,9 @@ static const char INDEX_PAGE[] = R"HTML(
             // 根据图表类型选择端点和文件名
             const endpoint = chartType === 'flamegraph' ? '/api/heap/flamegraph_raw' : '/api/heap/svg_raw';
             const chartTypeName = chartType === 'flamegraph' ? 'FlameGraph' : 'pprof SVG';
-            const filenamePrefix = chartType === 'flamegraph' ? 'heap_flamegraph' : 'heap_profile';
+            // 两个端点返回的都是【渲染后的图表】，不是原始 heap profile
+            // （/pprof/heap 才是原始 profile，且需要 TCMALLOC_SAMPLE_PARAMETER）
+            const filenamePrefix = chartType === 'flamegraph' ? 'heap_flamegraph' : 'heap_pprof_graph';
 
             log(`📥 开始下载 Heap ${chartTypeName}...`);
 

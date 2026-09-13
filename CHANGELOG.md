@@ -58,6 +58,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while stopping an existing session; the stop and the state update now happen
   under the lock, as does the corresponding teardown in `getRawCPUProfile()`.
 
+### Documentation
+- README, the API reference and the troubleshooting guide now spell out that the
+  two heap views are **opposite in kind**, not two renderings of one dataset:
+  `/pprof/heap` is state-based (cumulative snapshot of the current heap, needs
+  `TCMALLOC_SAMPLE_PARAMETER`) while `/api/heap/analyze` is window-based (only
+  allocations made during a fixed 1s sampling window, and it does not need that
+  variable). A process holding a large heap but no longer allocating yields a
+  full graph from the former and an empty result from the latter. Measured
+  bounds included: allocations made before `HeapProfilerStart()` never appear,
+  allocations freed inside the window still do, and consecutive sessions do not
+  accumulate.
+- The heap Web panel says which of the two it performs, and no longer labels a
+  window-rendered SVG download as a "heap profile".
+
 ### Removed
 - `logger.h` (unused after the logging rework)
 - The synthetic allocation thread inside `analyzeHeapProfile()`

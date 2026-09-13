@@ -367,14 +367,26 @@ std::string analyzeHeapProfile(const std::string& output_type = "flamegraph");
 **返回值**: SVG 字符串；失败时返回 `{"error":"..."}` JSON 字符串
 
 **说明**: **没有 duration 参数**。gperftools 的 heap profiling 是按分配驱动的：`HeapProfilerStart()`
-开始记录，`HeapProfilerDump()` 写出快照，采样率由进程启动时的 `TCMALLOC_SAMPLE_PARAMETER` 决定，
-与经过的时间无关。实现内部只开启一个固定的短采样窗口（1 秒）让应用自身的分配被记录，然后 dump。
+开始记录，`HeapProfilerDump()` 写出快照，与经过的时间无关。实现内部只开启一个固定的采样窗口（1 秒），
+然后 dump。
+
+**记录的是"窗口内发生的分配"，不是"当前堆里的内存"** —— 这是最容易误解的一点：
+
+| 情况 | 是否出现在结果里 |
+|------|------------------|
+| profiler 启动**之前**就已分配、期间一直存活的内存 | ❌ 不出现（实测：启动前 8MB + 期间 3MB → dump 只有 3MB） |
+| 窗口内 malloc 后立即 free 的内存 | ✅ 出现（记录的是分配事件，不是 dump 时刻的状态） |
+| 多个分析会话 | 各自独立、不累计（实测：2MB 会话 + 3MB 会话 → 第二次只有 3MB） |
 
 因此：
 
-- 被分析进程在这段时间内**没有分配内存**时，快照会是空的 —— 这是正确行为，不是 bug
-- 提高采样精度请在**启动前**设置 `TCMALLOC_SAMPLE_PARAMETER`（例如 `524288`）
-- 想控制采样窗口，请直接用 `startHeapProfiler()` / `stopHeapProfiler()` 自行掌握时机
+- 进程内存虽高但**已停止分配**时，结果会是空的并返回
+  `{"error": "No heap profile data was produced ..."}` —— 这是正确行为，不是 bug。
+  这种场景应改用**状态式**的 `getRawHeapSample()`（即 `/pprof/heap`）
+- **不需要** `TCMALLOC_SAMPLE_PARAMETER`：这条路径由
+  `HEAP_PROFILE_ALLOCATION_INTERVAL`（默认 1MB）、`HEAP_PROFILE_INUSE_INTERVAL`（默认 512KB）控制。
+  作为对比，`getRawHeapSample()` **必需**该变量（它走 `GetHeapSample()`）
+- 想把窗口拉长（分配稀疏的进程），请直接用 `startHeapProfiler()` / `stopHeapProfiler()` 掌控时机
 
 ---
 
