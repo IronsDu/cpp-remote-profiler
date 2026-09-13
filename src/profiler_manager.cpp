@@ -5,6 +5,7 @@
 #include "internal/embed_pprof.h"
 #include "internal/log_macros.h"
 #include "internal/log_manager.h"
+#include "internal/result_parsing.h"
 #include "internal/symbolize.h"
 #include <algorithm>
 #include <atomic>
@@ -347,6 +348,19 @@ std::string ProfilerManager::generateFlameGraph(const std::string& collapsed_fil
     if (svg_output.find("<?xml") == std::string::npos && svg_output.find("<svg") == std::string::npos) {
         PROFILER_ERROR("flamegraph.pl did not generate valid SVG");
         return R"({"error": "flamegraph.pl did not generate valid SVG"})";
+    }
+
+    // flamegraph.pl answers empty or unusable input with a *valid* SVG whose only
+    // content is an error message, so the structural check above passes and a
+    // 200 carrying "ERROR: ..." would reach the caller. Treat that as a failure
+    // and say why, since the usual cause is a profile with no samples.
+    if (svg_output.find("ERROR:") != std::string::npos) {
+        auto error_pos = svg_output.find("ERROR:");
+        auto error_end = svg_output.find('<', error_pos);
+        std::string message = svg_output.substr(error_pos, error_end - error_pos);
+        PROFILER_ERROR("flamegraph.pl reported: {}", message);
+        return R"({"error": "No stack samples to render (profile is empty). The sampled window may have been too short or the process was idle; try a longer duration or sample under load. flamegraph.pl said: )" +
+               message + R"("})";
     }
 
     return svg_output;
@@ -938,8 +952,9 @@ std::string ProfilerManager::getRawHeapSample() {
     // GetHeapSample writes the heap profile into the string
     MallocExtension::instance()->GetHeapSample(&heap_sample);
 
-    if (heap_sample.empty()) {
-        PROFILER_ERROR("Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.");
+    if (internal::isEmptyHeapSample(heap_sample)) {
+        PROFILER_ERROR("Heap sampling is off or produced no data. Set TCMALLOC_SAMPLE_PARAMETER "
+                       "(e.g. 524288) before starting the process.");
         return "";
     }
 

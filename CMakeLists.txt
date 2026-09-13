@@ -266,6 +266,16 @@ if(REMOTE_PROFILER_BUILD_TESTS)
     )
     add_test(NAME AsyncExecutorTest COMMAND test_async_executor)
 
+    # Return-value parsing shared by the HTTP layer (internal, no Drogon needed)
+    add_executable(test_result_parsing tests/test_result_parsing.cpp)
+    target_link_libraries(test_result_parsing
+        profiler_core
+        GTest::gtest
+        GTest::gtest_main
+        pthread
+    )
+    add_test(NAME ResultParsingTest COMMAND test_result_parsing)
+
     message(STATUS "Tests will be built")
 else()
     message(STATUS "Tests disabled")

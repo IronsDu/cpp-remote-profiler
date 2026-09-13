@@ -68,13 +68,19 @@
 
 </details>
 
+### 已修复（本轮，用 go tool pprof 验证）
+
+- `/pprof/heap` 在采样关闭时返回 200 + `%warn` 文本：`GetHeapSample()` 不返回空串，导致空值检查失效。现按 `@ heap_v2/0` / 前导 `%warn` 识别，返回 500。
+- `/api/heap/svg_raw` 与 `flamegraph_raw` 的行为不一致：根因同上，两者现在都返回同样的明确错误。
+- 分析类接口的错误响应**双重包裹**成非法 JSON（`{"error":"{"error": "..."}`）：现将内部错误消息解出后再包一层。
+- `/pprof/heap` 与 `/pprof/growth` 的错误改用 Go `serveError()` 的形状（`text/plain` + `X-Go-Pprof: 1`），`go tool pprof` 能直接显示原因。
+- `flamegraph.pl` 对空输入返回"合法 SVG + ERROR 文本"，被当作 200 成功：现识别并转为带原因的 500。
+
 ### 待修
 
 - **`pprof --svg` 的失败信息不透出**：内置 pprof 脚本用 `dot`(graphviz) 渲染，采样点过少时 `dot` 失败，代码只回一句 `pprof did not generate valid SVG. Output: `（且 `svg_output` 为空），无法定位原因。应把 `dot` 的 stderr 一并返回。**这是异步改造期间实测复现的既有缺陷**，与请求调度无关。
 - **`stopHeapProfiler()` 的 `output_path` 语义**：它把 `GetHeapProfile()` 的返回值写进 `output_path` 文件，而 `.heap` 是 gperftools 自己按 prefix 写的，两套产物并存容易混淆。
-- **`/pprof/heap` 在采样关闭时返回 200，响应体却不是 profile**：`GetHeapSample()` 在 `TCMALLOC_SAMPLE_PARAMETER` 未设置（默认 0）时**不返回空串**，而是返回 pprof 的 `%warn` 警告文本加一行零样本统计（`heap profile: 0: 0 [0: 0] @ heap_v2/0`）。因此 `if (heap_sample.empty())` 这个错误分支进不去，客户端收到 200 + 看起来像 profile 的东西。应识别 `@ heap_v2/0` 或首行 `%warn` 并返回明确错误。
-- **`/api/heap/svg_raw` 与 `/api/heap/flamegraph_raw` 在无 `TCMALLOC_SAMPLE_PARAMETER` 时表现不一致**：两者**都**先调 `getRawHeapSample()`（源码已核对），拿到的都是 `%warn` + 零样本文本，但因为上面那条缺陷没被拦下，后续命令的容错差异决定成败——`pprof --svg`（`svg_raw`）对零样本 profile 失败并超出 3 秒超时，返回 500 `Failed to generate SVG`；`pprof --collapsed` + `flamegraph.pl`（`flamegraph_raw`）却渲染出 13KB 的 SVG，返回 200。实测复现。修掉上面那条（识别零样本）即可同时解决。
-- **`/tmp/cpp_profiler` 下的 `.heap` 快照不再清理**：每次 `analyzeHeapProfile` 用唯一前缀（时间戳 + 序号）产生一个新文件，长期运行会累积。
+- **Web 面板缺少"当前堆快照"入口**：面板上的三个 Heap 入口全部走窗口式（`/api/heap/analyze` 与两个 `*_raw`），状态式的 `/pprof/heap` **没有 UI 入口**。进程内存高但停止分配时，用户在面板里无法查看存量堆。可加一个按钮调用 `/pprof/heap`（并提示需要 `TCMALLOC_SAMPLE_PARAMETER`）。
 - **`analyzeHeapProfile` 的采样窗口固定 1 秒且不可配置**：分配稀疏的进程在窗口内可能一次分配都没有，只能得到空结果。可考虑加一个可选的窗口参数，或复用 `startHeapProfiler()`/`stopHeapProfiler()` 让调用方掌控。
 
 ### 已完成的调度改造（供参考）

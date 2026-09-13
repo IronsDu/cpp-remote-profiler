@@ -2,6 +2,7 @@
 /// @brief Framework-agnostic HTTP endpoint handlers implementation
 
 #include "profiler/http_handlers.h"
+#include "internal/result_parsing.h"
 #include "profiler_manager.h"
 #include <chrono>
 #include <fstream>
@@ -105,8 +106,8 @@ HandlerResponse ProfilerHttpHandlers::handleCpuAnalyze(int duration, const std::
 
     std::string svg = profiler_.analyzeCPUProfile(duration, output_type);
 
-    if (svg.size() > 10 && svg[0] == '{' && svg[1] == '"') {
-        return errorResp(500, svg);
+    if (internal::isJsonError(svg)) {
+        return errorResp(500, internal::jsonErrorMessage(svg));
     }
 
     return HandlerResponse::svg(svg);
@@ -225,8 +226,8 @@ HandlerResponse ProfilerHttpHandlers::handleHeapAnalyze(const std::string& outpu
     // No duration argument: heap profiling is allocation driven, not time driven.
     std::string svg = profiler_.analyzeHeapProfile(output_type);
 
-    if (svg.size() > 10 && svg[0] == '{' && svg[1] == '"') {
-        return errorResp(500, "Failed to generate heap flame graph");
+    if (internal::isJsonError(svg)) {
+        return errorResp(500, internal::jsonErrorMessage(svg));
     }
 
     return HandlerResponse::svg(svg);
@@ -491,10 +492,28 @@ HandlerResponse ProfilerHttpHandlers::handlePprofProfile(int seconds) {
     return resp;
 }
 
+namespace {
+
+/// Error response for the /pprof/* family, following Go's serveError(): plain
+/// text plus the X-Go-Pprof marker, so `go tool pprof` shows the message instead
+/// of trying to parse the body as profile data. Using the JSON helper here would
+/// both mislabel the content type and hide the message from the tool.
+HandlerResponse pprofErrorResponse(const std::string& message) {
+    HandlerResponse resp;
+    resp.status = 500;
+    resp.content_type = "text/plain; charset=utf-8";
+    resp.body = message + "\n";
+    resp.headers["X-Go-Pprof"] = "1";
+    return resp;
+}
+
+} // namespace
+
 HandlerResponse ProfilerHttpHandlers::handlePprofHeap() {
     std::string data = profiler_.getRawHeapSample();
     if (data.empty()) {
-        return errorResp(500, "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set.");
+        return pprofErrorResponse("Could not read heap sample: heap sampling is off or produced no "
+                                  "data. Set TCMALLOC_SAMPLE_PARAMETER before starting the process.");
     }
 
     HandlerResponse resp;
@@ -508,7 +527,7 @@ HandlerResponse ProfilerHttpHandlers::handlePprofHeap() {
 HandlerResponse ProfilerHttpHandlers::handlePprofGrowth() {
     std::string data = profiler_.getRawHeapGrowthStacks();
     if (data.empty()) {
-        return errorResp(500, "Failed to get heap growth stacks. No heap growth data available.");
+        return pprofErrorResponse("Could not read heap growth stacks: no heap growth data available.");
     }
 
     HandlerResponse resp;

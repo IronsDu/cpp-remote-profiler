@@ -58,6 +58,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while stopping an existing session; the stop and the state update now happen
   under the lock, as does the corresponding teardown in `getRawCPUProfile()`.
 
+### Fixed
+- `/pprof/heap` reported success when heap sampling was off. `GetHeapSample()` does
+  not return an empty string in that case -- it returns pprof's `%warn` advisory
+  followed by a valid-looking but empty profile (`@ heap_v2/0`) -- so the
+  emptiness check never fired and clients received HTTP 200 carrying the warning
+  text. The zero sampling rate (or a leading `%warn`) is now recognised and
+  reported as an error. This also removes an inconsistency where
+  `/api/heap/svg_raw` failed with 500 while `/api/heap/flamegraph_raw` rendered a
+  13KB graph from the identical input.
+- Analyze endpoints emitted invalid JSON on failure: the core returns a
+  `{"error": ...}` string and the handler wrapped it again without escaping,
+  producing `{"error":"{"error": "..."}`. The inner message is now extracted
+  first; `handleHeapAnalyze` also no longer discards the reason in favour of a
+  generic string.
+- `/pprof/heap` and `/pprof/growth` errors now follow Go's `serveError()` shape
+  (`text/plain` plus `X-Go-Pprof: 1`), so `go tool pprof` prints the reason
+  instead of the content type misleading it.
+- `flamegraph.pl` answers empty input with a *valid* SVG whose entire content is
+  an error message, so the structural SVG check passed and callers got HTTP 200
+  plus a graph reading "ERROR: No valid input provided to flamegraph.pl." That is
+  now detected and returned as a 500 explaining that the sample window was too
+  short or the process idle.
+
 ### Documentation
 - README, the API reference and the troubleshooting guide now spell out that the
   two heap views are **opposite in kind**, not two renderings of one dataset:

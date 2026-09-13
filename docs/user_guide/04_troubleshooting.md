@@ -755,6 +755,23 @@ go tool pprof -http=:8081 ./your_app heap.prof
 
 Heap 分析（`/api/heap/analyze`）出于同样的原因也独占，并发时返回 `409` + `{"error":"heap profiling already in use"}`。注意 `HeapProfilerStart()` 与 CPU profiler 不同——它**没有失败模式**，重复调用会静默替换输出前缀，所以必须在调用之前原子认领，而不是"先查询再启动"。`/api/growth/analyze` 不占用会话，不受限制。
 
+### Q: 接口返回 500 "Failed to get heap sample" / "heap sampling is off"
+**A**: 状态式 heap 端点（`/pprof/heap`、`/api/heap/svg_raw`）依赖 `TCMALLOC_SAMPLE_PARAMETER`，而它**必须在进程启动前**设置（默认 `0` 表示关闭采样）：
+
+```bash
+export TCMALLOC_SAMPLE_PARAMETER=524288
+./your_app
+```
+
+窗口式端点（`/api/heap/analyze`、`/api/heap/flamegraph_raw`）走的是另一套机制，不受影响。
+
+> 以前这三种情况会给出**三种不同**的结果（`/pprof/heap` 返回 200 + `%warn` 文本、`/api/heap/svg_raw` 返回 500、`/api/heap/flamegraph_raw` 返回 200 + 一张空图）。现已统一为带原因的 500。
+
+### Q: 接口返回 500 "No stack samples to render (profile is empty)"
+**A**: 采样窗口内没有收集到足够的栈样本，`flamegraph.pl` 拒绝渲染。常见原因是采样时长太短，而目标进程在那段时间里正好空闲。加长 `duration`（例如 10–30 秒）或在有负载时重试。
+
+> 以前这种情况会返回 **200** 和一张只含 `ERROR: No valid input provided to flamegraph.pl.` 文字的 SVG，看起来像成功。现已改为带原因的 500。
+
 ### Q: 接口返回 500 "pprof did not generate valid SVG"
 **A**: 内置 pprof 脚本用 `dot`（graphviz）渲染，当 profile 采样点太少或数据异常时 `dot` 会失败并输出错误文本，因而被判定为"非 SVG"。请：① 安装 graphviz；② 加长采样时长（`?duration=30`）；③ 确认编译带 `-g`。这是已知的**既有缺陷**（错误信息未把 `dot` 的原始输出透出），记录在 [ROADMAP](../../ROADMAP.md)。
 
