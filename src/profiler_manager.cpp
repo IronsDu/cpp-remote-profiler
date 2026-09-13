@@ -610,14 +610,18 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     return svg_output;
 }
 
-std::string ProfilerManager::analyzeHeapProfile(const std::string& output_type) {
+std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string& output_type) {
     // gperftools heap profiling is allocation driven: HeapProfilerStart() begins
     // recording and HeapProfilerDump() writes a snapshot. Unlike the CPU
     // profiler there is no sampling period to tune -- the sample rate comes from
     // TCMALLOC_SAMPLE_PARAMETER, which tcmalloc reads once at process startup.
     // So there is no user-facing duration here: we simply open a short window
     // during which the application's own allocations get recorded, then dump.
-    static constexpr int kSampleWindowSeconds = 1;
+    // Guard the window the same way the CPU path guards its sampling duration.
+    if (duration < 1)
+        duration = 1;
+    if (duration > 300)
+        duration = 300;
 
     PROFILER_INFO("=== Starting Heap Profile Analysis ===");
 
@@ -681,8 +685,8 @@ std::string ProfilerManager::analyzeHeapProfile(const std::string& output_type) 
     // allocations here: a profiler must report the host process's real memory
     // behaviour, and fabricating allocations both pollutes the result and leaks
     // memory in the process under test.
-    PROFILER_INFO("Collecting heap samples for {} second(s)...", kSampleWindowSeconds);
-    sleep(kSampleWindowSeconds);
+    PROFILER_INFO("Collecting heap samples for {} second(s)...", duration);
+    sleep(duration);
 
     // Step 5: Take the snapshot, then stop
     if (IsHeapProfilerRunning()) {
@@ -960,6 +964,71 @@ std::string ProfilerManager::getRawHeapSample() {
 
     PROFILER_INFO("Heap sample size: {} bytes", heap_sample.size());
     return heap_sample;
+}
+
+std::string ProfilerManager::getRawHeapProfileSample(int duration) {
+    if (duration < 1)
+        duration = 1;
+    if (duration > 300)
+        duration = 300;
+
+    // Same claim as analyzeHeapProfile(): the heap profiler is process-global, so
+    // a window may only be opened by one caller at a time.
+    {
+        bool expected = false;
+        if (!heap_analysis_in_progress_.compare_exchange_strong(expected, true)) {
+            PROFILER_ERROR("Heap analysis already in progress; rejecting this request");
+            return R"({"error": "heap profiling already in use"})";
+        }
+    }
+
+    struct ClaimGuard {
+        static void release() {
+            heap_analysis_in_progress_.store(false);
+        }
+        ~ClaimGuard() {
+            release();
+        }
+    } claim_guard;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (profiler_states_[ProfilerType::HEAP].is_running) {
+            PROFILER_ERROR("A heap profiler session is already open; refusing to take it over");
+            return R"({"error": "heap profiling already in use"})";
+        }
+    }
+
+    // Unique prefix: GetHeapProfile() reports from the profiler's own state, and
+    // a distinct prefix keeps this window's records separate from any other run.
+    auto now = std::chrono::system_clock::now();
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    std::string prefix = profile_dir_ + "/heap_raw_" + std::to_string(timestamp) + "_" +
+                         std::to_string(heap_prefix_sequence_.fetch_add(1));
+
+    PROFILER_INFO("Collecting heap samples for {} second(s) (raw)...", duration);
+    HeapProfilerStart(prefix.c_str());
+    sleep(duration);
+
+    std::string sample;
+    if (IsHeapProfilerRunning()) {
+        char* profile = GetHeapProfile();
+        if (profile != nullptr) {
+            sample.assign(profile);
+            free(profile);
+        }
+        HeapProfilerStop();
+    }
+
+    ClaimGuard::release();
+
+    if (internal::isEmptyHeapSample(sample)) {
+        PROFILER_ERROR("Heap profiling produced no data in the {}s window", duration);
+        return R"({"error": "No heap profile data was produced. The heap profiler only records allocations made while it is running, so the analyzed process must be actively allocating. Increase the duration for a process that allocates sparsely."})";
+    }
+
+    PROFILER_INFO("Raw heap profile size: {} bytes", sample.size());
+    return sample;
 }
 
 std::string ProfilerManager::getRawHeapGrowthStacks() {

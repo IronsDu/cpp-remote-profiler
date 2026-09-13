@@ -288,11 +288,11 @@ TEST(HostOwnedSessionTest, HeapAnalysisRefusesToTakeOverAHostSession) {
     ASSERT_TRUE(profiler.startHeapProfiler("/tmp/test_host_owned_heap.prof"));
     ASSERT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::HEAP));
 
-    auto result = profiler.analyzeHeapProfile("pprof");
+    auto result = profiler.analyzeHeapProfile(1, "pprof");
     EXPECT_NE(result.find("heap profiling already in use"), std::string::npos) << result;
     EXPECT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::HEAP));
 
-    EXPECT_EQ(handlers.handleHeapAnalyze("pprof").status, 409);
+    EXPECT_EQ(handlers.handleHeapAnalyze(1, "pprof").status, 409);
 
     EXPECT_TRUE(profiler.stopHeapProfiler());
 }
@@ -311,7 +311,7 @@ class HeapAnalysisHolder {
 public:
     explicit HeapAnalysisHolder(profiler::ProfilerManager& profiler)
         : future_(std::async(std::launch::async,
-                             [&profiler]() -> std::string { return profiler.analyzeHeapProfile("pprof"); })) {}
+                             [&profiler]() -> std::string { return profiler.analyzeHeapProfile(1, "pprof"); })) {}
 
     ~HeapAnalysisHolder() {
         if (future_.valid()) {
@@ -352,7 +352,7 @@ TEST(ConcurrentHeapAnalysisTest, SecondAnalysisIsRejectedNotRaced) {
 
     // Must be refused immediately, and must not touch the running analysis.
     const auto t0 = std::chrono::steady_clock::now();
-    auto result = profiler.analyzeHeapProfile("pprof");
+    auto result = profiler.analyzeHeapProfile(1, "pprof");
     const auto elapsed = std::chrono::steady_clock::now() - t0;
 
     EXPECT_NE(result.find("heap profiling already in use"), std::string::npos) << result;
@@ -367,7 +367,7 @@ TEST(ConcurrentHeapAnalysisTest, HandlerReportsConflict) {
     HeapAnalysisHolder holder{profiler};
     ASSERT_TRUE(waitForHeapClaim(profiler));
 
-    auto resp = handlers.handleHeapAnalyze("pprof");
+    auto resp = handlers.handleHeapAnalyze(1, "pprof");
 
     EXPECT_EQ(resp.status, 409);
     EXPECT_NE(resp.body.find("heap profiling already in use"), std::string::npos) << resp.body;
@@ -389,17 +389,27 @@ TEST(ConcurrentHeapAnalysisTest, ClaimIsReleasedAfterwards) {
 // Heap analysis API shape
 // ---------------------------------------------------------------------------
 
-TEST_F(HttpHandlersTest, HeapAnalysisHasNoDurationParameter) {
-    // Regression guard: heap profiling is allocation driven, so no duration is
-    // accepted. This must stay compilable with a single argument.
-    // (If a duration parameter were reintroduced this call would not compile.)
+TEST_F(HttpHandlersTest, HeapAnalysisTakesACollectionWindow) {
+    // Heap analysis takes a duration, but it is a *collection window*, not a
+    // sampling rate: the rate is fixed by TCMALLOC_SAMPLE_PARAMETER at process
+    // start. A longer window covers more allocations, which is what a sparsely
+    // allocating process needs. Guard the contract so the distinction cannot
+    // silently regress into "duration is accepted but ignored".
     static_assert(std::is_invocable_v<decltype(&profiler::ProfilerHttpHandlers::handleHeapAnalyze),
-                                      profiler::ProfilerHttpHandlers*, const std::string&>,
-                  "handleHeapAnalyze must take only output_type");
+                                      profiler::ProfilerHttpHandlers*, int, const std::string&>,
+                  "handleHeapAnalyze must take (duration, output_type)");
+
+    // The renderers take one too, since each runs its own sampling window.
+    static_assert(std::is_invocable_v<decltype(&profiler::ProfilerHttpHandlers::handleHeapSvgRaw),
+                                      profiler::ProfilerHttpHandlers*, int>,
+                  "handleHeapSvgRaw must take a duration");
+    static_assert(std::is_invocable_v<decltype(&profiler::ProfilerHttpHandlers::handleHeapFlamegraphRaw),
+                                      profiler::ProfilerHttpHandlers*, int>,
+                  "handleHeapFlamegraphRaw must take a duration");
 }
 
 TEST_F(HttpHandlersTest, HeapAnalyzeRejectsInvalidOutputType) {
-    auto resp = handlers.handleHeapAnalyze("bogus");
+    auto resp = handlers.handleHeapAnalyze(1, "bogus");
     EXPECT_EQ(resp.status, 400);
 }
 
@@ -494,7 +504,7 @@ TEST(ProfilerLifecycleTest, StaleHeapProfileIsNotReused) {
         }
     });
 
-    (void)profiler.analyzeHeapProfile("pprof");
+    (void)profiler.analyzeHeapProfile(1, "pprof");
     const auto afterFirst = heapFiles();
 
     auto newSince = [&](const std::set<std::string>& a, const std::set<std::string>& b) {

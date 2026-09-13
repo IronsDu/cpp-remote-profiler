@@ -89,7 +89,9 @@
   （`-diff_base`、`-peek`、`-traces`）。README 目前只说了"两种渲染方式"，没说各自适合什么场景。
 - **`pprof --svg` 的失败信息不透出**：内置 pprof 脚本用 `dot`(graphviz) 渲染，采样点过少时 `dot` 失败，代码只回一句 `pprof did not generate valid SVG. Output: `（且 `svg_output` 为空），无法定位原因。应把 `dot` 的 stderr 一并返回。**这是异步改造期间实测复现的既有缺陷**，与请求调度无关。
 - **`stopHeapProfiler()` 的 `output_path` 语义**：它把 `GetHeapProfile()` 的返回值写进 `output_path` 文件，而 `.heap` 是 gperftools 自己按 prefix 写的，两套产物并存容易混淆。
-- **`analyzeHeapProfile` 的采样窗口固定 1 秒且不可配置**：分配稀疏的进程在窗口内可能一次分配都没有，只能得到空结果。可考虑加一个可选的窗口参数，或复用 `startHeapProfiler()`/`stopHeapProfiler()` 让调用方掌控。
+- **窗口式 heap 端点缺少"采样率"调节**：`duration` 控制的是**采集多久**（覆盖度），采样率仍由
+  `TCMALLOC_SAMPLE_PARAMETER` 在启动时固定。若调用方希望在运行期调整**精度**，目前没有途径
+  （`HEAP_PROFILE_ALLOCATION_INTERVAL` 只在 `HeapProfilerStart` 前设环境变量才生效）。
 
 ### 已完成的调度改造（供参考）
 

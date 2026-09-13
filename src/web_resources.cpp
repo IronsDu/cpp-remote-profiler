@@ -211,12 +211,15 @@ static const char INDEX_PAGE[] = R"HTML(
         <div class="section">
             <h2>Heap Profiler</h2>
             <div class="card">
-                <h3>窗口式：采样 1 秒内的分配</h3>
+                <h3>窗口式：采集一段时间内的分配</h3>
                 <span class="hint">
-                    ⚠️ 只记录<b>这 1 秒内发生的分配</b>，不反映此刻已经在堆里的内存。若进程内存虽高但已停止分配，
-                    结果会是空的（返回 "No heap profile data was produced"）。另注：其中 <code>pprof SVG</code>
-                    一项依赖 <code>TCMALLOC_SAMPLE_PARAMETER</code>，<code>FlameGraph</code> 不依赖。
+                    ⚠️ 只记录<b>采集窗口内发生的分配</b>，不反映此刻已经在堆里的内存。若进程内存虽高但已停止分配，
+                    结果会是空的（返回 "No heap profile data was produced"）。分配稀疏时把窗口调长一些。
                 </span>
+                <div class="input-group">
+                    <label for="heap-duration">采集窗口(秒):</label>
+                    <input type="number" id="heap-duration" value="1" min="1" max="300">
+                </div>
                 <div class="input-group">
                     <label for="heap-chart-type">图表类型:</label>
                     <select id="heap-chart-type">
@@ -225,6 +228,7 @@ static const char INDEX_PAGE[] = R"HTML(
                     </select>
                 </div>
                 <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成Heap火焰图</button>
+                <button class="view-btn" onclick="viewHeapChart()">🔍 查看图表</button>
                 <button class="download-btn" id="heap-download-btn" onclick="downloadHeapChart()">📥 下载 Heap 图表 (SVG)</button>
             </div>
             <div class="card">
@@ -286,9 +290,10 @@ static const char INDEX_PAGE[] = R"HTML(
 
         function analyzeHeap() {
             const chartType = document.getElementById('heap-chart-type').value;
-            log(`🚀 正在获取Heap火焰图 (图表类型: ${chartType})...`);
-            // 打开独立的SVG查看器页面，传递 output_type 参数
-            window.open(`/show_heap_svg.html?output_type=${chartType}`, '_blank');
+            const duration = heapDuration();
+            log(`🚀 正在获取Heap火焰图 (图表类型: ${chartType}, 采集窗口: ${duration}秒)...`);
+            // 打开独立的SVG查看器页面，传递 output_type 与 duration 参数
+            window.open(`/show_heap_svg.html?output_type=${chartType}&duration=${duration}`, '_blank');
             log('✅ Heap火焰图查看器已在新标签页打开');
             log(`💡 提示：当前使用 ${chartType === 'flamegraph' ? 'Brendan Gregg FlameGraph' : 'pprof SVG'}`);
         }
@@ -372,6 +377,28 @@ static const char INDEX_PAGE[] = R"HTML(
                 });
         }
 
+        // 窗口式：图表类型 → 渲染端点。analyze 端点返回 SVG 供内嵌查看，
+        // 两个 *_raw 端点返回可下载的 SVG（同样的采样，只是渲染器不同）。
+        function heapChartEndpoint(chartType) {
+            return chartType === 'flamegraph' ? '/api/heap/flamegraph_raw' : '/api/heap/svg_raw';
+        }
+
+        function heapDuration() {
+            const v = parseInt(document.getElementById('heap-duration').value, 10);
+            return Number.isFinite(v) && v >= 1 ? Math.min(v, 300) : 1;
+        }
+
+        // 与"下载"按钮走同样的端点，只是把结果展示出来而不是保存
+        function viewHeapChart() {
+            const chartType = document.getElementById('heap-chart-type').value;
+            const duration = heapDuration();
+            const endpoint = heapChartEndpoint(chartType);
+            log(`🚀 正在渲染 Heap ${chartType} 图表 (采集窗口 ${duration} 秒)...`);
+            window.open(`${endpoint}?duration=${duration}`, '_blank');
+            log(`✅ 已在新标签页打开 ${endpoint}?duration=${duration}\n` +
+                `   提示：该端点会在服务端采集 ${duration} 秒后再渲染，标签页会稍等片刻。`);
+        }
+
         // 状态式 heap 快照（/pprof/heap）：与上面的窗口式分析是两套机制。
         // 返回的是原始 profile 文本，所以既能当文本预览，也能存成 .prof 交给
         // `go tool pprof` 分析。
@@ -444,7 +471,8 @@ static const char INDEX_PAGE[] = R"HTML(
             btn.textContent = '⏳ 准备下载...';
 
             // 根据图表类型选择端点和文件名
-            const endpoint = chartType === 'flamegraph' ? '/api/heap/flamegraph_raw' : '/api/heap/svg_raw';
+            const endpoint = heapChartEndpoint(chartType);
+            const duration = heapDuration();
             const chartTypeName = chartType === 'flamegraph' ? 'FlameGraph' : 'pprof SVG';
             // 两个端点返回的都是【渲染后的图表】，不是原始 heap profile
             // （/pprof/heap 才是原始 profile，且需要 TCMALLOC_SAMPLE_PARAMETER）
@@ -464,8 +492,8 @@ static const char INDEX_PAGE[] = R"HTML(
                 btn.textContent = `⏳ 生成中 ${progress}% (${countdown}s)`;
             }, 1000);
 
-            // 使用 fetch 下载文件
-            fetch(endpoint)
+            // 使用 fetch 下载文件（带上采集窗口）
+            fetch(`${endpoint}?duration=${duration}`)
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -755,12 +783,13 @@ static const char HEAP_SVG_VIEWER_PAGE[] = R"HTML(
 
         const urlParams = new URLSearchParams(window.location.search);
         const outputType = urlParams.get('output_type') || 'pprof';
+        const duration = urlParams.get('duration') || '1';
 
         function loadSVG() {
             document.getElementById('svg-container').innerHTML = '正在加载Heap火焰图...';
 
-            // Heap分析传递output_type参数
-            fetch(`/api/heap/analyze?output_type=${outputType}`)
+            // Heap分析传递 output_type 与采集窗口
+            fetch(`/api/heap/analyze?output_type=${outputType}&duration=${duration}`)
                 .then(response => {
                     const contentType = response.headers.get('Content-Type');
                     if (contentType && contentType.includes('json')) {

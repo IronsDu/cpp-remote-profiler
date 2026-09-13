@@ -297,18 +297,46 @@ void registerDrogonHandlers(profiler::ProfilerManager& profiler) {
         "/api/heap/analyze",
         [handlers, executor, heap_busy](const drogon::HttpRequestPtr& req,
                                         std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            int duration = 1;
+            auto dp = req->getParameter("duration");
+            if (!dp.empty()) {
+                try {
+                    duration = std::stoi(dp);
+                } catch (...) {}
+            }
             std::string output_type = req->getParameter("output_type");
             if (output_type.empty())
                 output_type = "pprof";
             runAsync(
                 executor, req, std::move(callback),
-                [handlers, output_type]() { return handlers->handleHeapAnalyze(output_type); }, heap_busy);
+                [handlers, duration, output_type]() { return handlers->handleHeapAnalyze(duration, output_type); },
+                heap_busy);
         },
         {drogon::Get});
 
-    // --- Heap raw / FlameGraph (blocking: shells out to pprof/flamegraph.pl) ---
-    registerGetAsync("/api/heap/svg_raw", &ProfilerHttpHandlers::handleHeapSvgRaw);
-    registerGetAsync("/api/heap/flamegraph_raw", &ProfilerHttpHandlers::handleHeapFlamegraphRaw);
+    // --- Heap raw / FlameGraph (blocking: sample window + pprof/flamegraph.pl) ---
+    // These take a duration too, so the collection window is the caller's choice
+    // rather than whatever the process happened to be started with.
+    auto registerHeapRawAsync = [&](const std::string& path, auto fn) {
+        drogon::app().registerHandler(
+            path,
+            [handlers, executor, fn = std::move(fn)](const drogon::HttpRequestPtr& req,
+                                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                int duration = 1;
+                auto dp = req->getParameter("duration");
+                if (!dp.empty()) {
+                    try {
+                        duration = std::stoi(dp);
+                    } catch (...) {}
+                }
+                runAsync(executor, req, std::move(callback),
+                         [handlers, fn, duration]() { return ((*handlers).*fn)(duration); });
+            },
+            {drogon::Get});
+    };
+
+    registerHeapRawAsync("/api/heap/svg_raw", &ProfilerHttpHandlers::handleHeapSvgRaw);
+    registerHeapRawAsync("/api/heap/flamegraph_raw", &ProfilerHttpHandlers::handleHeapFlamegraphRaw);
 
     // --- Growth analyze (blocking: shells out to pprof/flamegraph.pl) ---
     drogon::app().registerHandler("/api/growth/analyze",

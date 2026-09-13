@@ -98,12 +98,18 @@ public:
     HandlerResponse handleCpuFlamegraphRaw(int duration);
 
     // --- Heap endpoints ---
-    /// @note Heap analysis has no duration parameter: gperftools heap profiling
-    ///       is allocation driven, so the sample rate is fixed at process start
-    ///       by TCMALLOC_SAMPLE_PARAMETER rather than by elapsed time.
-    HandlerResponse handleHeapAnalyze(const std::string& output_type);
-    HandlerResponse handleHeapSvgRaw();
-    HandlerResponse handleHeapFlamegraphRaw();
+    /// @param duration Collection window in seconds (clamped 1..300). Not a
+    ///        sampling rate -- that is fixed by TCMALLOC_SAMPLE_PARAMETER at
+    ///        process start -- but a longer window covers more allocations.
+    HandlerResponse handleHeapAnalyze(int duration, const std::string& output_type);
+
+    /// @brief Render the current heap sample with the pprof script
+    /// @param duration Collection window in seconds (clamped 1..300)
+    HandlerResponse handleHeapSvgRaw(int duration);
+
+    /// @brief Render the current heap sample as a FlameGraph
+    /// @param duration Collection window in seconds (clamped 1..300)
+    HandlerResponse handleHeapFlamegraphRaw(int duration);
 
     // --- Growth endpoints ---
     HandlerResponse handleGrowthAnalyze(const std::string& output_type);

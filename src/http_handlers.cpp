@@ -211,7 +211,8 @@ HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
 
 // --- Heap endpoints ---
 
-HandlerResponse ProfilerHttpHandlers::handleHeapAnalyze(const std::string& output_type) {
+HandlerResponse ProfilerHttpHandlers::handleHeapAnalyze(int duration, const std::string& output_type) {
+    duration = clampDuration(duration, 1, 300);
     // Heap analysis reconfigures the process-global heap profiler, so refuse
     // immediately rather than racing another analysis for it, or preempting a
     // session the caller opened with startHeapProfiler().
@@ -224,7 +225,7 @@ HandlerResponse ProfilerHttpHandlers::handleHeapAnalyze(const std::string& outpu
     }
 
     // No duration argument: heap profiling is allocation driven, not time driven.
-    std::string svg = profiler_.analyzeHeapProfile(output_type);
+    std::string svg = profiler_.analyzeHeapProfile(duration, output_type);
 
     if (internal::isJsonError(svg)) {
         return errorResp(500, internal::jsonErrorMessage(svg));
@@ -233,8 +234,12 @@ HandlerResponse ProfilerHttpHandlers::handleHeapAnalyze(const std::string& outpu
     return HandlerResponse::svg(svg);
 }
 
-HandlerResponse ProfilerHttpHandlers::handleHeapSvgRaw() {
-    std::string heap_sample = profiler_.getRawHeapSample();
+HandlerResponse ProfilerHttpHandlers::handleHeapSvgRaw(int duration) {
+    duration = clampDuration(duration, 1, 300);
+    // Use the active sampler so the caller's window is honoured, and so this
+    // works in processes started without TCMALLOC_SAMPLE_PARAMETER -- the same
+    // mechanism the analyze endpoint uses.
+    std::string heap_sample = profiler_.getRawHeapProfileSample(duration);
     if (heap_sample.empty()) {
         return errorResp(500, "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set.");
     }
@@ -265,8 +270,12 @@ HandlerResponse ProfilerHttpHandlers::handleHeapSvgRaw() {
     return resp;
 }
 
-HandlerResponse ProfilerHttpHandlers::handleHeapFlamegraphRaw() {
-    std::string heap_sample = profiler_.getRawHeapSample();
+HandlerResponse ProfilerHttpHandlers::handleHeapFlamegraphRaw(int duration) {
+    duration = clampDuration(duration, 1, 300);
+    // Use the active sampler so the caller's window is honoured, and so this
+    // works in processes started without TCMALLOC_SAMPLE_PARAMETER -- the same
+    // mechanism the analyze endpoint uses.
+    std::string heap_sample = profiler_.getRawHeapProfileSample(duration);
     if (heap_sample.empty()) {
         return errorResp(500, "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set.");
     }
