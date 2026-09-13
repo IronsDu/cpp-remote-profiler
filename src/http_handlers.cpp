@@ -308,9 +308,21 @@ HandlerResponse ProfilerHttpHandlers::handleHeapSvgRaw(int duration, bool state_
         svg = svg.substr(pos);
 
     if (svg.empty() || svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "pprof could not render this heap sample into an SVG. "
-                              "Output: " +
-                                  svg);
+        // "No nodes to print" is what pprof says for a *valid* profile with no
+        // records, which is the normal cold-start state of the state-based view:
+        // tcmalloc reports nothing until its first sampling event, so a freshly
+        // started process yields an empty snapshot. Say that, rather than
+        // presenting it as a rendering fault.
+        if (svg.find("No nodes to print") != std::string::npos) {
+            return errorResp(500, state_based ? "The current heap snapshot is empty, so there is nothing to draw. "
+                                                "tcmalloc reports no data until its first sampling event; this is "
+                                                "normal shortly after process start. Wait for the process to "
+                                                "allocate, then retry -- or use the window source, which collects "
+                                                "its own samples."
+                                              : "The collected heap sample contained no records. Increase the "
+                                                "duration or sample a process that is actively allocating.");
+        }
+        return errorResp(500, "pprof could not render this heap sample into an SVG. Output: " + svg);
     }
 
     auto resp = HandlerResponse::svg(svg);
