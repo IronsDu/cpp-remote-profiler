@@ -346,11 +346,26 @@ bool stopHeapProfiler();
 
 ### analyzeHeapProfile
 
-采样并生成 Heap 火焰图 SVG。
+采集 Heap 并生成图表 SVG。
 
 ```cpp
-std::string analyzeHeapProfile(int duration, const std::string& output_type = "flamegraph");
+std::string analyzeHeapProfile(const std::string& output_type = "flamegraph");
 ```
+
+**参数**:
+- `output_type`: 输出类型（`"flamegraph"` 或 `"pprof"`）
+
+**返回值**: SVG 字符串；失败时返回 `{"error":"..."}` JSON 字符串
+
+**说明**: **没有 duration 参数**。gperftools 的 heap profiling 是按分配驱动的：`HeapProfilerStart()`
+开始记录，`HeapProfilerDump()` 写出快照，采样率由进程启动时的 `TCMALLOC_SAMPLE_PARAMETER` 决定，
+与经过的时间无关。实现内部只开启一个固定的短采样窗口（1 秒）让应用自身的分配被记录，然后 dump。
+
+因此：
+
+- 被分析进程在这段时间内**没有分配内存**时，快照会是空的 —— 这是正确行为，不是 bug
+- 提高采样精度请在**启动前**设置 `TCMALLOC_SAMPLE_PARAMETER`（例如 `524288`）
+- 想控制采样窗口，请直接用 `startHeapProfiler()` / `stopHeapProfiler()` 自行掌握时机
 
 ---
 

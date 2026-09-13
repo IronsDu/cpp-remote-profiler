@@ -5,48 +5,97 @@
 
 ---
 
-## 一、正确性问题（最高优先级）
+## 一、正确性问题
 
 这些是阅读源码时发现的实现与文档/预期不一致之处，会直接影响使用者。
 
-### 1. `/api/heap/analyze` 忽略采样时长 🔴
+> 第 1–5 项**已修复**（见 CHANGELOG.md 的 Unreleased 段与 `git log`）。
+> 保留记录是为了说明当时的判断依据；新增问题请追加到本节的「待修」小节。
 
-- 路由只解析 `output_type`（`src/drogon_adapter.cpp:171-179`），`handleHeapAnalyze()` 也没有 duration 形参（`include/profiler/http_handlers.h:69`），最终硬编码 `analyzeHeapProfile(1, ...)`（`src/http_handlers.cpp:171`）
-- 传 `?duration=10` 会被静默忽略，用户以为采样了 10 秒
-- 方案：把 duration 打通到 handler，或明确标注该接口固定 1 秒
+### 已修复
 
-### 2. `~ProfilerManager()` 未停止 heap profiler 🔴
+<details>
+<summary>1. `/api/heap/analyze` 的 duration 语义（✅ 已修复）</summary>
 
-```cpp
-if (profiler_states_[ProfilerType::HEAP].is_running) {
-    IsHeapProfilerRunning();   // src/profiler_manager.cpp:94-96
-}
-```
+原问题：路由只解析 `output_type`，`handleHeapAnalyze()` 也没有 duration 形参，最终硬编码
+`analyzeHeapProfile(1, ...)`。
 
-- 调用的是查询函数而非 `HeapProfilerStop()`，析构后 heap profiler 仍在进程内运行
-- 方案：改为 `HeapProfilerStop()`，并补测试
+**根因不止是"参数没打通"**：gperftools 的 heap profiling 是**按分配驱动**的，
+`HeapProfilerStart()` 开始记录、`HeapProfilerDump()` 写出快照，采样率由进程启动时的
+`TCMALLOC_SAMPLE_PARAMETER` 决定，**与经过的时间无关**。所以 duration 对 heap 本就没有意义。
 
-### 3. `include/profiler_manager.h:40` 注释与实现不符 🟡
+附带发现一个更严重的问题：原实现为了让 profile "有内容"，起了一个线程**伪造分配**
+（每次迭代泄漏约 400KB 的假数据，且硬上限 100 次迭代 ⇒ 10 秒后停止，`duration > 10` 时后段纯空转）。
+这把测试脚手架泄漏进了生产库，并污染了被分析进程的堆。
 
-- `ProfilerState::duration` 注释为"Configured duration in seconds"，实际存的是毫秒（`src/profiler_manager.cpp:189-191`、`214`），HTTP 层 JSON 键名也是 `duration_ms`（`src/http_handlers.cpp:48`）
-- 方案：改注释为 milliseconds
+修复：去掉 `analyzeHeapProfile()` 的 duration 形参，删除伪造分配线程，改用
+`HeapProfilerDump()` 做确定性快照。实测确认 `HeapProfilerStart/Dump/Stop` 这条路径
+**不依赖** `TCMALLOC_SAMPLE_PARAMETER`（该变量只影响 `GetHeapSample()` 的采样精度）。
 
-### 4. `include/profiler_manager.h:129,135` 注释提及不存在的输出类型 🟡
+</details>
 
-- 注释写 `"iciclegraph", etc.`，但 `validateOutputType()` 只接受 `flamegraph` 与 `pprof`（`src/http_handlers.cpp:20-22`）
-- 方案：删除该措辞
+<details>
+<summary>2. `~ProfilerManager()` 未停止 heap profiler（✅ 已修复）</summary>
 
-### 5. `start.sh` 打印不存在的查看页地址 🟡
+原代码在析构里调用 `IsHeapProfilerRunning()`——一个查询函数，返回值被丢弃，heap profiler 继续运行。
+已改为 `HeapProfilerStop()` 并同步状态。
 
-- 脚本输出 `http://localhost:8080/flamegraph`，但该路由不存在；真实查看页为 `/show_svg.html`、`/show_heap_svg.html`、`/show_growth_svg.html`
+已补回归测试 `ProfilerLifecycleTest.HeapProfilerStopsOnDestruction`：断言 gperftools 的
+**全局**状态（而非 manager 自己的标志位），已验证把 bug 重新引入后该测试会失败。
+
+</details>
+
+<details>
+<summary>3. `ProfilerState` 注释与实现不符（✅ 已修复）</summary>
+
+`duration` 注释写 "seconds"，实际存毫秒；HTTP 层 JSON 键名是 `duration_ms`。注释已更正。
+
+</details>
+
+<details>
+<summary>4. 注释提及不存在的输出类型（✅ 已修复）</summary>
+
+`analyzeCPUProfile` / `analyzeHeapProfile` 的注释写了 `"iciclegraph", etc.`，
+但只接受 `flamegraph` 与 `pprof`。措辞已删除。
+
+</details>
+
+<details>
+<summary>5. `start.sh` 打印不存在的查看页地址（✅ 已修复）</summary>
+
+原来输出 `http://localhost:8080/flamegraph`（无此路由），已改为真实的
+`/show_svg.html`、`/show_heap_svg.html`、`/show_growth_svg.html`。
+
+</details>
+
+### 待修
+
+- **`pprof --svg` 的失败信息不透出**：内置 pprof 脚本用 `dot`(graphviz) 渲染，采样点过少时 `dot` 失败，代码只回一句 `pprof did not generate valid SVG. Output: `（且 `svg_output` 为空），无法定位原因。应把 `dot` 的 stderr 一并返回。**这是异步改造期间实测复现的既有缺陷**，与请求调度无关。
+- **`stopHeapProfiler()` 的 `output_path` 语义**：它把 `GetHeapProfile()` 的返回值写进 `output_path` 文件，而 `.heap` 是 gperftools 自己按 prefix 写的，两套产物并存容易混淆。
+- **`getRawHeapSample()` / `getRawHeapGrowthStacks()` 依赖 `TCMALLOC_SAMPLE_PARAMETER`**：未设置时（默认 0）返回空串，用户难以区分"没数据"与"没开采样"。
+- **`/tmp/cpp_profiler` 下的 `.heap` 快照不再清理**：每次 `analyzeHeapProfile` 用唯一前缀产生一个新文件，长期运行会累积。
+- **哈希/时间戳前缀依赖系统时钟**：`analyzeHeapProfile` 用毫秒时间戳构造前缀，同一毫秒内的两次调用理论上会撞名（有串行化保护，实际不会发生，但依赖该前提）。
+
+### 已完成的调度改造（供参考）
+
+所有会产生图表的 handler 都是秒级阻塞（CPU 采样最长 300 秒；渲染要 fork `pprof`/`flamegraph.pl`），原先在 **Drogon 事件循环线程**上同步执行。现在的结构：
+
+- `include/profiler/async_executor.h` — 单工作线程执行器，把阻塞任务搬离事件循环，完成后经 `queueInLoop()` 回送响应
+- 阻塞接口全部投递到该工作线程；`/api/status`、`/` 等快速接口保持在事件循环上
+- **CPU 采样独占且 fail-fast**：`cpu_profiling_in_progress_` 是所有 CPU 采样入口（`getRawCPUProfile` / `analyzeCPUProfile`）共用的进程级标记。占用期间新请求**立即被拒绝**，不会排队、也不会打断正在进行的采样
+- 拒绝语义与 Go 的 `net/http/pprof` 对齐：`/pprof/profile` 返回 500 + `text/plain` + `X-Go-Pprof: 1`；`/api/cpu/*` 返回 409 JSON
+- 拒绝判定发生在**事件循环线程上、任务入队之前**（`runAsync` 的 precheck）。这是必须的：若放在任务内部判断，只能在前一个任务结束后才执行，永远观察不到它正在运行
+
+实测：20 秒采样期间 `/api/status` 响应 0.0004s；并发请求第二个 0.0005s 内被拒且第一个不受影响。
 
 ---
 
 ## 二、测试覆盖
 
-- **为 `http_handlers` 补单元测试**：`ProfilerHttpHandlers` 的各 handler 目前完全没有测试覆盖（现有 3 个测试只覆盖 gperftools 文件格式、完整流程与日志系统）
-- **测试 `dispatch()`**：`include/profiler/http_handlers.h:81` 声明了按路径分发的 `dispatch()`，但 `src/http_handlers.cpp` 中**没有定义**——要么实现它，要么从公共头文件移除
+- **为 `http_handlers` 补单元测试** ✅ 已新增 `tests/test_http_handlers.cpp`（15 个用例，不依赖 Drogon）：`HandlerResponse` 工厂方法、`output_type` 校验、`/api/status` 契约、profiler 生命周期与 heap 快照唯一性
+- **`dispatch()`** ✅ 已处理：声明存在于 `include/profiler/http_handlers.h` 但从未定义，已**从公共头文件移除**（不提供按路径自动分发，路由由使用者框架注册）
 - **补充 Web 资源嵌入测试**：验证内嵌 HTML 页面可正常返回
+- 其余 handler 的端到端覆盖（需要 `./pprof` 与 `./flamegraph.pl`，依赖 CWD 可写）
 - 按模块拆分测试文件；引入 GTest 测试标签；启用 `ctest` 并行执行
 - 引入 **Fuzz Testing** 覆盖 profile 解析路径
 

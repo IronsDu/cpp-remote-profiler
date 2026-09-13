@@ -141,6 +141,23 @@ cd build && ./profiler_example
 
 不需要图表功能时（例如只用 `/pprof/profile` 拿原始 profile 文件），上述依赖不影响使用。
 
+### 请求调度与并发
+
+所有会产生图表的接口都需要数秒（CPU 采样最长 300 秒），因此 **Drogon 适配层不会在事件循环线程上执行它们**：这些请求被投递到一个后台工作线程，完成后通过 `queueInLoop()` 把响应送回事件循环。`/api/status`、`/` 等快速接口始终即时响应，采样进行中也能实时查询状态。
+
+**CPU 采样是独占的**：gperftools 的采样会话是进程级全局状态，因此同一时刻只允许一个 CPU 采样请求。第二个并发请求会**立即被拒绝**（而不是排队等待），与 Go 的 `net/http/pprof` 行为一致：
+
+| 端点 | 并发请求的响应 |
+|------|----------------|
+| `/pprof/profile` | `500`，`text/plain`，`Could not enable CPU profiling: cpu profiling already in use`，并带 `X-Go-Pprof: 1` 头 |
+| `/api/cpu/analyze`、`/api/cpu/svg_raw`、`/api/cpu/flamegraph_raw` | `409`，`{"error":"cpu profiling already in use"}` |
+
+`X-Go-Pprof: 1` 是给 `go tool pprof` 的信号：告诉它响应体是错误消息而非 profile 数据。
+
+快速接口（`/api/status`、`/`）不受采样影响，采样期间依然即时响应。
+
+若自行接入其它 Web 框架，请同样把上述接口放到工作线程执行，否则会阻塞你的事件循环。
+
 ## CMake 构建选项
 
 | 选项 | 默认值 | 说明 |
@@ -247,7 +264,7 @@ int main() {
 
 ### 嵌入方式 C：接入任意 Web 框架
 
-核心库的 `ProfilerHttpHandlers` 只依赖标准库，也可用 `dispatch()` 按路径统一分发：
+核心库的 `ProfilerHttpHandlers` 只依赖标准库，路由由你的框架自行注册：
 
 ```cpp
 #include "profiler_manager.h"
@@ -369,7 +386,7 @@ Heap Growth 采集（`/pprof/growth`、`/api/growth/*`）走 `GetHeapGrowthStack
 
 1. **编译时保留调试符号**（`-g`，项目默认开启），否则火焰图只显示地址
 2. **CPU profiler 有 1–5% 性能开销**；采样频率可用 `CPUPROFILE_FREQUENCY` 调整
-3. **同一时刻只允许一个 CPU 采样会话**：`analyzeCPUProfile()` 会先停掉正在运行的 CPU profiler 再启动自己的，并发调用会互相破坏结果
+3. **CPU 采样独占**：同一时刻只允许一个 CPU 采样会话，并发请求会被拒绝（`409` / Go 风格的 `500`），不会排队。第二个请求不会影响正在进行的采样
 4. **信号冲突**：默认 `SIGUSR1`；宿主程序若已占用，请用 `setStackCaptureSignal()` 换一个（推荐 `SIGRTMIN+n`）
 5. **线程安全**：所有公共 API 可在任意线程调用，但第 3 条的单会话限制依然成立
 6. **工作目录需可写**，见[运行时依赖](#运行时依赖)

@@ -265,9 +265,6 @@ public:
              QUERY(Int32, seconds, "seconds", "30")) {
         return toOat(handlers_.handlePprofProfile(seconds));
     }
-
-    // 也可以用 dispatch() 统一按路径 + 查询参数分发，避免逐个写端点
-    // auto resp = handlers_.dispatch(method, path, params, body);
 };
 ```
 
@@ -277,7 +274,7 @@ public:
 - 只需链接 `profiler_core`（不需要 Drogon）
 - 每个 handler 方法返回 `HandlerResponse`（`status`, `content_type`, `body`, `headers`）
 - 你负责从请求中提取参数、调用 handler、包装响应；`resp.headers` 也要一并转发（下载类接口依赖 `Content-Disposition`）
-- `dispatch(method, path, params, body)` 可按路径一次性分发，认不出的路径返回 404
+- 本库**不提供**按路径自动分发的辅助函数，路由表需由你的框架自行注册
 
 ---
 
