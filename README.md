@@ -154,6 +154,8 @@ cd build && ./profiler_example
 
 `X-Go-Pprof: 1` 是给 `go tool pprof` 的信号：告诉它响应体是错误消息而非 profile 数据。
 
+**宿主自己开的会话不会被抢占。** 如果你的程序用 `startCPUProfiler()` 主动开了一段采样，此期间的 HTTP 请求会被拒绝（同上表），而**不会**停掉你那段采样。同理 `startHeapProfiler()` 开的 heap 会话也不会被 `/api/heap/analyze` 抢占。
+
 **Heap 分析同样独占**。`HeapProfilerStart()` 与 CPU profiler 不同——它**没有失败模式**，重复调用会静默替换输出前缀，所以必须先原子认领再启动，否则并发调用会共用同一份快照。`/api/heap/analyze` 在已有分析进行时返回 `409` + `{"error":"heap profiling already in use"}`。
 
 `/api/growth/analyze` **不受此限制**：它读取 `GetHeapGrowthStacks()`，不占用任何 profiler 会话，可与 CPU 采样并存。

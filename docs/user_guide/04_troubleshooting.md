@@ -716,7 +716,7 @@ int main() {
 **A**: CPU profiling 通常有 1-5% 的性能开销；采样频率可用 `CPUPROFILE_FREQUENCY` 调整（gperftools 默认 100Hz）。Heap profiling 开销取决于 `TCMALLOC_SAMPLE_PARAMETER` 的采样间隔。
 
 ### Q: 可以同时进行 CPU 和 Heap profiling 吗？
-**A**: CPU 与 Heap 是两套独立的 profiling 状态，可以并存。但**同一时刻只能有一个 CPU 采样会话**：`analyzeCPUProfile()` 会先停掉正在运行的 CPU profiler 再启动自己的采样，并发调用会互相破坏结果。
+**A**: CPU 与 Heap 是两套独立的 profiling 状态，可以并存。但**同一时刻只能有一个 CPU 采样会话**：`analyzeCPUProfile()` / `getRawCPUProfile()` 会先原子认领会话，认领失败即拒绝，**不会**打断正在采样的另一方（包括宿主用 `startCPUProfiler()` 开的会话）。
 
 ### Q: `/api/heap/analyze` 为什么不接受 `duration` 参数？
 **A**: 因为对 heap profiling 而言时长没有意义。gperftools 的 heap profiling 是**按分配驱动**的：`HeapProfilerStart()` 开始记录、`HeapProfilerDump()` 写出快照，采样率由**进程启动时**的 `TCMALLOC_SAMPLE_PARAMETER` 决定，与运行时长无关。

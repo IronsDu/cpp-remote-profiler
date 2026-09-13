@@ -228,6 +228,76 @@ TEST(ConcurrentCpuProfilingTest, SessionIsReleasedAfterSampling) {
 }
 
 // ---------------------------------------------------------------------------
+// A session opened by the host is never preempted
+// ---------------------------------------------------------------------------
+
+TEST(HostOwnedSessionTest, CpuAnalysisRefusesToTakeOverAHostSession) {
+    // startCPUProfiler() opens a session on the caller's behalf. A later request
+    // must be refused, not allowed to stop that session out from under it.
+    profiler::ProfilerManager profiler;
+
+    ASSERT_TRUE(profiler.startCPUProfiler("/tmp/test_host_owned_cpu.prof"));
+    ASSERT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::CPU));
+
+    auto result = profiler.analyzeCPUProfile(1, "pprof");
+
+    EXPECT_NE(result.find("cpu profiling already in use"), std::string::npos) << result;
+    // The host's session is untouched.
+    EXPECT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::CPU));
+
+    EXPECT_TRUE(profiler.stopCPUProfiler());
+}
+
+TEST(HostOwnedSessionTest, RawProfileRefusesToTakeOverAHostSession) {
+    profiler::ProfilerManager profiler;
+
+    ASSERT_TRUE(profiler.startCPUProfiler("/tmp/test_host_owned_raw.prof"));
+
+    // Returns no data rather than silently restarting the profiler.
+    EXPECT_TRUE(profiler.getRawCPUProfile(1).empty());
+    EXPECT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::CPU));
+
+    EXPECT_TRUE(profiler.stopCPUProfiler());
+}
+
+TEST(HostOwnedSessionTest, HandlersReportTheHostSessionAsBusy) {
+    profiler::ProfilerManager profiler;
+    profiler::ProfilerHttpHandlers handlers(profiler);
+
+    ASSERT_TRUE(profiler.startCPUProfiler("/tmp/test_host_owned_busy.prof"));
+
+    EXPECT_TRUE(handlers.isCpuProfilerBusy());
+
+    // /pprof/profile answers with Go's contract rather than a generic 500.
+    auto resp = handlers.handlePprofProfile(30);
+    EXPECT_EQ(resp.status, 500);
+    EXPECT_EQ(resp.body, "Could not enable CPU profiling: cpu profiling already in use\n");
+    ASSERT_EQ(resp.headers.count("X-Go-Pprof"), 1u);
+
+    // The /api/* endpoints report a conflict.
+    EXPECT_EQ(handlers.handleCpuAnalyze(1, "pprof").status, 409);
+    EXPECT_EQ(handlers.handleCpuSvgRaw(1).status, 409);
+
+    profiler.stopCPUProfiler();
+}
+
+TEST(HostOwnedSessionTest, HeapAnalysisRefusesToTakeOverAHostSession) {
+    profiler::ProfilerManager profiler;
+    profiler::ProfilerHttpHandlers handlers(profiler);
+
+    ASSERT_TRUE(profiler.startHeapProfiler("/tmp/test_host_owned_heap.prof"));
+    ASSERT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::HEAP));
+
+    auto result = profiler.analyzeHeapProfile("pprof");
+    EXPECT_NE(result.find("heap profiling already in use"), std::string::npos) << result;
+    EXPECT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::HEAP));
+
+    EXPECT_EQ(handlers.handleHeapAnalyze("pprof").status, 409);
+
+    EXPECT_TRUE(profiler.stopHeapProfiler());
+}
+
+// ---------------------------------------------------------------------------
 // Concurrent heap analysis is exclusive
 // ---------------------------------------------------------------------------
 

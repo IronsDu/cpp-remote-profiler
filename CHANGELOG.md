@@ -46,6 +46,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - clang-tidy job could not locate dependency headers
 - Suppressed a known tcmalloc leak so ASan builds fail only on real errors
 
+### Fixed
+- A session opened by the host through `startCPUProfiler()` / `startHeapProfiler()`
+  is no longer preempted. `getRawCPUProfile()` and `analyzeCPUProfile()` used to
+  stop whatever session was running and start their own; they now refuse and
+  report "already in use", leaving the host's session untouched. `startCPUProfiler()`
+  exists so the host controls sampling, so a later request must not pull the rug
+  out from under it. The same rule now applies to `analyzeHeapProfile()` versus
+  `startHeapProfiler()`.
+- `getRawCPUProfile()` read and mutated `profiler_states_[CPU]` outside the mutex
+  while stopping an existing session; the stop and the state update now happen
+  under the lock, as does the corresponding teardown in `getRawCPUProfile()`.
+
 ### Removed
 - `logger.h` (unused after the logging rework)
 - The synthetic allocation thread inside `analyzeHeapProfile()`

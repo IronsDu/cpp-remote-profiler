@@ -440,9 +440,18 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         }
     }
 
-    // Step 2: Start CPU profiler
+    // Step 2: Start CPU profiler.
+    //
+    // A session opened through startCPUProfiler() belongs to the caller: a later
+    // request must never pull the rug out from under it. Report the conflict and
+    // leave that session alone.
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (profiler_states_[ProfilerType::CPU].is_running) {
+            PROFILER_ERROR("A CPU profiler session is already open; refusing to take it over");
+            cpu_profiling_in_progress_.store(false);
+            return R"({"error": "cpu profiling already in use"})";
+        }
         if (ProfilerStart(profile_path.c_str())) {
             auto now = std::chrono::system_clock::now();
             auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
@@ -624,12 +633,14 @@ std::string ProfilerManager::analyzeHeapProfile(const std::string& output_type) 
         }
     } claim_guard;
 
-    // Step 2: Stop any existing heap profiler (e.g. one opened by
-    // startHeapProfiler()) so this analysis takes over cleanly.
-    if (profiler_states_[ProfilerType::HEAP].is_running) {
-        PROFILER_INFO("Stopping existing heap profiler...");
-        stopHeapProfiler();
-        usleep(100000);
+    // Step 2: A heap profiler opened through startHeapProfiler() belongs to the
+    // caller: refuse rather than stopping it.
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (profiler_states_[ProfilerType::HEAP].is_running) {
+            PROFILER_ERROR("A heap profiler session is already open; refusing to take it over");
+            return R"({"error": "heap profiling already in use"})";
+        }
     }
 
     // Step 3: Unique prefix per run so the dumped file can be located reliably
@@ -856,37 +867,41 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
     // Generate temporary profile file path
     std::string profile_path = profile_dir_ + "/pprof_cpu_temp.prof";
 
-    // Stop any existing CPU profiler first
-    if (profiler_states_[ProfilerType::CPU].is_running) {
-        PROFILER_INFO("Stopping existing CPU profiler...");
-        ProfilerStop();
-        profiler_states_[ProfilerType::CPU].is_running = false;
-        usleep(100000); // 100ms to ensure file is written
-    }
-
-    // Start CPU profiler
+    // Start CPU profiler. A session opened through startCPUProfiler() belongs to
+    // the caller, so refuse rather than stopping it; the caller of this function
+    // is told the profiler is busy.
     PROFILER_INFO("Starting CPU profiler for {} seconds...", seconds);
-    if (!ProfilerStart(profile_path.c_str())) {
-        PROFILER_ERROR("Failed to start CPU profiler");
-        return "";
-    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (profiler_states_[ProfilerType::CPU].is_running) {
+            PROFILER_ERROR("A CPU profiler session is already open; refusing to take it over");
+            return "";
+        }
+        if (!ProfilerStart(profile_path.c_str())) {
+            PROFILER_ERROR("Failed to start CPU profiler");
+            return "";
+        }
 
-    // Update state
-    auto now = std::chrono::system_clock::now();
-    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    profiler_states_[ProfilerType::CPU] = ProfilerState{true, profile_path, static_cast<uint64_t>(timestamp), 0};
+        auto now = std::chrono::system_clock::now();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        profiler_states_[ProfilerType::CPU] = ProfilerState{true, profile_path, static_cast<uint64_t>(timestamp), 0};
+    }
 
     // Wait for specified duration
     sleep(seconds);
 
-    // Stop profiler
+    // Stop profiler and publish the resulting state under the lock.
     PROFILER_INFO("Stopping CPU profiler...");
-    ProfilerStop();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ProfilerStop();
 
-    now = std::chrono::system_clock::now();
-    timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    profiler_states_[ProfilerType::CPU].is_running = false;
-    profiler_states_[ProfilerType::CPU].duration = timestamp - profiler_states_[ProfilerType::CPU].start_time;
+        auto stop_time = std::chrono::system_clock::now();
+        auto stop_ms = std::chrono::duration_cast<std::chrono::milliseconds>(stop_time.time_since_epoch()).count();
+        profiler_states_[ProfilerType::CPU].duration =
+            static_cast<uint64_t>(stop_ms) - profiler_states_[ProfilerType::CPU].start_time;
+        profiler_states_[ProfilerType::CPU].is_running = false;
+    }
 
     // Wait for file to be flushed
     usleep(200000); // 200ms

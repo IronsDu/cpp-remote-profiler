@@ -318,6 +318,15 @@ std::string getRawCPUProfile(int seconds);
 
 **返回值**: 原始 profile 二进制数据（gperftools 格式，兼容 Go pprof）
 
+**说明**: CPU 采样是独占的，因此以下两种情况都会**拒绝**并返回**空字符串**：
+
+- 已有另一个请求正在采样（`analyzeCPUProfile()` / `getRawCPUProfile()` 互斥）
+- 宿主已用 `startCPUProfiler()` 开了会话
+
+宿主用 `startCPUProfiler()` 打开的会话**归调用方所有，不会被本函数停止或接管**。调用前可用
+`isProfilerRunning(ProfilerType::CPU)` 判断；HTTP 层则通过 `isCpuProfilerBusy()` 区分并返回
+`500`（`/pprof/profile`，Go 风格）或 `409`（`/api/cpu/*`）。
+
 ---
 
 ## Heap Profiling API
@@ -518,9 +527,19 @@ int main() {
 
 所有公共 API 都可在任意线程调用，但存在一条**功能层面的互斥约束**：
 
-**同一时刻只能有一个 CPU 采样会话。** `analyzeCPUProfile()` 会先停掉正在运行的 CPU profiler 再启动自己的采样（`src/profiler_manager.cpp:410-429`）；而 `gperftools` 的 `ProfilerStart()` 在已有采样进行时会失败。因此多线程并发调用 `startCPUProfiler()` / `analyzeCPUProfile()` 会互相破坏结果，应先用 `isProfilerRunning()` 或 `/api/status` 判断。
+**同一时刻只能有一个 CPU 采样会话。** 全部三个入口（`startCPUProfiler()`、`getRawCPUProfile()`、
+`analyzeCPUProfile()`）共用同一把进程级标记 `cpu_profiling_in_progress_`，并采用
+**先原子认领、认领失败即拒绝**的语义：
 
-`getRawCPUProfile()` 内部有独立的并发保护（`src/profiler_manager.cpp:822-825`），`cpu_profiling_in_progress_` 标志仅作用于该路径。
+- 后来者不会被排队，也不会打断先来者
+- 宿主用 `startCPUProfiler()` 打开的会话**不会被任何 HTTP 请求抢占**
+- 并发调用时恰好一个成功，其余立即失败（`analyzeCPUProfile()` 返回 `{"error":"cpu profiling already in use"}`，`getRawCPUProfile()` 返回空串）
+
+判断当前是否忙，用 `isProfilerRunning(ProfilerType::CPU)`；HTTP 层用 `isCpuProfilerBusy()`，
+它会同时考虑"已有请求在采样"和"宿主占用了会话"两种情况。
+
+Heap 侧同理：`analyzeHeapProfile()` 与 `startHeapProfiler()` 互斥，谁先占谁赢。
+`/api/growth/analyze` 不占用任何会话，不受限制。
 
 ---
 

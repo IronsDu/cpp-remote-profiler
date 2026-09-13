@@ -74,7 +74,6 @@
 - **`stopHeapProfiler()` 的 `output_path` 语义**：它把 `GetHeapProfile()` 的返回值写进 `output_path` 文件，而 `.heap` 是 gperftools 自己按 prefix 写的，两套产物并存容易混淆。
 - **`getRawHeapSample()` / `getRawHeapGrowthStacks()` 依赖 `TCMALLOC_SAMPLE_PARAMETER`**：未设置时（默认 0）返回空串，用户难以区分"没数据"与"没开采样"。
 - **`/tmp/cpp_profiler` 下的 `.heap` 快照不再清理**：每次 `analyzeHeapProfile` 用唯一前缀（时间戳 + 序号）产生一个新文件，长期运行会累积。
-- **手动 `startHeapProfiler()` 与 `analyzeHeapProfile()` 的交互未定义**：前者把它当成用户托管的长期会话，后者会接管（先停掉再开始）。两者共用同一个进程级 heap profiler，且用户会话**不参与** `heap_analysis_in_progress_` 认领，因此二者并发时的行为没有保证。彻底解决需要给 heap profiler 引入明确的归属状态（idle / analyze-owned / user-owned）。
 - **哈希/时间戳前缀依赖系统时钟**：`analyzeHeapProfile` 用毫秒时间戳构造前缀，同一毫秒内的两次调用理论上会撞名（有串行化保护，实际不会发生，但依赖该前提）。
 
 ### 已完成的调度改造（供参考）

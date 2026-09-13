@@ -36,11 +36,14 @@ static int clampDuration(int duration, int lo, int hi) {
 ProfilerHttpHandlers::ProfilerHttpHandlers(ProfilerManager& profiler) : profiler_(profiler) {}
 
 bool ProfilerHttpHandlers::isCpuProfilerBusy() const {
-    return profiler_.isCPUProfilingInProgress();
+    // Busy if an HTTP-triggered request holds the session, or if the host opened
+    // one through startCPUProfiler() -- in both cases a new request must back off
+    // rather than preempt it.
+    return profiler_.isCPUProfilingInProgress() || profiler_.isProfilerRunning(profiler::ProfilerType::CPU);
 }
 
 bool ProfilerHttpHandlers::isHeapAnalyzerBusy() const {
-    return profiler_.isHeapAnalysisInProgress();
+    return profiler_.isHeapAnalysisInProgress() || profiler_.isProfilerRunning(profiler::ProfilerType::HEAP);
 }
 
 HandlerResponse ProfilerHttpHandlers::heapAnalyzerBusyResponse() const {
@@ -92,7 +95,7 @@ HandlerResponse ProfilerHttpHandlers::handleCpuAnalyze(int duration, const std::
     duration = clampDuration(duration, 1, 300);
 
     // Fail fast instead of waiting behind (or disturbing) an in-flight session.
-    if (profiler_.isCPUProfilingInProgress()) {
+    if (isCpuProfilerBusy()) {
         return cpuProfilerBusyResponse(false);
     }
 
@@ -112,7 +115,7 @@ HandlerResponse ProfilerHttpHandlers::handleCpuAnalyze(int duration, const std::
 HandlerResponse ProfilerHttpHandlers::handleCpuSvgRaw(int duration) {
     duration = clampDuration(duration, 1, 300);
 
-    if (profiler_.isCPUProfilingInProgress()) {
+    if (isCpuProfilerBusy()) {
         return cpuProfilerBusyResponse(false);
     }
 
@@ -150,7 +153,7 @@ HandlerResponse ProfilerHttpHandlers::handleCpuSvgRaw(int duration) {
 HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
     duration = clampDuration(duration, 1, 300);
 
-    if (profiler_.isCPUProfilingInProgress()) {
+    if (isCpuProfilerBusy()) {
         return cpuProfilerBusyResponse(false);
     }
 
@@ -209,8 +212,9 @@ HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
 
 HandlerResponse ProfilerHttpHandlers::handleHeapAnalyze(const std::string& output_type) {
     // Heap analysis reconfigures the process-global heap profiler, so refuse
-    // immediately rather than racing another analysis for it.
-    if (profiler_.isHeapAnalysisInProgress()) {
+    // immediately rather than racing another analysis for it, or preempting a
+    // session the caller opened with startHeapProfiler().
+    if (profiler_.isHeapAnalysisInProgress() || profiler_.isProfilerRunning(profiler::ProfilerType::HEAP)) {
         return heapAnalyzerBusyResponse();
     }
 
@@ -466,16 +470,17 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthFlamegraphRaw() {
 HandlerResponse ProfilerHttpHandlers::handlePprofProfile(int seconds) {
     seconds = clampDuration(seconds, 1, 300);
 
-    // A concurrent CPU profile request must fail fast rather than wait for (or
-    // disturb) the in-progress session.
-    if (profiler_.isCPUProfilingInProgress()) {
+    // Fail fast rather than wait for, or disturb, a session that is already
+    // sampling. That includes one opened through startCPUProfiler(), which
+    // belongs to the caller and must not be preempted by an HTTP request.
+    if (isCpuProfilerBusy()) {
         return cpuProfilerBusyResponse(true);
     }
 
     std::string data = profiler_.getRawCPUProfile(seconds);
     if (data.empty()) {
-        // Either the session was claimed in the meantime, or profiling failed.
-        if (profiler_.isCPUProfilingInProgress()) {
+        // The session may have been taken between the check above and the call.
+        if (isCpuProfilerBusy()) {
             return cpuProfilerBusyResponse(true);
         }
         return errorResp(500, "Failed to generate CPU profile");
