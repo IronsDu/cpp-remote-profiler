@@ -14,25 +14,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Abseil-style versioned inline namespace (`profiler::v0_1_0`) with `PROFILER_NAMESPACE_BEGIN/END`
 - Configurable logging: `LogSink` interface, `LogManager`, per-instance logger
 - Code coverage reporting (Codecov) and clang-format check in CI
+- `tests/test_http_handlers.cpp` — first test coverage for `ProfilerHttpHandlers`
+  and the heap-profiler lifecycle (runs without Drogon)
+- `tests/test_async_executor.cpp` — serialization, queue bounds and shutdown semantics
+- `profiler/async_executor.h` — bounded single-worker executor for long-running jobs
 
 ### Changed
 - **Breaking:** `ProfilerManager` is no longer a singleton — construct it directly and manage its lifetime
 - **Breaking:** removed the spdlog dependency; use `setLogSink()` / `setLogLevel()` instead
 - **Breaking:** core library decoupled from the web layer — `profiler_core` (no Drogon) and `profiler_web` (optional Drogon adapter) are now separate targets
+- **Breaking:** `analyzeHeapProfile()` no longer takes a `duration` argument. gperftools heap profiling is allocation driven (`HeapProfilerStart()` / `HeapProfilerDump()`), so the sample rate is fixed at process start by `TCMALLOC_SAMPLE_PARAMETER` and elapsed time has no effect. `ProfilerHttpHandlers::handleHeapAnalyze()` likewise takes only `output_type`.
+- **Breaking:** removed the never-implemented `ProfilerHttpHandlers::dispatch()` declaration; route registration stays with the host framework
+- **The Drogon adapter no longer runs profiling on the event-loop thread.** Every handler that can block — CPU/heap/growth analysis, the `_raw` renderers, and `/pprof/profile` — is dispatched to a background worker and its response is handed back with `queueInLoop()`. Profiling takes seconds (up to 300s for CPU), so this previously stalled all other requests, including `/api/status`, for the whole sampling window.
+- Blocking jobs share one worker thread. This is required for correctness, not just throughput: gperftools keeps its profiling session in process-global state, so concurrent analyses would corrupt each other's results.
+- **Concurrent CPU profile requests are now rejected instead of queued**, matching Go's `net/http/pprof`. A second request arriving while a session is sampling fails immediately rather than silently waiting behind up to 300 seconds of someone else's window, and it no longer stops that in-progress session (which previously corrupted both results). Responses: `/pprof/profile` returns `500` + `text/plain` + `Could not enable CPU profiling: cpu profiling already in use` with an `X-Go-Pprof: 1` marker; the custom `/api/cpu/*` endpoints return `409 Conflict`.
+- **Concurrent heap analysis is likewise rejected.** `HeapProfilerStart()` has no failure mode -- it silently replaces the output prefix rather than refusing -- so two callers that both observed "not running" would proceed together and end up sharing one snapshot. `analyzeHeapProfile()` now claims the profiler atomically before touching it and rejects with "heap profiling already in use" (HTTP 409 on `/api/heap/analyze`). Snapshot prefixes also gained a counter: two analyses starting in the same millisecond previously produced identical names. `/api/growth/analyze` is unaffected because it reads `GetHeapGrowthStacks()` and claims no session.
+- `ProfilerManager::cpu_profiling_in_progress_` is now `static`: the gperftools session it guards is process-global, so a per-instance flag would let two `ProfilerManager` objects each claim it.
+- `analyzeCPUProfile()` honours that same guard (it previously had no concurrency control at all and would stop whatever session was running).
+- `analyzeHeapProfile()` no longer synthesizes its own allocations to force samples. Fabricating allocations polluted the profile with the profiler's own stack frames and leaked memory into the process under test; it now snapshots the application's real allocations
 - Framework-agnostic `ProfilerHttpHandlers` introduced; Drogon is now only one possible adapter
 - Internal headers moved to `src/internal/`, no longer part of the public include path
 - Release build type now defaults to `RelWithDebInfo`; all build types carry `-g`
 - Installation layout made consistent across `lib`/`lib64` hosts so `find_package()` works (GNUInstallDirs is now included before the install rules)
 
 ### Fixed
+- `~ProfilerManager()` did not stop the heap profiler: it called `IsHeapProfilerRunning()`, a query whose result was discarded, leaving the process-global profiler recording after the object was destroyed and still dumping profiles during process exit
 - `/pprof/symbol` now implements the Go pprof symbolz protocol correctly
 - CMake package config exports the correct targets and dependency lookup
+- `BUILD_DOCS=ON` was dead code — `CMakeLists.txt` tested `DOxygen_FOUND` while FindDoxygen sets `DOXYGEN_FOUND`
 - UBSan integer-overflow errors; strict mode enabled
 - clang-tidy job could not locate dependency headers
 - Suppressed a known tcmalloc leak so ASan builds fail only on real errors
 
+### Fixed
+- A session opened by the host through `startCPUProfiler()` / `startHeapProfiler()`
+  is no longer preempted. `getRawCPUProfile()` and `analyzeCPUProfile()` used to
+  stop whatever session was running and start their own; they now refuse and
+  report "already in use", leaving the host's session untouched. `startCPUProfiler()`
+  exists so the host controls sampling, so a later request must not pull the rug
+  out from under it. The same rule now applies to `analyzeHeapProfile()` versus
+  `startHeapProfiler()`.
+- `getRawCPUProfile()` read and mutated `profiler_states_[CPU]` outside the mutex
+  while stopping an existing session; the stop and the state update now happen
+  under the lock, as does the corresponding teardown in `getRawCPUProfile()`.
+
+### Documentation
+- README, the API reference and the troubleshooting guide now spell out that the
+  two heap views are **opposite in kind**, not two renderings of one dataset:
+  `/pprof/heap` is state-based (cumulative snapshot of the current heap, needs
+  `TCMALLOC_SAMPLE_PARAMETER`) while `/api/heap/analyze` is window-based (only
+  allocations made during a fixed 1s sampling window, and it does not need that
+  variable). A process holding a large heap but no longer allocating yields a
+  full graph from the former and an empty result from the latter. Measured
+  bounds included: allocations made before `HeapProfilerStart()` never appear,
+  allocations freed inside the window still do, and consecutive sessions do not
+  accumulate.
+- The heap Web panel says which of the two it performs, and no longer labels a
+  window-rendered SVG download as a "heap profile".
+
 ### Removed
 - `logger.h` (unused after the logging rework)
+- The synthetic allocation thread inside `analyzeHeapProfile()`
 
 ### Notes
 - The repository currently has **no git tags**; `v0.1.0` below refers to commit `a503106`. Tagging is tracked in [ROADMAP.md](ROADMAP.md).

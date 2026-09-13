@@ -119,6 +119,28 @@ public:
     /// @return true if the specified profiler is running
     bool isProfilerRunning(ProfilerType type) const;
 
+    /// @brief Whether a CPU profiling session is currently claimed
+    ///
+    /// CPU profiling is exclusive: gperftools keeps one process-global sampling
+    /// session, so a second concurrent request is rejected rather than queued.
+    /// Web-framework adapters use this to answer such a request with an accurate
+    /// error (a 409/500 "already in use") instead of a generic failure.
+    ///
+    /// @return true while a CPU profile request holds the session
+    /// @note Covers both getRawCPUProfile() and analyzeCPUProfile(); the flag is
+    ///       held only while sampling, not while rendering the result
+    bool isCPUProfilingInProgress() const;
+
+    /// @brief Whether a heap analysis is currently in progress
+    ///
+    /// analyzeHeapProfile() reconfigures the single process-global heap profiler
+    /// (start, snapshot, stop), so two concurrent calls would fight over it: the
+    /// second start silently replaces the first's output prefix and both would
+    /// read one snapshot. Concurrent calls are therefore rejected.
+    ///
+    /// @return true while an analyzeHeapProfile() call holds the heap profiler
+    bool isHeapAnalysisInProgress() const;
+
     /// @brief Resolve an address to its symbol name using backward-cpp
     /// @param address The instruction pointer to resolve
     /// @return Human-readable symbol string
@@ -130,11 +152,17 @@ public:
     /// @return SVG content as string, or a {"error":...} JSON string on failure
     std::string analyzeCPUProfile(int duration, const std::string& output_type = "flamegraph");
 
-    /// @brief Analyze Heap profile and return SVG flame graph
-    /// @param duration Sampling duration in seconds (currently ignored: a fixed 1s sample is used)
+    /// @brief Analyze Heap profile and return SVG graph
+    ///
+    /// Starts a heap profiler, lets it collect samples for a short fixed window,
+    /// then dumps a snapshot and renders it. Unlike CPU profiling there is no
+    /// sampling duration to configure: gperftools heap profiling is allocation
+    /// driven, so the sample rate is governed by TCMALLOC_SAMPLE_PARAMETER
+    /// (read once at process startup), not by elapsed time.
+    ///
     /// @param output_type Output graph type: "flamegraph" (default) or "pprof"
     /// @return SVG content as string, or a {"error":...} JSON string on failure
-    std::string analyzeHeapProfile(int duration, const std::string& output_type = "flamegraph");
+    std::string analyzeHeapProfile(const std::string& output_type = "flamegraph");
 
     /// @brief Get raw CPU profile data (for /pprof/profile endpoint)
     /// @param seconds Sampling duration in seconds
@@ -196,7 +224,13 @@ public:
     }
 
 private:
-    std::string findLatestHeapProfile(const std::string& dir);
+    /// @brief Find the most recent heap profile in a directory
+    /// @param dir Directory to scan for "*.heap" files
+    /// @param name_prefix If non-empty, only consider files whose name starts
+    ///        with this prefix (prevents picking up a stale profile from an
+    ///        earlier run in the same process)
+    /// @return Full path of the newest matching file, or "" if none
+    std::string findLatestHeapProfile(const std::string& dir, const std::string& name_prefix = "");
 
     /// @brief Generate flame graph from collapsed stack format
     /// @param collapsed_file Path to collapsed stack file
@@ -223,10 +257,28 @@ private:
     std::map<ProfilerType, ProfilerState> profiler_states_; ///< Current profiler states
     mutable std::mutex mutex_;                              ///< Mutex for thread safety
 
-    std::unique_ptr<internal::LogManager> log_manager_;  ///< Per-instance log manager (PIMPL)
-    std::atomic<bool> cpu_profiling_in_progress_{false}; ///< CPU profiling concurrency control
-    std::unique_ptr<Symbolizer> symbolizer_;             ///< Symbolizer instance
-    bool signal_handler_installed_{false};               ///< Whether signal handler has been installed
+    std::unique_ptr<internal::LogManager> log_manager_; ///< Per-instance log manager (PIMPL)
+    std::unique_ptr<Symbolizer> symbolizer_;            ///< Symbolizer instance
+    bool signal_handler_installed_{false};              ///< Whether signal handler has been installed
+
+    /// CPU profiling session marker.
+    ///
+    /// Static on purpose: gperftools keeps its sampling session in process-global
+    /// state, so the claim must be shared by every ProfilerManager instance in the
+    /// process. A per-instance flag would let two managers each "win" the claim and
+    /// then race on ProfilerStart().
+    static std::atomic<bool> cpu_profiling_in_progress_;
+
+    /// Heap-analysis claim, static for the same reason as above.
+    ///
+    /// analyzeHeapProfile() reconfigures the process-global heap profiler
+    /// (HeapProfilerStart silently replaces the output prefix rather than
+    /// refusing), so concurrent calls must be excluded, not merely detected.
+    static std::atomic<bool> heap_analysis_in_progress_;
+
+    /// Disambiguates heap snapshot prefixes when several analyses start within
+    /// the same millisecond; a timestamp alone is not unique enough.
+    static std::atomic<uint64_t> heap_prefix_sequence_;
 
     static std::atomic<bool> capture_in_progress_; ///< Stack capture in progress flag
     static SharedStackTrace* shared_stacks_;       ///< Shared stack trace array

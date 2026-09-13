@@ -54,4 +54,12 @@ vcpkg/buildtrees/
 vcpkg/installed/
 vcpkg/packages/
 .vs/
+
+# Scripts generated into the working directory at runtime by ProfilerManager
 pprof
+flamegraph.pl
+
+# Out-of-source build trees and vendored sources
+build-tsan/
+vcpkg_installed/
+gperftools-src/

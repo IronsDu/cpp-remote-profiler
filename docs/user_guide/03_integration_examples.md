@@ -265,9 +265,6 @@ public:
              QUERY(Int32, seconds, "seconds", "30")) {
         return toOat(handlers_.handlePprofProfile(seconds));
     }
-
-    // 也可以用 dispatch() 统一按路径 + 查询参数分发，避免逐个写端点
-    // auto resp = handlers_.dispatch(method, path, params, body);
 };
 ```
 
@@ -277,7 +274,7 @@ public:
 - 只需链接 `profiler_core`（不需要 Drogon）
 - 每个 handler 方法返回 `HandlerResponse`（`status`, `content_type`, `body`, `headers`）
 - 你负责从请求中提取参数、调用 handler、包装响应；`resp.headers` 也要一并转发（下载类接口依赖 `Content-Disposition`）
-- `dispatch(method, path, params, body)` 可按路径一次性分发，认不出的路径返回 404
+- 本库**不提供**按路径自动分发的辅助函数，路由表需由你的框架自行注册
 
 ---
 
@@ -473,15 +470,16 @@ void thread1() {
 }
 
 void thread2() {
-    // ❌ 不要与 thread1 的采样并发：analyzeCPUProfile() 会先停掉正在运行的
-    //    CPU profiler 再启动自己的采样，两者互相破坏结果
+    // ❌ 不要与 thread1 的采样并发：CPU 采样会话是独占的，这个调用会直接失败
+    //    （返回 {"error":"cpu profiling already in use"}），并浪费一次请求
     profiler.analyzeCPUProfile(10);
 }
 ```
 
 所有公共 API 都可在任意线程调用，也都有锁保护，但 **CPU 采样会话在语义上是独占的**：
-`analyzeCPUProfile()` 会先停止已有会话（`src/profiler_manager.cpp:410-429`），而 gperftools 的
-`ProfilerStart()` 在采样进行中会失败。要先判断状态（`isProfilerRunning()` 或 `/api/status`），
+`analyzeCPUProfile()` 与 `getRawCPUProfile()` 都会**先原子认领**会话，认领失败即拒绝，
+**不会**打断已经在采样的一方（包括宿主自己用 `startCPUProfiler()` 开的会话）。
+并发时恰好一个成功、其余立即失败。要先判断状态可用 `isProfilerRunning()` 或 `/api/status`，
 或者干脆把 profiling 操作串行化到一个专用线程里。
 
 Heap 与 CPU 之间没有这层互斥，可以并存。

@@ -141,6 +141,29 @@ cd build && ./profiler_example
 
 不需要图表功能时（例如只用 `/pprof/profile` 拿原始 profile 文件），上述依赖不影响使用。
 
+### 请求调度与并发
+
+所有会产生图表的接口都需要数秒（CPU 采样最长 300 秒），因此 **Drogon 适配层不会在事件循环线程上执行它们**：这些请求被投递到一个后台工作线程，完成后通过 `queueInLoop()` 把响应送回事件循环。`/api/status`、`/` 等快速接口始终即时响应，采样进行中也能实时查询状态。
+
+**CPU 采样是独占的**：gperftools 的采样会话是进程级全局状态，因此同一时刻只允许一个 CPU 采样请求。第二个并发请求会**立即被拒绝**（而不是排队等待），与 Go 的 `net/http/pprof` 行为一致：
+
+| 端点 | 并发请求的响应 |
+|------|----------------|
+| `/pprof/profile` | `500`，`text/plain`，`Could not enable CPU profiling: cpu profiling already in use`，并带 `X-Go-Pprof: 1` 头 |
+| `/api/cpu/analyze`、`/api/cpu/svg_raw`、`/api/cpu/flamegraph_raw` | `409`，`{"error":"cpu profiling already in use"}` |
+
+`X-Go-Pprof: 1` 是给 `go tool pprof` 的信号：告诉它响应体是错误消息而非 profile 数据。
+
+**宿主自己开的会话不会被抢占。** 如果你的程序用 `startCPUProfiler()` 主动开了一段采样，此期间的 HTTP 请求会被拒绝（同上表），而**不会**停掉你那段采样。同理 `startHeapProfiler()` 开的 heap 会话也不会被 `/api/heap/analyze` 抢占。
+
+**Heap 分析同样独占**。`HeapProfilerStart()` 与 CPU profiler 不同——它**没有失败模式**，重复调用会静默替换输出前缀，所以必须先原子认领再启动，否则并发调用会共用同一份快照。`/api/heap/analyze` 在已有分析进行时返回 `409` + `{"error":"heap profiling already in use"}`。
+
+`/api/growth/analyze` **不受此限制**：它读取 `GetHeapGrowthStacks()`，不占用任何 profiler 会话，可与 CPU 采样并存。
+
+快速接口（`/api/status`、`/`）不受采样影响，采样期间依然即时响应。
+
+若自行接入其它 Web 框架，请同样把上述接口放到工作线程执行，否则会阻塞你的事件循环。
+
 ## CMake 构建选项
 
 | 选项 | 默认值 | 说明 |
@@ -247,7 +270,7 @@ int main() {
 
 ### 嵌入方式 C：接入任意 Web 框架
 
-核心库的 `ProfilerHttpHandlers` 只依赖标准库，也可用 `dispatch()` 按路径统一分发：
+核心库的 `ProfilerHttpHandlers` 只依赖标准库，路由由你的框架自行注册：
 
 ```cpp
 #include "profiler_manager.h"
@@ -282,25 +305,29 @@ profiler.setLogLevel(profiler::LogLevel::Debug);
 
 ## API 端点
 
-由 `registerDrogonHandlers()` 注册的全部路由：
+由 `registerDrogonHandlers()` 注册的全部路由。
+
+> **Heap 的两套机制**（详见[下方说明](#heap-的两个端点语义相反)）：
+> `/pprof/heap` 是**状态式**（当前堆的累计快照），`/api/heap/*` 是**窗口式**（默认 1 秒内发生的分配）。
+> 二者不可互相替代，且**环境变量依赖相反**。
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | **标准 pprof 接口** | | |
 | `/pprof/profile` | GET | CPU profile 原始文件；`?seconds=N`，默认 **30**，范围 1–300 |
-| `/pprof/heap` | GET | Heap 采样原始文本；需 `TCMALLOC_SAMPLE_PARAMETER` |
+| `/pprof/heap` | GET | **状态式**：当前堆的累计采样快照（原始文本，交给 `go tool pprof`）；**需** `TCMALLOC_SAMPLE_PARAMETER` |
 | `/pprof/growth` | GET | Heap growth 栈原始文本；无需上述环境变量 |
 | `/pprof/symbol` | POST | 符号化接口（Go pprof symbolz 协议） |
 | **一键分析（返回 SVG）** | | |
 | `/api/cpu/analyze` | GET/POST | 采样并返回 CPU 图；`?duration=N` 默认 10，范围 1–300 |
-| `/api/heap/analyze` | GET | 返回 Heap 图（固定 1 秒采样，**不接受** `duration`） |
+| `/api/heap/analyze` | GET | **窗口式**：采样 1 秒后渲染；**不接受** `duration`；**无需**环境变量 |
 | `/api/growth/analyze` | GET | 返回 Heap Growth 图 |
 | **原始 SVG 下载** | | |
 | `/api/cpu/svg_raw` | GET | pprof 生成的 CPU SVG；`?duration=N` 默认 10 |
-| `/api/heap/svg_raw` | GET | pprof 生成的 Heap SVG |
+| `/api/heap/svg_raw` | GET | **窗口式**：pprof 渲染的 Heap SVG；**需** `TCMALLOC_SAMPLE_PARAMETER` |
 | `/api/growth/svg_raw` | GET | pprof 生成的 Growth SVG |
 | `/api/cpu/flamegraph_raw` | GET | FlameGraph 渲染的 CPU SVG；`?duration=N` 默认 10 |
-| `/api/heap/flamegraph_raw` | GET | FlameGraph 渲染的 Heap SVG |
+| `/api/heap/flamegraph_raw` | GET | **窗口式**：FlameGraph 渲染的 Heap SVG；**无需**环境变量 |
 | `/api/growth/flamegraph_raw` | GET | FlameGraph 渲染的 Growth SVG |
 | **线程分析** | | |
 | `/api/thread/stacks` | GET | 所有线程的调用栈 |
@@ -345,21 +372,54 @@ go tool pprof -http=:8081 'http://localhost:8080/pprof/profile?seconds=10'
 
 ### 环境变量 `TCMALLOC_SAMPLE_PARAMETER`
 
-控制 tcmalloc 的堆采样间隔（单位字节）。**默认值为 `0`，即关闭采样**——不设置它，`/pprof/heap`、`/api/heap/*` 会因拿不到采样数据而失败。
-
-tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用环境变量传入，**在代码里调用 `setenv()` 是无效的**：
+控制 tcmalloc 的堆采样间隔（单位字节）。**默认值为 `0`，即关闭采样**。它影响的是**状态式**拉取路径
+（`GetHeapSample()`），也就是 `/pprof/heap` 与 `/api/heap/svg_raw`：
 
 ```bash
 export TCMALLOC_SAMPLE_PARAMETER=524288      # 512KB，开发环境常用
 ./build/profiler_example
 ```
 
+tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用环境变量传入，**在代码里调用 `setenv()` 是无效的**。
+
 | 场景 | 建议值 |
 |------|--------|
 | 开发/调试 | `524288`（512KB） |
 | 生产 | `2097152`（2MB）或更大，降低开销 |
 
-Heap Growth 采集（`/pprof/growth`、`/api/growth/*`）走 `GetHeapGrowthStacks()`，**不需要**该变量。
+**不受该变量影响的路径**（它们走 `HeapProfilerStart/Dump`，由
+`HEAP_PROFILE_ALLOCATION_INTERVAL`（默认 1MB）等控制）：`/api/heap/analyze`、
+`/api/heap/flamegraph_raw`。Heap Growth（`/pprof/growth`、`/api/growth/*`）走
+`GetHeapGrowthStacks()`，也不需要该变量。
+
+> ⚠️ 因此同一进程内可能出现"一个 heap 端点成功、另一个失败"：
+> 不设该变量时 `/api/heap/analyze` 与 `/api/heap/flamegraph_raw` 正常返回 SVG，
+> 而 `/api/heap/svg_raw` 返回 500 —— 它们的数据源不同，不是同一个缺陷。
+
+### Heap 的两个端点语义相反
+
+这两个端点容易混淆，因为名字里都有 "heap"，但记录的是**完全不同的东西**：
+
+| | `/pprof/heap` | `/api/heap/analyze` |
+|---|---|---|
+| 语义 | **状态式**：当前堆里的累计采样 | **窗口式**：1 秒内**发生的分配** |
+| 底层 | `GetHeapSample()` 拉取 | `HeapProfilerStart()` → dump → `Stop()` |
+| 是否建 profiler 会话 | 否 | 是（独占，并发返回 409） |
+| 输出 | 原始 profile 文本，**客户端**用 `go tool pprof` 渲染 | 服务端渲染好的 SVG |
+| `TCMALLOC_SAMPLE_PARAMETER` | **必需** | 不需要 |
+
+关键差别在于**"存量"与"流量"**：
+
+- 进程已占 500MB 但停止分配 → `/pprof/heap` 能看到这 500MB；`/api/heap/analyze` 返回**空**并报
+  `No heap profile data was produced`
+- 进程频繁 malloc/free，dump 时已全部释放 → `/api/heap/analyze` **能看到**这些分配；`/pprof/heap`
+  的当前堆则可能很小
+
+所以窗口式分析需要**被分析进程在采样窗口内确实有分配**。窗口目前固定为 1 秒；需要更长窗口时，
+请用 `startHeapProfiler()` / `stopHeapProfiler()` 自行掌控时机。
+
+Web 控制面板里的两个 Heap 按钮走的是**窗口式**（`/api/heap/analyze` 与
+`/api/heap/{svg_raw,flamegraph_raw}`），面板上已标注这一点。
 
 ### 依赖版本
 
@@ -369,7 +429,7 @@ Heap Growth 采集（`/pprof/growth`、`/api/growth/*`）走 `GetHeapGrowthStack
 
 1. **编译时保留调试符号**（`-g`，项目默认开启），否则火焰图只显示地址
 2. **CPU profiler 有 1–5% 性能开销**；采样频率可用 `CPUPROFILE_FREQUENCY` 调整
-3. **同一时刻只允许一个 CPU 采样会话**：`analyzeCPUProfile()` 会先停掉正在运行的 CPU profiler 再启动自己的，并发调用会互相破坏结果
+3. **CPU 采样独占**：同一时刻只允许一个 CPU 采样会话，并发请求会被拒绝（`409` / Go 风格的 `500`），不会排队。第二个请求不会影响正在进行的采样
 4. **信号冲突**：默认 `SIGUSR1`；宿主程序若已占用，请用 `setStackCaptureSignal()` 换一个（推荐 `SIGRTMIN+n`）
 5. **线程安全**：所有公共 API 可在任意线程调用，但第 3 条的单会话限制依然成立
 6. **工作目录需可写**，见[运行时依赖](#运行时依赖)

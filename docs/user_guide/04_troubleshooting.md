@@ -716,10 +716,47 @@ int main() {
 **A**: CPU profiling 通常有 1-5% 的性能开销；采样频率可用 `CPUPROFILE_FREQUENCY` 调整（gperftools 默认 100Hz）。Heap profiling 开销取决于 `TCMALLOC_SAMPLE_PARAMETER` 的采样间隔。
 
 ### Q: 可以同时进行 CPU 和 Heap profiling 吗？
-**A**: CPU 与 Heap 是两套独立的 profiling 状态，可以并存。但**同一时刻只能有一个 CPU 采样会话**：`analyzeCPUProfile()` 会先停掉正在运行的 CPU profiler 再启动自己的采样，并发调用会互相破坏结果。
+**A**: CPU 与 Heap 是两套独立的 profiling 状态，可以并存。但**同一时刻只能有一个 CPU 采样会话**：`analyzeCPUProfile()` / `getRawCPUProfile()` 会先原子认领会话，认领失败即拒绝，**不会**打断正在采样的另一方（包括宿主用 `startCPUProfiler()` 开的会话）。
 
-### Q: `/api/heap/analyze?duration=10` 为什么感觉没采样 10 秒？
-**A**: 该接口**不接受** `duration` 参数，内部固定采样 1 秒（`src/http_handlers.cpp:171`）。需要更长采样时请改用 `/pprof/heap` 或 `/api/heap/svg_raw` 配合其他方式采集。
+### Q: `/api/heap/analyze` 为什么不接受 `duration` 参数？
+**A**: 因为对 heap profiling 而言时长没有意义。gperftools 的 heap profiling 是**按分配驱动**的：`HeapProfilerStart()` 开始记录、`HeapProfilerDump()` 写出快照，采样率由**进程启动时**的 `TCMALLOC_SAMPLE_PARAMETER` 决定，与运行时长无关。
+
+该接口内部只开一个固定的 1 秒窗口让应用自身的分配被记录，然后 dump。要提高采样精度，请**在启动前**设置 `TCMALLOC_SAMPLE_PARAMETER=524288`（默认 `0` 表示不采样，此时快照会明显偏稀疏）。
+
+### Q: heap 图是空的 / 报 "No heap profile data was produced"？
+**A**: 说明这 1 秒窗口内进程**没有发生内存分配**。heap profiler 记录的是**窗口内的分配事件**，不是当前堆的内容，所以不会凭空造出数据。请确保被分析进程正处于负载中，或在窗口内制造真实分配后再试。
+
+### Q: 进程内存很高，为什么 heap 图却是空的？
+**A**: 因为 `/api/heap/analyze`（以及 Web 面板上的 Heap 按钮）是**窗口式**的：只记录采样窗口内**新发生**的分配。如果内存是在采样开始前分配的、窗口内已经停止分配，结果就是空的。
+
+想看**当前堆的累计快照**，请改用**状态式**的 `/pprof/heap`：
+
+```bash
+# 需在启动前设置该变量（默认 0 = 关闭采样）
+export TCMALLOC_SAMPLE_PARAMETER=524288
+curl 'http://localhost:8080/pprof/heap' -o heap.prof
+go tool pprof -http=:8081 ./your_app heap.prof
+```
+
+两者语义相反、不可互相替代；详见 [README 的说明](../../README.md#heap-的两个端点语义相反)。
+
+### Q: 为什么长时间采样期间，其它接口还能正常返回？
+**A**: 因为 Drogon 适配层不把 profiling 放在事件循环线程上执行。所有会产生图表的接口（`/pprof/profile`、`/api/*/analyze`、`/api/*/svg_raw`、`/api/*/flamegraph_raw`）都被投递到一个后台工作线程，完成后用 `queueInLoop()` 把响应送回事件循环。因此一个 300 秒的采样不会拖住 `/api/status` 或首页。
+
+### Q: 并发请求 CPU 采样时返回 409 / 500 "cpu profiling already in use"
+**A**: 这是**有意的拒绝**，不是故障。CPU 采样是独占的（gperftools 的采样会话是进程级全局状态），所以已有采样进行时，第二个请求会立即失败而**不会排队等待**——避免用户以为"已经在采样了"，实际却要排在别人后面等几十秒到几分钟。
+
+具体响应与 Go 的 `net/http/pprof` 对齐：
+
+- `/pprof/profile` → `500` + `text/plain` + `Could not enable CPU profiling: cpu profiling already in use`，并带 `X-Go-Pprof: 1`（`go tool pprof` 靠它识别这是错误而非 profile 数据）
+- `/api/cpu/*` → `409` + `{"error":"cpu profiling already in use"}`
+
+稍后重试即可。**正在进行的那个采样不受影响**，会正常完成。
+
+Heap 分析（`/api/heap/analyze`）出于同样的原因也独占，并发时返回 `409` + `{"error":"heap profiling already in use"}`。注意 `HeapProfilerStart()` 与 CPU profiler 不同——它**没有失败模式**，重复调用会静默替换输出前缀，所以必须在调用之前原子认领，而不是"先查询再启动"。`/api/growth/analyze` 不占用会话，不受限制。
+
+### Q: 接口返回 500 "pprof did not generate valid SVG"
+**A**: 内置 pprof 脚本用 `dot`（graphviz）渲染，当 profile 采样点太少或数据异常时 `dot` 会失败并输出错误文本，因而被判定为"非 SVG"。请：① 安装 graphviz；② 加长采样时长（`?duration=30`）；③ 确认编译带 `-g`。这是已知的**既有缺陷**（错误信息未把 `dot` 的原始输出透出），记录在 [ROADMAP](../../ROADMAP.md)。
 
 ### Q: 为什么 `?output_type=flamegraph` 才是火焰图？
 **A**: C++ API 的形参默认值是 `"flamegraph"`，但 HTTP 路由在未显式传参时默认 `"pprof"`，返回的是 pprof 脚本渲染的图形而非 FlameGraph 火焰图。想稳定拿到火焰图请显式指定 `output_type=flamegraph`。

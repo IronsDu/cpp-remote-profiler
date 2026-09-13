@@ -61,11 +61,46 @@ public:
     HandlerResponse handleStatus();
 
     // --- CPU endpoints ---
+    /// @brief Whether a CPU profiling session is already claimed
+    ///
+    /// CPU profiling is exclusive: gperftools keeps one process-global sampling
+    /// session, so at most one request may sample at a time.
+    bool isCpuProfilerBusy() const;
+
+    /// @brief The response to use when @ref isCpuProfilerBusy is true
+    ///
+    /// Provided so a web adapter can refuse a request on the event-loop thread —
+    /// before it is queued for execution — using the same wording and status the
+    /// handlers themselves produce. Calling it only makes sense while
+    /// @ref isCpuProfilerBusy is true.
+    ///
+    /// `pprof_style` selects the shape:
+    ///  - true  — the shape Go's net/http/pprof uses on /pprof/profile: HTTP 500,
+    ///            `text/plain`, plus an `X-Go-Pprof: 1` marker so `go tool pprof`
+    ///            reports the message instead of parsing it as profile data
+    ///  - false — HTTP 409 with a JSON error, for the custom /api/* endpoints
+    HandlerResponse cpuProfilerBusyResponse(bool pprof_style) const;
+
+    /// @brief Whether a heap analysis is already running
+    ///
+    /// Heap analysis reconfigures the single process-global heap profiler, so
+    /// concurrent calls are exclusive for the same reason CPU profiling is.
+    bool isHeapAnalyzerBusy() const;
+
+    /// @brief The response to use when @ref isHeapAnalyzerBusy is true
+    ///
+    /// Mirrors @ref cpuProfilerBusyResponse but for heap analysis, which has no
+    /// Go pprof equivalent to match: HTTP 409 with a JSON error.
+    HandlerResponse heapAnalyzerBusyResponse() const;
+
     HandlerResponse handleCpuAnalyze(int duration, const std::string& output_type);
     HandlerResponse handleCpuSvgRaw(int duration);
     HandlerResponse handleCpuFlamegraphRaw(int duration);
 
     // --- Heap endpoints ---
+    /// @note Heap analysis has no duration parameter: gperftools heap profiling
+    ///       is allocation driven, so the sample rate is fixed at process start
+    ///       by TCMALLOC_SAMPLE_PARAMETER rather than by elapsed time.
     HandlerResponse handleHeapAnalyze(const std::string& output_type);
     HandlerResponse handleHeapSvgRaw();
     HandlerResponse handleHeapFlamegraphRaw();
@@ -74,12 +109,6 @@ public:
     HandlerResponse handleGrowthAnalyze(const std::string& output_type);
     HandlerResponse handleGrowthSvgRaw();
     HandlerResponse handleGrowthFlamegraphRaw();
-
-    // --- Convenience: single dispatch by path ---
-    /// Dispatch a request to the appropriate handler based on path.
-    /// Returns a 404 response if path is not recognized.
-    HandlerResponse dispatch(const std::string& method, const std::string& path,
-                             const std::map<std::string, std::string>& params = {}, const std::string& body = "");
 
     // --- Standard pprof endpoints ---
     HandlerResponse handlePprofProfile(int seconds);

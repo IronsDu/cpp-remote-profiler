@@ -245,6 +245,27 @@ if(REMOTE_PROFILER_BUILD_TESTS)
         pthread
     )
     add_test(NAME LoggerTest COMMAND test_logger)
+
+    # HTTP handler / profiler lifecycle test (core only -- works without Drogon)
+    add_executable(test_http_handlers tests/test_http_handlers.cpp)
+    target_link_libraries(test_http_handlers
+        profiler_core
+        GTest::gtest
+        GTest::gtest_main
+        pthread
+    )
+    add_test(NAME HttpHandlersTest COMMAND test_http_handlers)
+
+    # Async executor used to keep profiling off the event-loop thread
+    add_executable(test_async_executor tests/test_async_executor.cpp)
+    target_link_libraries(test_async_executor
+        profiler_core
+        GTest::gtest
+        GTest::gtest_main
+        pthread
+    )
+    add_test(NAME AsyncExecutorTest COMMAND test_async_executor)
+
     message(STATUS "Tests will be built")
 else()
     message(STATUS "Tests disabled")
@@ -293,6 +314,7 @@ if(REMOTE_PROFILER_INSTALL)
     install(FILES
         include/profiler/log_sink.h
         include/profiler/http_handlers.h
+        include/profiler/async_executor.h
         DESTINATION include/cpp-remote-profiler/profiler
     )
 

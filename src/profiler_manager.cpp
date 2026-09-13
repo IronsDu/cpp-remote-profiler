@@ -38,6 +38,10 @@
 PROFILER_NAMESPACE_BEGIN
 
 // Static member initialization
+// Process-global, like the gperftools sampling session it guards.
+std::atomic<bool> ProfilerManager::cpu_profiling_in_progress_{false};
+std::atomic<bool> ProfilerManager::heap_analysis_in_progress_{false};
+std::atomic<uint64_t> ProfilerManager::heap_prefix_sequence_{0};
 std::atomic<bool> ProfilerManager::capture_in_progress_{false};
 SharedStackTrace* ProfilerManager::shared_stacks_ = nullptr;
 int ProfilerManager::stack_array_size_ = 0;
@@ -92,7 +96,14 @@ ProfilerManager::~ProfilerManager() {
         ProfilerStop();
     }
     if (profiler_states_[ProfilerType::HEAP].is_running) {
-        IsHeapProfilerRunning();
+        // Must actually stop it: the heap profiler lives in process-global
+        // tcmalloc state and keeps recording (and dumping) after this object
+        // dies otherwise. This previously called IsHeapProfilerRunning(),
+        // a query that left the profiler running.
+        if (IsHeapProfilerRunning()) {
+            HeapProfilerStop();
+        }
+        profiler_states_[ProfilerType::HEAP].is_running = false;
     }
 
     // Restore old signal handler if we installed one
@@ -404,19 +415,43 @@ std::string ProfilerManager::resolveSymbolWithBackward(void* address) {
     }
 }
 
+bool ProfilerManager::isCPUProfilingInProgress() const {
+    return cpu_profiling_in_progress_.load();
+}
+
+bool ProfilerManager::isHeapAnalysisInProgress() const {
+    return heap_analysis_in_progress_.load();
+}
+
 std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& output_type) {
     std::string profile_path = profile_dir_ + "/cpu_analyze.prof";
 
-    // Step 1: Stop any existing profiler
-    if (profiler_states_[ProfilerType::CPU].is_running) {
-        stopCPUProfiler();
-        // Wait a bit for file to be written
-        usleep(100000); // 100ms
+    // Step 1: Claim the CPU profiling session.
+    //
+    // gperftools keeps its sampling session in process-global state, so only one
+    // CPU profile can be active at a time. Claiming it up front means a second
+    // concurrent request fails fast instead of stopping the in-progress session
+    // and corrupting both results.
+    {
+        bool expected = false;
+        if (!cpu_profiling_in_progress_.compare_exchange_strong(expected, true)) {
+            PROFILER_ERROR("CPU profiling already in use; rejecting this request");
+            return R"({"error": "cpu profiling already in use"})";
+        }
     }
 
-    // Step 2: Start CPU profiler
+    // Step 2: Start CPU profiler.
+    //
+    // A session opened through startCPUProfiler() belongs to the caller: a later
+    // request must never pull the rug out from under it. Report the conflict and
+    // leave that session alone.
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (profiler_states_[ProfilerType::CPU].is_running) {
+            PROFILER_ERROR("A CPU profiler session is already open; refusing to take it over");
+            cpu_profiling_in_progress_.store(false);
+            return R"({"error": "cpu profiling already in use"})";
+        }
         if (ProfilerStart(profile_path.c_str())) {
             auto now = std::chrono::system_clock::now();
             auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
@@ -424,6 +459,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
             profiler_states_[ProfilerType::CPU] =
                 ProfilerState{true, profile_path, static_cast<uint64_t>(timestamp), 0};
         } else {
+            cpu_profiling_in_progress_.store(false);
             return R"({"error": "Failed to start CPU profiler"})";
         }
     }
@@ -443,6 +479,10 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         profiler_states_[ProfilerType::CPU].is_running = false;
         profiler_states_[ProfilerType::CPU].duration = timestamp - profiler_states_[ProfilerType::CPU].start_time;
     }
+
+    // The session ends here: rendering the SVG below does not touch profiler
+    // state, so release it before the (slower) rendering phase.
+    cpu_profiling_in_progress_.store(false);
 
     // Wait for file to be flushed
     usleep(200000); // 200ms
@@ -556,125 +596,111 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     return svg_output;
 }
 
-std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string& output_type) {
-    std::string profile_prefix = profile_dir_ + "/heap_analyze";
+std::string ProfilerManager::analyzeHeapProfile(const std::string& output_type) {
+    // gperftools heap profiling is allocation driven: HeapProfilerStart() begins
+    // recording and HeapProfilerDump() writes a snapshot. Unlike the CPU
+    // profiler there is no sampling period to tune -- the sample rate comes from
+    // TCMALLOC_SAMPLE_PARAMETER, which tcmalloc reads once at process startup.
+    // So there is no user-facing duration here: we simply open a short window
+    // during which the application's own allocations get recorded, then dump.
+    static constexpr int kSampleWindowSeconds = 1;
 
     PROFILER_INFO("=== Starting Heap Profile Analysis ===");
-    PROFILER_INFO("Profile prefix: {}", profile_prefix);
-    PROFILER_INFO("Duration: {} seconds", duration);
 
-    // Step 1: Stop any existing heap profiler
-    if (profiler_states_[ProfilerType::HEAP].is_running) {
-        PROFILER_INFO("Stopping existing heap profiler...");
-        stopHeapProfiler();
-        usleep(100000);
+    // Step 1: Claim the process-global heap profiler.
+    //
+    // Reading "is a heap profiler running?" and then calling HeapProfilerStart()
+    // is not enough to exclude concurrent calls: HeapProfilerStart() has no
+    // failure mode -- it silently replaces the output prefix -- so two callers
+    // could both observe "not running" and both proceed, leaving one snapshot
+    // that both of them then read. Claim first, unconditionally.
+    {
+        bool expected = false;
+        if (!heap_analysis_in_progress_.compare_exchange_strong(expected, true)) {
+            PROFILER_ERROR("Heap analysis already in progress; rejecting this request");
+            return R"({"error": "heap profiling already in use"})";
+        }
     }
 
-    // Step 2: Set environment variable for heap profiling BEFORE starting profiler
-    unsetenv("HEAPPROFILE");
-    unsetenv("HEAP_PROFILE_ALLOCATION_INTERVAL");
-    unsetenv("HEAP_PROFILE_INUSE_INTERVAL");
+    // Release the claim on every exit path (including the early returns below).
+    // The guard is the scope, not the call, so an early return cannot leak it.
+    struct ClaimGuard {
+        static void release() {
+            heap_analysis_in_progress_.store(false);
+        }
+        ~ClaimGuard() {
+            release();
+        }
+    } claim_guard;
 
-    setenv("HEAPPROFILE", profile_prefix.c_str(), 1);
-    setenv("HEAP_PROFILE_ALLOCATION_INTERVAL", "1048576", 1); // 1MB
-    setenv("HEAP_PROFILE_INUSE_INTERVAL", "524288", 1);       // 512KB
+    // Step 2: A heap profiler opened through startHeapProfiler() belongs to the
+    // caller: refuse rather than stopping it.
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (profiler_states_[ProfilerType::HEAP].is_running) {
+            PROFILER_ERROR("A heap profiler session is already open; refusing to take it over");
+            return R"({"error": "heap profiling already in use"})";
+        }
+    }
 
-    PROFILER_DEBUG("Environment variables set");
+    // Step 3: Unique prefix per run so the dumped file can be located reliably
+    // (gperftools appends its own sequence number: "<prefix>.0001.heap").
+    // A timestamp plus a counter: two analyses can begin in the same
+    // millisecond, and identical prefixes make them share one snapshot file.
+    auto now = std::chrono::system_clock::now();
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    uint64_t seq = heap_prefix_sequence_.fetch_add(1);
+    std::string prefix_basename = "heap_analyze_" + std::to_string(timestamp) + "_" + std::to_string(seq);
+    std::string profile_prefix = profile_dir_ + "/" + prefix_basename;
+    PROFILER_INFO("Profile prefix: {}", profile_prefix);
 
-    // Step 3: Start Heap profiler - NOTE: HeapProfilerStart might not work as expected
-    // gperftools heap profiler works primarily through environment variables
+    // Step 4: Start recording
     PROFILER_DEBUG("Calling HeapProfilerStart()...");
     HeapProfilerStart(profile_prefix.c_str());
-    PROFILER_DEBUG("HeapProfilerStart() completed");
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-
-        profiler_states_[ProfilerType::HEAP] =
-            ProfilerState{true, profile_prefix + ".prof", static_cast<uint64_t>(timestamp), 0};
+        profiler_states_[ProfilerType::HEAP] = ProfilerState{true, profile_prefix, static_cast<uint64_t>(timestamp), 0};
     }
 
-    // Step 4: 启动后台线程进行内存分配
-    std::atomic<bool> keep_running(true);
-    std::atomic<size_t> allocations_count(0);
+    // Step 4: Let the application allocate. We deliberately do NOT synthesize
+    // allocations here: a profiler must report the host process's real memory
+    // behaviour, and fabricating allocations both pollutes the result and leaks
+    // memory in the process under test.
+    PROFILER_INFO("Collecting heap samples for {} second(s)...", kSampleWindowSeconds);
+    sleep(kSampleWindowSeconds);
 
-    PROFILER_DEBUG("Starting memory allocation thread...");
-    std::thread memory_thread([this, &keep_running, &allocations_count]() {
-        PROFILER_DEBUG("Memory thread started");
-        int iteration = 0;
-        while (keep_running && iteration < 100) { // 限制最大迭代次数
-            // 进行各种内存分配 - 直接分配不释放，确保 heap profiler 能采样
-            std::vector<std::vector<int>>* matrixData = new std::vector<std::vector<int>>();
-            for (int i = 0; i < 10; ++i) {
-                std::vector<int>* largeArray = new std::vector<int>(10000);
-                for (auto& val : *largeArray) {
-                    val = rand();
-                }
-                matrixData->push_back(*largeArray);
-            }
-
-            std::vector<std::string>* stringData = new std::vector<std::string>();
-            for (int j = 0; j < 100; ++j) {
-                stringData->push_back("Heap profiling test data " + std::to_string(j));
-            }
-
-            allocations_count++;
-            iteration++;
-
-            if (iteration % 10 == 0) {
-                PROFILER_TRACE("Memory thread: {} iterations, {} allocations", iteration, allocations_count.load());
-            }
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        PROFILER_DEBUG("Memory thread ending after {} iterations", iteration);
-    });
-
-    // Step 5: Wait for specified duration
-    PROFILER_INFO("Heap profiling for {} seconds...", duration);
-    sleep(duration);
-    PROFILER_DEBUG("Sleep completed, stopping profiler...");
-
-    // Step 6: Stop profiler
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        PROFILER_DEBUG("Setting keep_running = false...");
-        keep_running = false;
-
-        PROFILER_DEBUG("Calling HeapProfilerStop()...");
+    // Step 5: Take the snapshot, then stop
+    if (IsHeapProfilerRunning()) {
+        PROFILER_DEBUG("Calling HeapProfilerDump()...");
+        HeapProfilerDump("analyze");
         HeapProfilerStop();
-        PROFILER_DEBUG("HeapProfilerStop() completed");
+    }
 
-        auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto stop_time = std::chrono::system_clock::now();
+        auto stop_ms = std::chrono::duration_cast<std::chrono::milliseconds>(stop_time.time_since_epoch()).count();
         profiler_states_[ProfilerType::HEAP].is_running = false;
-        profiler_states_[ProfilerType::HEAP].duration = timestamp - profiler_states_[ProfilerType::HEAP].start_time;
+        profiler_states_[ProfilerType::HEAP].duration =
+            static_cast<uint64_t>(stop_ms) - profiler_states_[ProfilerType::HEAP].start_time;
     }
 
-    // 等待内存分配线程结束
-    PROFILER_DEBUG("Waiting for memory thread to join...");
-    if (memory_thread.joinable()) {
-        memory_thread.join();
-    }
-    PROFILER_INFO("Memory thread joined. Total allocations: {}", allocations_count.load());
+    // The heap session is over; rendering below only reads files, so release now
+    // rather than making another analysis wait for pprof/flamegraph.pl.
+    ClaimGuard::release();
 
-    // Step 7: Check if heap files were generated
-    PROFILER_INFO("Searching for heap profile files in {}", profile_dir_);
-    std::string latest_heap_file = findLatestHeapProfile(profile_dir_);
+    // Step 6: Check whether gperftools actually produced a snapshot.
+    // Restrict the search to this run's prefix so a profile left behind by an
+    // earlier analyze call in the same process is never mistaken for this one.
+    PROFILER_INFO("Searching for heap profile files matching {} in {}", prefix_basename, profile_dir_);
+    std::string latest_heap_file = findLatestHeapProfile(profile_dir_, prefix_basename);
 
     if (latest_heap_file.empty()) {
-        PROFILER_WARNING("No .heap file found. Listing all files in directory:");
-        std::string ls_cmd = "ls -la " + profile_dir_ + "/";
-        [[maybe_unused]] int result = system(ls_cmd.c_str());
-
-        PROFILER_WARNING("gperftools heap profiler requires special configuration.");
-        PROFILER_WARNING("Heap profiling needs to be enabled at program startup via HEAPPROFILE environment variable.");
-        PROFILER_WARNING("For now, returning a helpful error message.");
-
-        return R"({"error": "Heap profiling requires the program to be started with HEAPPROFILE environment variable set. Please restart the program with: HEAPPROFILE=/tmp/cpp_profiler/heap ./profiler_example. Alternatively, use CPU profiling which works without special configuration."})";
+        PROFILER_WARNING("No .heap file produced by HeapProfilerDump()");
+        PROFILER_WARNING("gperftools only writes heap samples when the process allocates memory");
+        PROFILER_WARNING("while the heap profiler is running.");
+        return R"({"error": "No heap profile data was produced. The heap profiler only records samples for allocations made while it is running, so the analyzed process must be actively allocating. TCMALLOC_SAMPLE_PARAMETER (set before process start) controls the sample rate; without it heap profiling still works but samples coarser."})";
     }
 
     PROFILER_INFO("Using heap profile: {}", latest_heap_file);
@@ -777,7 +803,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
     return svg_output;
 }
 
-std::string ProfilerManager::findLatestHeapProfile(const std::string& dir) {
+std::string ProfilerManager::findLatestHeapProfile(const std::string& dir, const std::string& name_prefix) {
     DIR* dp = opendir(dir.c_str());
     if (!dp) {
         PROFILER_ERROR("Failed to open directory: {}", dir);
@@ -794,6 +820,11 @@ std::string ProfilerManager::findLatestHeapProfile(const std::string& dir) {
         // Look for files ending with .heap (heap profiler output format)
         // Files are named like: heap_prof.0001.heap, heap_prof.0002.heap, etc.
         if (filename.length() > 5 && filename.substr(filename.length() - 5) == ".heap") {
+            // Skip profiles left behind by an earlier run when a prefix is given
+            if (!name_prefix.empty() && filename.rfind(name_prefix, 0) != 0) {
+                continue;
+            }
+
             std::string full_path = dir + "/" + filename;
 
             struct stat file_stat;
@@ -836,37 +867,41 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
     // Generate temporary profile file path
     std::string profile_path = profile_dir_ + "/pprof_cpu_temp.prof";
 
-    // Stop any existing CPU profiler first
-    if (profiler_states_[ProfilerType::CPU].is_running) {
-        PROFILER_INFO("Stopping existing CPU profiler...");
-        ProfilerStop();
-        profiler_states_[ProfilerType::CPU].is_running = false;
-        usleep(100000); // 100ms to ensure file is written
-    }
-
-    // Start CPU profiler
+    // Start CPU profiler. A session opened through startCPUProfiler() belongs to
+    // the caller, so refuse rather than stopping it; the caller of this function
+    // is told the profiler is busy.
     PROFILER_INFO("Starting CPU profiler for {} seconds...", seconds);
-    if (!ProfilerStart(profile_path.c_str())) {
-        PROFILER_ERROR("Failed to start CPU profiler");
-        return "";
-    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (profiler_states_[ProfilerType::CPU].is_running) {
+            PROFILER_ERROR("A CPU profiler session is already open; refusing to take it over");
+            return "";
+        }
+        if (!ProfilerStart(profile_path.c_str())) {
+            PROFILER_ERROR("Failed to start CPU profiler");
+            return "";
+        }
 
-    // Update state
-    auto now = std::chrono::system_clock::now();
-    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    profiler_states_[ProfilerType::CPU] = ProfilerState{true, profile_path, static_cast<uint64_t>(timestamp), 0};
+        auto now = std::chrono::system_clock::now();
+        auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        profiler_states_[ProfilerType::CPU] = ProfilerState{true, profile_path, static_cast<uint64_t>(timestamp), 0};
+    }
 
     // Wait for specified duration
     sleep(seconds);
 
-    // Stop profiler
+    // Stop profiler and publish the resulting state under the lock.
     PROFILER_INFO("Stopping CPU profiler...");
-    ProfilerStop();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ProfilerStop();
 
-    now = std::chrono::system_clock::now();
-    timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    profiler_states_[ProfilerType::CPU].is_running = false;
-    profiler_states_[ProfilerType::CPU].duration = timestamp - profiler_states_[ProfilerType::CPU].start_time;
+        auto stop_time = std::chrono::system_clock::now();
+        auto stop_ms = std::chrono::duration_cast<std::chrono::milliseconds>(stop_time.time_since_epoch()).count();
+        profiler_states_[ProfilerType::CPU].duration =
+            static_cast<uint64_t>(stop_ms) - profiler_states_[ProfilerType::CPU].start_time;
+        profiler_states_[ProfilerType::CPU].is_running = false;
+    }
 
     // Wait for file to be flushed
     usleep(200000); // 200ms
