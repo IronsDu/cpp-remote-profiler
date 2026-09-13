@@ -78,9 +78,17 @@
 
 ### 待修
 
+- **火焰图里的函数名带地址后缀**：内置 pprof 的 `--collapsed` 输出把函数名写成
+  `cpuIntensiveTask()<0000000000409360>`，经 `flamegraph.pl` 渲染后直接显示在图上。除了噪音，还有一个
+  理论隐患：同一函数出现在不同地址时（模板实例化）会被当成**不同栈帧**，本该合并的被拆开。
+  可在送入 `flamegraph.pl` 之前剥掉 `<十六进制>` 后缀。
+- **部分符号未 demangle**：实测火焰图里残留 `_ZSt12construct_at...` 之类的 mangled 名，且这类帧常显示为
+  无上下文的 `operator()[inline]`（lambda 的 `operator()`）。可对未解开的符号做二次 `__cxa_demangle`。
+- **两个 pprof 实现的差异未写进文档**：内置 Perl pprof（`output_type=pprof` 的渲染器）符号化更完整——
+  实测同一份 profile 未解析帧为 0、且能标出 `(inline)`；而 `go tool pprof` 强在对比与交互
+  （`-diff_base`、`-peek`、`-traces`）。README 目前只说了"两种渲染方式"，没说各自适合什么场景。
 - **`pprof --svg` 的失败信息不透出**：内置 pprof 脚本用 `dot`(graphviz) 渲染，采样点过少时 `dot` 失败，代码只回一句 `pprof did not generate valid SVG. Output: `（且 `svg_output` 为空），无法定位原因。应把 `dot` 的 stderr 一并返回。**这是异步改造期间实测复现的既有缺陷**，与请求调度无关。
 - **`stopHeapProfiler()` 的 `output_path` 语义**：它把 `GetHeapProfile()` 的返回值写进 `output_path` 文件，而 `.heap` 是 gperftools 自己按 prefix 写的，两套产物并存容易混淆。
-- **Web 面板缺少"当前堆快照"入口**：面板上的三个 Heap 入口全部走窗口式（`/api/heap/analyze` 与两个 `*_raw`），状态式的 `/pprof/heap` **没有 UI 入口**。进程内存高但停止分配时，用户在面板里无法查看存量堆。可加一个按钮调用 `/pprof/heap`（并提示需要 `TCMALLOC_SAMPLE_PARAMETER`）。
 - **`analyzeHeapProfile` 的采样窗口固定 1 秒且不可配置**：分配稀疏的进程在窗口内可能一次分配都没有，只能得到空结果。可考虑加一个可选的窗口参数，或复用 `startHeapProfiler()`/`stopHeapProfiler()` 让调用方掌控。
 
 ### 已完成的调度改造（供参考）

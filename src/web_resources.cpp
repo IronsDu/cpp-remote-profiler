@@ -145,6 +145,18 @@ static const char INDEX_PAGE[] = R"HTML(
             display: inline-block;
             margin: 5px;
         }
+        .card {
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 12px;
+            margin: 10px 0;
+            background-color: #fff;
+        }
+        .card h3 {
+            margin: 0 0 6px;
+            font-size: 15px;
+            color: #333;
+        }
         .hint {
             display: block;
             margin: 6px 0 10px;
@@ -198,13 +210,12 @@ static const char INDEX_PAGE[] = R"HTML(
 
         <div class="section">
             <h2>Heap Profiler</h2>
-            <div>
+            <div class="card">
+                <h3>窗口式：采样 1 秒内的分配</h3>
                 <span class="hint">
-                    ⚠️ 这里的两个按钮都是<b>窗口式</b>分析：采样 1 秒并记录<b>这段时间内发生的分配</b>，
-                    不反映此刻已经在堆里的内存。若进程内存虽高但已停止分配，结果会是空的（返回
-                    "No heap profile data was produced"）。想看<b>当前堆的累计快照</b>，请用
-                    <code>GET /pprof/heap</code> 导出原始 profile（需在启动前设置
-                    <code>TCMALLOC_SAMPLE_PARAMETER</code>）。
+                    ⚠️ 只记录<b>这 1 秒内发生的分配</b>，不反映此刻已经在堆里的内存。若进程内存虽高但已停止分配，
+                    结果会是空的（返回 "No heap profile data was produced"）。另注：其中 <code>pprof SVG</code>
+                    一项依赖 <code>TCMALLOC_SAMPLE_PARAMETER</code>，<code>FlameGraph</code> 不依赖。
                 </span>
                 <div class="input-group">
                     <label for="heap-chart-type">图表类型:</label>
@@ -215,6 +226,17 @@ static const char INDEX_PAGE[] = R"HTML(
                 </div>
                 <button class="analyze-btn" onclick="analyzeHeap()">⚡ 一键分析并生成Heap火焰图</button>
                 <button class="download-btn" id="heap-download-btn" onclick="downloadHeapChart()">📥 下载 Heap 图表 (SVG)</button>
+            </div>
+            <div class="card">
+                <h3>状态式：当前堆的累计快照</h3>
+                <span class="hint">
+                    对应 <code>GET /pprof/heap</code>，返回 tcmalloc 的累计采样，反映<b>堆里现存的内存</b>
+                    ——与上面的"1 秒内分配"是两套机制，结果不同属正常。
+                    <b>需要</b>在进程启动前设置 <code>TCMALLOC_SAMPLE_PARAMETER</code>，否则返回 500。
+                    下载后可用 <code>go tool pprof ./your_app heap.prof</code> 分析。
+                </span>
+                <button class="view-btn" onclick="viewHeapProfile()">🔍 查看当前堆快照</button>
+                <button class="download-btn" id="heap-profile-btn" onclick="downloadHeapProfile()">📥 下载 heap.prof</button>
             </div>
         </div>
 
@@ -347,6 +369,68 @@ static const char INDEX_PAGE[] = R"HTML(
                     btn.disabled = false;
                     btn.textContent = originalText;
                     log(`❌ CPU ${chartTypeName} 下载失败: ${error.message}`);
+                });
+        }
+
+        // 状态式 heap 快照（/pprof/heap）：与上面的窗口式分析是两套机制。
+        // 返回的是原始 profile 文本，所以既能当文本预览，也能存成 .prof 交给
+        // `go tool pprof` 分析。
+        function fetchHeapProfile() {
+            return fetch('/pprof/heap').then(response => {
+                if (!response.ok) {
+                    if (response.status === 500) {
+                        return Promise.reject(new Error(
+                            '服务器返回 500。状态式快照需要在进程启动前设置 TCMALLOC_SAMPLE_PARAMETER ' +
+                            '（例如 524288），当前进程未设置或采样已关闭。'));
+                    }
+                    return Promise.reject(new Error(`HTTP ${response.status}: ${response.statusText}`));
+                }
+                const disposition = response.headers.get('Content-Disposition') || '';
+                const match = /filename="?([^"]+)"?/.exec(disposition);
+                return response.text().then(text => ({ text: text, filename: match ? match[1] : 'heap.prof' }));
+            });
+        }
+
+        // 用文本视图直接展示（profile 是纯文本，浏览器会原样显示）
+        function viewHeapProfile() {
+            log('🚀 正在获取当前堆快照 (/pprof/heap)...');
+            fetchHeapProfile()
+                .then(r => {
+                    const blob = new Blob([r.text], { type: 'text/plain' });
+                    window.open(URL.createObjectURL(blob), '_blank');
+                    const lines = r.text.split('\n').filter(l => l.trim() !== '').length;
+                    log(`✅ 已在新标签页打开堆快照：${lines} 行 / ${r.text.length} 字节\n` +
+                        `   首行: ${r.text.split('\n')[0]}\n` +
+                        `   提示：这是原始 profile，可视化请下载后运行 ` +
+                        `go tool pprof ./your_app ${r.filename}`);
+                })
+                .catch(err => log(`❌ 获取失败: ${err.message}`));
+        }
+
+        function downloadHeapProfile() {
+            const btn = document.getElementById('heap-profile-btn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 准备下载...';
+            log('🚀 正在获取当前堆快照 (/pprof/heap)...');
+
+            fetchHeapProfile()
+                .then(r => {
+                    const url = URL.createObjectURL(new Blob([r.text], { type: 'text/plain' }));
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = r.filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    log(`✅ 已保存 ${r.filename} (${r.text.length} 字节)\n` +
+                        `   分析: go tool pprof ./your_app ${r.filename}`);
+                })
+                .catch(err => log(`❌ 获取失败: ${err.message}`))
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
                 });
         }
 

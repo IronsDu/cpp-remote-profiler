@@ -418,8 +418,10 @@ tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用�
 所以窗口式分析需要**被分析进程在采样窗口内确实有分配**。窗口目前固定为 1 秒；需要更长窗口时，
 请用 `startHeapProfiler()` / `stopHeapProfiler()` 自行掌控时机。
 
-Web 控制面板里的两个 Heap 按钮走的是**窗口式**（`/api/heap/analyze` 与
-`/api/heap/{svg_raw,flamegraph_raw}`），面板上已标注这一点。
+Web 控制面板的 Heap 区把两者分成了两张卡片：
+
+- **窗口式：采样 1 秒内的分配** —— `/api/heap/analyze` 与 `/api/heap/{svg_raw,flamegraph_raw}`
+- **状态式：当前堆的累计快照** —— `GET /pprof/heap`（可查看/下载，需 `TCMALLOC_SAMPLE_PARAMETER`）
 
 ### 依赖版本
 

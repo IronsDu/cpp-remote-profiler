@@ -93,7 +93,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allocations freed inside the window still do, and consecutive sessions do not
   accumulate.
 - The heap Web panel says which of the two it performs, and no longer labels a
-  window-rendered SVG download as a "heap profile".
+  window-rendered SVG download as a "heap profile". It also gained the missing
+  entry point for the state-based view: the panel previously offered only the
+  window-based endpoints, so a process holding a large heap but no longer
+  allocating could not be inspected from the UI at all. The Heap section is now
+  two labelled cards, the second driving `GET /pprof/heap` with view and
+  download actions.
 
 ### Removed
 - `logger.h` (unused after the logging rework)
