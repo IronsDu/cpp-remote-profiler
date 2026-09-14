@@ -195,7 +195,8 @@ HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
     std::string collapsed_file = "/tmp/cpu_collapsed.prof";
 
     std::ostringstream cmd;
-    cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file << " 2>&1";
+    cmd << "./pprof --collapsed --alloc_space " << exe_path << " " << temp_file << " > " << collapsed_file
+        << " 2>/dev/null";
     std::string out;
     if (!profiler_.executeCommand(cmd.str(), out)) {
         return errorResp(500, "Failed to execute pprof --collapsed command");
@@ -208,7 +209,10 @@ HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
     std::string line;
     bool has_data = false;
     while (std::getline(in, line)) {
-        if (!line.empty() && line[0] != '#') {
+        // Skip pprof's own chatter ("Using local file ..."), which would
+        // otherwise be mistaken for stack data; flamegraph.pl then rejects the
+        // file and the failure surfaces two layers away from its cause.
+        if (!line.empty() && line[0] != '#' && line.rfind("Using ", 0) != 0) {
             has_data = true;
             break;
         }
@@ -352,7 +356,8 @@ HandlerResponse ProfilerHttpHandlers::handleHeapFlamegraphRaw(int duration, bool
     std::string collapsed_file = "/tmp/heap_collapsed.prof";
 
     std::ostringstream cmd;
-    cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file << " 2>&1";
+    cmd << "./pprof --collapsed --alloc_space " << exe_path << " " << temp_file << " > " << collapsed_file
+        << " 2>/dev/null";
     std::string out;
     if (!profiler_.executeCommand(cmd.str(), out)) {
         return errorResp(500, "Failed to execute pprof --collapsed command");
@@ -364,7 +369,10 @@ HandlerResponse ProfilerHttpHandlers::handleHeapFlamegraphRaw(int duration, bool
     std::string line;
     bool has_data = false;
     while (std::getline(in, line)) {
-        if (!line.empty() && line[0] != '#') {
+        // Skip pprof's own chatter ("Using local file ..."), which would
+        // otherwise be mistaken for stack data; flamegraph.pl then rejects the
+        // file and the failure surfaces two layers away from its cause.
+        if (!line.empty() && line[0] != '#' && line.rfind("Using ", 0) != 0) {
             has_data = true;
             break;
         }
@@ -409,7 +417,8 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthAnalyze(const std::string& out
     if (output_type == "flamegraph") {
         std::string collapsed_file = "/tmp/growth_collapsed.prof";
         std::ostringstream cmd;
-        cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file << " 2>/dev/null";
+        cmd << "./pprof --collapsed --alloc_space " << exe_path << " " << temp_file << " > " << collapsed_file
+            << " 2>/dev/null";
 
         std::string out;
         if (!profiler_.executeCommand(cmd.str(), out)) {
@@ -499,7 +508,8 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthFlamegraphRaw() {
     std::string collapsed_file = "/tmp/growth_collapsed.prof";
 
     std::ostringstream cmd;
-    cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file << " 2>&1";
+    cmd << "./pprof --collapsed --alloc_space " << exe_path << " " << temp_file << " > " << collapsed_file
+        << " 2>/dev/null";
     std::string out;
     if (!profiler_.executeCommand(cmd.str(), out)) {
         return errorResp(500, "Failed to execute pprof --collapsed command");
@@ -511,7 +521,10 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthFlamegraphRaw() {
     std::string line;
     bool has_data = false;
     while (std::getline(in, line)) {
-        if (!line.empty() && line[0] != '#') {
+        // Skip pprof's own chatter ("Using local file ..."), which would
+        // otherwise be mistaken for stack data; flamegraph.pl then rejects the
+        // file and the failure surfaces two layers away from its cause.
+        if (!line.empty() && line[0] != '#' && line.rfind("Using ", 0) != 0) {
             has_data = true;
             break;
         }
