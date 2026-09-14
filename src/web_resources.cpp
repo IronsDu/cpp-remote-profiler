@@ -421,16 +421,43 @@ static const char INDEX_PAGE[] = R"HTML(
             return p.toString();
         }
 
-        function viewHeapChart() {
+        // 取回图表字节。查看与下载共用，因此两者必然请求同一份数据
+        // （此前下载只拼 duration、丢掉了 source，选"状态式"时会静默拿到窗口数据）。
+        function fetchHeapChart() {
             const chartType = document.getElementById('heap-chart-type').value;
-            const endpoint = heapChartEndpoint(chartType);
-            const url = `${endpoint}?${heapQuery()}`;
+            const url = `${heapChartEndpoint(chartType)}?${heapQuery()}`;
+            return fetch(url).then(response => {
+                if (!response.ok) {
+                    return response.text().then(body => {
+                        let detail = `HTTP ${response.status}`;
+                        try {
+                            detail = JSON.parse(body).error || detail;
+                        } catch (e) {
+                            if (body) detail = body.trim().slice(0, 200);
+                        }
+                        return Promise.reject(new Error(detail));
+                    });
+                }
+                return response.blob();
+            });
+        }
+
+        function viewHeapChart() {
             const state = heapSource() === 'state';
-            log(`🚀 正在渲染 Heap ${chartType} 图表（数据源: ${state ? '当前堆快照' : '窗口 ' + heapDuration() + ' 秒'}）...`);
-            window.open(url, '_blank');
-            log(`✅ 已在新标签页打开 ${url}\n` +
-                (state ? '   数据来自 /pprof/heap，需已设置 TCMALLOC_SAMPLE_PARAMETER。'
-                       : `   服务端会先采集 ${heapDuration()} 秒再渲染，标签页会稍等片刻。`));
+            const sourceLabel = state ? '当前堆快照' : `窗口 ${heapDuration()} 秒`;
+            log(`🚀 正在渲染 Heap ${document.getElementById('heap-chart-type').value} 图表（数据源: ${sourceLabel}）...`);
+
+            fetchHeapChart()
+                .then(blob => {
+                    // 用 blob URL 打开：Content-Disposition 只影响直接导航，
+                    // 不影响 blob，所以图表会【显示】出来而不是被下载。
+                    window.open(URL.createObjectURL(blob), '_blank');
+                    log(`✅ 图表已在新标签页打开 (${(blob.size / 1024).toFixed(1)} KB)\n` +
+                        (state ? '   数据来自 /pprof/heap，需已设置 TCMALLOC_SAMPLE_PARAMETER。'
+                               : `   服务端已采集 ${heapDuration()} 秒后渲染。`) +
+                        '\n   如需保存：在该标签页另存，或点「📥 下载图表」。');
+                })
+                .catch(err => log(`❌ 渲染失败: ${err.message}`));
         }
 
         // 状态式 heap 快照（/pprof/heap）：与上面的窗口式分析是两套机制。
@@ -526,7 +553,12 @@ static const char INDEX_PAGE[] = R"HTML(
 
             // 与「查看图表」走同一份数据（同一 endpoint + source + duration）。
             // 此前这里只拼 duration，选"状态式"时会静默拿到窗口数据。
-            fetchHeapChart()
+            //
+            // fetchHeapChart() 的同步异常（例如函数名写错）会在 .catch() 挂上之前抛出，
+            // 于是倒计时继续跑、按钮永久 disabled —— 表现为"点了没反应"。用一层
+            // Promise.resolve().then() 把调用本身也纳入链中。
+            Promise.resolve()
+                .then(() => fetchHeapChart())
                 .then(blob => {
                     // 清除倒计时
                     clearInterval(progressInterval);
