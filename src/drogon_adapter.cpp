@@ -22,8 +22,11 @@ static void sendResponse(const HandlerResponse& hr, std::function<void(const dro
         resp->setContentTypeCode(drogon::CT_TEXT_HTML);
     } else if (hr.content_type == "application/json") {
         resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-    } else if (hr.content_type == "image/svg+xml" || hr.content_type == "text/xml") {
-        resp->setContentTypeCode(drogon::CT_TEXT_XML);
+    } else if (hr.content_type == "image/svg+xml") {
+        // CT_IMAGE_SVG_XML, not CT_TEXT_XML: the latter is the generic XML type.
+        // The SVG type is what tells the browser to treat the body as an image
+        // document (and what makes "save image as" work as an SVG).
+        resp->setContentTypeCode(drogon::CT_IMAGE_SVG_XML);
     } else if (hr.content_type == "application/octet-stream") {
         resp->setContentTypeCode(drogon::CT_APPLICATION_OCTET_STREAM);
     } else {

@@ -139,6 +139,10 @@ try {
     record('panel references no removed endpoints or parameters',
            staleRefs.length === 0, staleRefs.join(', '));
 
+    const openButtons = await page.evaluate(() =>
+        document.querySelectorAll('button[onclick^="openChart"], button[onclick^="openSnapshot"]').length);
+    record('panel exposes the inline (open in place) actions', openButtons === 4, `found ${openButtons}`);
+
     const controls = await page.evaluate(() => ({
         cpuDuration: !!document.getElementById('cpu-duration'),
         cpuRenderer: !!document.getElementById('cpu-renderer'),
@@ -194,6 +198,35 @@ try {
 
     console.log('\nHeap snapshot (rendered SVG)');
     await checkDownload('snapshot svg', () => downloadSnapshot('svg'));
+
+    // The delivery modes must actually differ in the response, not just in the
+    // query string: `inline` omits Content-Disposition so the browser renders the
+    // SVG as a document, `attachment` sets it so the browser downloads.
+    console.log('\nDelivery modes');
+    const modes = await page.evaluate(async () => {
+        const out = {};
+        for (const mode of ['inline', 'attachment']) {
+            const r = await fetch(`/api/pprof/cpu?duration=10&renderer=flamegraph&output=${mode}`);
+            out[mode] = {
+                status: r.status,
+                contentType: r.headers.get('content-type') || '',
+                disposition: r.headers.get('content-disposition') || '',
+                bytes: (await r.blob()).size,
+            };
+        }
+        return out;
+    });
+    record('inline returns SVG with no Content-Disposition',
+           modes.inline.status === 200 &&
+               modes.inline.contentType.includes('image/svg+xml') &&
+               modes.inline.disposition === '',
+           JSON.stringify(modes.inline));
+    record('attachment sets Content-Disposition',
+           modes.attachment.status === 200 && modes.attachment.disposition.startsWith('attachment'),
+           JSON.stringify(modes.attachment));
+    record('both modes return the same kind of payload',
+           modes.inline.bytes > 1000 && modes.attachment.bytes > 1000,
+           `inline=${modes.inline.bytes}B attachment=${modes.attachment.bytes}B`);
 
     record('no JavaScript errors during the run', pageErrors.length === 0, pageErrors.join(' | '));
 

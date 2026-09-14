@@ -204,6 +204,7 @@ static const char INDEX_PAGE[] = R"HTML(
                     CPU 采样是<b>独占</b>的：若已有请求或宿主程序正在采样，本次会被拒绝（409）。
                     时长太短会采不到样本，建议 ≥10 秒。
                 </span>
+                <button class="view-btn" onclick="openChart('cpu')">🔗 打开 CPU 图表</button>
                 <button class="download-btn" id="cpu-download-btn" onclick="downloadChart('cpu')">📥 下载 CPU 图表</button>
             </div>
         </div>
@@ -226,6 +227,7 @@ static const char INDEX_PAGE[] = R"HTML(
                     ⚠️ 只记录<b>采集窗口内发生的分配</b>（流量），不反映此刻已经在堆里的内存（存量）。
                     想看当前堆快照请用下面的 Heap Snapshot。分配稀疏时把窗口调长。
                 </span>
+                <button class="view-btn" onclick="openChart('heap')">🔗 打开 Heap 图表</button>
                 <button class="download-btn" id="heap-download-btn" onclick="downloadChart('heap')">📥 下载 Heap 图表</button>
             </div>
         </div>
@@ -239,6 +241,7 @@ static const char INDEX_PAGE[] = R"HTML(
                     <b>需要</b>在进程启动前设置 <code>TCMALLOC_SAMPLE_PARAMETER</code>，否则返回 500。
                     刚启动的进程可能显示空快照（tcmalloc 在第一次采样事件前不报告数据），稍等再试即可。
                 </span>
+                <button class="view-btn" onclick="openSnapshot('profile')">🔗 打开 profile 文本</button>
                 <button class="download-btn" id="snapshot-profile-btn" onclick="downloadSnapshot('profile')">📥 下载 profile 文本</button>
                 <button class="download-btn" id="snapshot-svg-btn" onclick="downloadSnapshot('svg')">📥 下载快照图 (SVG)</button>
             </div>
@@ -255,6 +258,7 @@ static const char INDEX_PAGE[] = R"HTML(
                     </select>
                 </div>
                 <span class="hint">堆增长栈分析，不需要 <code>TCMALLOC_SAMPLE_PARAMETER</code>，即时获取。</span>
+                <button class="view-btn" onclick="openChart('growth')">🔗 打开 Growth 图表</button>
                 <button class="download-btn" id="growth-download-btn" onclick="downloadChart('growth')">📥 下载 Growth 图表</button>
             </div>
         </div>
@@ -332,6 +336,27 @@ static const char INDEX_PAGE[] = R"HTML(
 
         function timestamp() {
             return new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        }
+
+        /// 在浏览器里直接打开产物（output=inline）。
+        ///
+        /// 与"下载"的区别只在响应头：不发 Content-Disposition 时浏览器把
+        /// image/svg+xml 当文档渲染，因此可以直接导航过去，不需要 blob 中转。
+        /// 注意产物内嵌的 pan/zoom 脚本依赖的元素/初始化挂钩缺失，所以页内
+        /// 无法缩放（见 README）——需要缩放请下载后用桌面工具。
+        function openChart(kind) {
+            const spec = CHART_SPECS[kind];
+            const url = chartUrl(kind, { output: 'inline' });
+            log(`🔗 正在生成并在新标签页打开 ${spec.label} 图表...\n    ${url}`);
+            window.open(url, '_blank');
+        }
+
+        function openSnapshot(format) {
+            const p = new URLSearchParams({ format, output: 'inline' });
+            if (format === 'svg') p.set('renderer', document.getElementById('heap-renderer').value);
+            const url = `/api/pprof/heap/snapshot?${p.toString()}`;
+            log(`🔗 正在打开堆快照 (${format === 'svg' ? '渲染图' : '原始 profile'})...\n    ${url}`);
+            window.open(url, '_blank');
         }
 
         /// 通用下载：同一份产物既能存盘，也能用 output=inline 在新标签页显示。
