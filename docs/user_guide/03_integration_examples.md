@@ -181,12 +181,14 @@ int main() {
     YourWebServer server;
 
     // 注册 CPU 分析端点
-    server.route("GET", "/api/cpu/analyze", [&](const Request& req) {
-        int duration = req.get_param_int("duration", 10);
-        std::string output_type = req.get_param("output_type", "pprof");
+    server.route("GET", "/api/pprof/cpu", [&](const Request& req) {
+        profiler::ChartOptions options;
+        options.duration = req.get_param_int("duration", 10);
+        options.renderer = profiler::parseChartRenderer(req.get_param("renderer", "flamegraph"));
+        options.inline_display = req.get_param("output", "inline") != "attachment";
 
         // 调用 handler 获取框架无关的响应
-        profiler::HandlerResponse resp = handlers.handleCpuAnalyze(duration, output_type);
+        profiler::HandlerResponse resp = handlers.handleCpuChart(options);
 
         // 用你的框架包装响应
         return YourResponse()
@@ -255,10 +257,15 @@ public:
         return toOat(handlers_.handleStatus());
     }
 
-    ENDPOINT("GET", "/api/cpu/analyze", cpuAnalyze,
+    ENDPOINT("GET", "/api/pprof/cpu", cpuChart,
              QUERY(Int32, duration, "duration", "10"),
-             QUERY(String, output_type, "output_type", "flamegraph")) {
-        return toOat(handlers_.handleCpuAnalyze(duration, output_type));
+             QUERY(String, renderer, "renderer", "flamegraph"),
+             QUERY(String, output, "output", "inline")) {
+        profiler::ChartOptions options;
+        options.duration = duration;
+        options.renderer = profiler::parseChartRenderer(renderer);
+        options.inline_display = output != "attachment";
+        return toOat(handlers_.handleCpuChart(options));
     }
 
     ENDPOINT("GET", "/pprof/profile", pprofProfile,

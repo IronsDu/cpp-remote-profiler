@@ -20,6 +20,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `profiler/async_executor.h` — bounded single-worker executor for long-running jobs
 
 ### Changed
+- **Breaking:** the HTTP API was consolidated. Nine endpoints across three
+  profiler types became four:
+
+  | before | after |
+  |---|---|
+  | `/api/{cpu,heap,growth}/analyze` | `/api/pprof/{cpu,heap,growth}` |
+  | `/api/{cpu,heap,growth}/svg_raw` | `/api/pprof/{cpu,heap,growth}?renderer=callgraph` |
+  | `/api/{cpu,heap,growth}/flamegraph_raw` | `/api/pprof/{cpu,heap,growth}?renderer=flamegraph` |
+  | `/api/heap/*?source=state` | `/api/pprof/heap/snapshot` |
+
+  `analyze` and `svg_raw` were the *same operation* — sample for N seconds, then
+  render — differing only in the renderer and in whether the response forced a
+  download, so each pair sampled the process twice for one picture. The renderer
+  is now a parameter (`renderer=flamegraph|callgraph`) and delivery is another
+  (`output=inline|attachment`). The old paths are gone, not aliased.
+- **Breaking:** the heap snapshot is its own endpoint,
+  `/api/pprof/heap/snapshot`, with `format=profile` (default, raw text for
+  `go tool pprof`) or `format=svg`. It is state-based ("what is in the heap now")
+  as opposed to `/api/pprof/heap`, which is window-based ("what was allocated
+  during the window"). Keeping it on the same resource behind a `source=` flag
+  would have put two different questions at one URL.
+- **Breaking:** `renderer=callgraph` replaces `output_type=pprof`. The old value
+  named a tool rather than the result: the pprof script draws a node/edge *call
+  graph*, while FlameGraph draws a *flame graph*. They are different pictures, not
+  two styles of one, and the parameter should say which picture you get.
+- The `duration` default is now 10s everywhere (was 1s for heap, 30s for
+  `/pprof/profile`). Measured on the bundled example workload, a 3s window failed
+  to collect enough samples to render 35-45% of the time; 10s never failed. A 1s
+  default was close to useless.
+- Responses are `inline` by default, so a plain link shows the SVG in the browser
+  instead of downloading it; `output=attachment` restores a forced download.
+  Inline display is purely the absence of `Content-Disposition` — verified that
+  the same bytes navigate as a document without it and abort with it.
+- The three `/show_*_svg.html` viewer pages are removed, along with the inline-SVG
+  branch they consumed. Their in-page pan/zoom never worked: the generated SVGs
+  embed a pan/zoom library that is never initialised (FlameGraph's `zoom()` looks
+  for a `#viewport` element that its own output does not contain, and the pprof
+  SVGPan library has no `onload` hook). Downloading the SVG and opening it in a
+  desktop tool is what actually works, so the panel now offers downloads and a
+  live log rather than a viewer.
+- `ProfilerHttpHandlers` exposes one entry point per profiler —
+  `handleCpuChart` / `handleHeapChart` / `handleGrowthChart` / `handleHeapSnapshot` —
+  each taking a `ChartOptions` (renderer, duration, delivery) instead of the
+  per-endpoint duration/output_type argument lists. Shared rendering moved into
+  `renderChart`/`renderFlameGraph`/`renderCallGraph`, replacing six copies of the
+  same shell-out logic.
 - **Breaking:** `ProfilerManager` is no longer a singleton — construct it directly and manage its lifetime
 - **Breaking:** removed the spdlog dependency; use `setLogSink()` / `setLogLevel()` instead
 - **Breaking:** core library decoupled from the web layer — `profiler_core` (no Drogon) and `profiler_web` (optional Drogon adapter) are now separate targets

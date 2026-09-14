@@ -15,7 +15,7 @@
 ### 已修复
 
 <details>
-<summary>1. `/api/heap/analyze` 的 duration 语义（✅ 已修复）</summary>
+<summary>1. `/api/heap/analyze` 的 duration 语义（✅ 已修复；该路径现已并入 `/api/pprof/heap`）</summary>
 
 原问题：路由只解析 `output_type`，`handleHeapAnalyze()` 也没有 duration 形参，最终硬编码
 `analyzeHeapProfile(1, ...)`。
@@ -71,12 +71,26 @@
 ### 已修复（本轮，用 go tool pprof 验证）
 
 - `/pprof/heap` 在采样关闭时返回 200 + `%warn` 文本：`GetHeapSample()` 不返回空串，导致空值检查失效。现按 `@ heap_v2/0` / 前导 `%warn` 识别，返回 500。
-- `/api/heap/svg_raw` 与 `flamegraph_raw` 的行为不一致：根因同上，两者现在都返回同样的明确错误。
+- `/api/heap/svg_raw` 与 `flamegraph_raw` 的行为不一致：根因同上，两者现在都返回同样的明确错误（后经 API 重构合并为 `/api/pprof/heap`）。
 - 分析类接口的错误响应**双重包裹**成非法 JSON（`{"error":"{"error": "..."}`）：现将内部错误消息解出后再包一层。
 - `/pprof/heap` 与 `/pprof/growth` 的错误改用 Go `serveError()` 的形状（`text/plain` + `X-Go-Pprof: 1`），`go tool pprof` 能直接显示原因。
 - `flamegraph.pl` 对空输入返回"合法 SVG + ERROR 文本"，被当作 200 成功：现识别并转为带原因的 500。
 
+### 已完成（本轮 API 重构）
+
+- HTTP API 收敛：9 个端点 → 4 个（`/api/pprof/{cpu,heap,growth}` + `/api/pprof/heap/snapshot`），
+  渲染器与交付方式改为参数（`renderer` / `output`），消除了 `analyze` 与 `*_raw` 各采样一次的重复。
+- `duration` 默认值 1 秒 → 10 秒（实测 3 秒失败率 35–45%、10 秒 0%，见 CHANGELOG）。
+- 移除 3 个查看器页及其内联 SVG 分支——其页内缩放从未生效（生成的 SVG 内嵌了从未被初始化的
+  pan/zoom 库）。面板改为「下载 + 实时日志」。
+- 新增 `scripts/verify-web-ui.mjs`（CDP 驱动真实浏览器回归，23 项检查）与
+  `scripts/check-sanitizers.sh`（本地复刻 CI 的 ASan/UBSan/TSan 配置）。
+
 ### 待修
+
+- **生成的 SVG 无法缩放**：FlameGraph 的 `zoom()` 找不到它要操作的 `#viewport`（其产物只有
+  `#frames`），pprof 的 SVGPan 库则从未被初始化（产物缺少 `onload` 挂钩）。两条路径的交互脚本
+  都是死代码。可选方案：改为在服务端生成自己的交互式 SVG，或在文档中明确"下载后用桌面工具看"。
 
 - **火焰图里的函数名带地址后缀**：内置 pprof 的 `--collapsed` 输出把函数名写成
   `cpuIntensiveTask()<0000000000409360>`，经 `flamegraph.pl` 渲染后直接显示在图上。除了噪音，还有一个
@@ -84,7 +98,7 @@
   可在送入 `flamegraph.pl` 之前剥掉 `<十六进制>` 后缀。
 - **部分符号未 demangle**：实测火焰图里残留 `_ZSt12construct_at...` 之类的 mangled 名，且这类帧常显示为
   无上下文的 `operator()[inline]`（lambda 的 `operator()`）。可对未解开的符号做二次 `__cxa_demangle`。
-- **两个 pprof 实现的差异未写进文档**：内置 Perl pprof（`output_type=pprof` 的渲染器）符号化更完整——
+- **两个 pprof 实现的差异未写进文档**：内置 Perl pprof（`renderer=callgraph` 的渲染器）符号化更完整——
   实测同一份 profile 未解析帧为 0、且能标出 `(inline)`；而 `go tool pprof` 强在对比与交互
   （`-diff_base`、`-peek`、`-traces`）。README 目前只说了"两种渲染方式"，没说各自适合什么场景。
 - **`pprof --svg` 的失败信息不透出**：内置 pprof 脚本用 `dot`(graphviz) 渲染，采样点过少时 `dot` 失败，代码只回一句 `pprof did not generate valid SVG. Output: `（且 `svg_output` 为空），无法定位原因。应把 `dot` 的 stderr 一并返回。**这是异步改造期间实测复现的既有缺陷**，与请求调度无关。
@@ -100,7 +114,7 @@
 - `include/profiler/async_executor.h` — 单工作线程执行器，把阻塞任务搬离事件循环，完成后经 `queueInLoop()` 回送响应
 - 阻塞接口全部投递到该工作线程；`/api/status`、`/` 等快速接口保持在事件循环上
 - **CPU 采样独占且 fail-fast**：`cpu_profiling_in_progress_` 是所有 CPU 采样入口（`getRawCPUProfile` / `analyzeCPUProfile`）共用的进程级标记。占用期间新请求**立即被拒绝**，不会排队、也不会打断正在进行的采样
-- 拒绝语义与 Go 的 `net/http/pprof` 对齐：`/pprof/profile` 返回 500 + `text/plain` + `X-Go-Pprof: 1`；`/api/cpu/*` 返回 409 JSON
+- 拒绝语义与 Go 的 `net/http/pprof` 对齐：`/pprof/profile` 返回 500 + `text/plain` + `X-Go-Pprof: 1`；`/api/pprof/cpu` 返回 409 JSON
 - 拒绝判定发生在**事件循环线程上、任务入队之前**（`runAsync` 的 precheck）。这是必须的：若放在任务内部判断，只能在前一个任务结束后才执行，永远观察不到它正在运行
 
 实测：20 秒采样期间 `/api/status` 响应 0.0004s；并发请求第二个 0.0005s 内被拒且第一个不受影响。

@@ -63,13 +63,13 @@ explicit ProfilerHttpHandlers(ProfilerManager& profiler);
 | 方法 | 签名 | 说明 |
 |------|------|------|
 | `handleStatus` | `HandlerResponse handleStatus()` | 返回所有 profiler 状态 (JSON) |
-| `handleCpuAnalyze` | `HandlerResponse handleCpuAnalyze(int duration, const std::string& output_type)` | CPU 分析，返回 SVG |
+| `handleCpuChart` | `HandlerResponse handleCpuChart(const ChartOptions&)` | CPU 采样并出图 |
 | `handleCpuSvgRaw` | `HandlerResponse handleCpuSvgRaw(int duration)` | CPU 原始 SVG (pprof 生成) |
 | `handleCpuFlamegraphRaw` | `HandlerResponse handleCpuFlamegraphRaw(int duration)` | CPU FlameGraph SVG |
-| `handleHeapAnalyze` | `HandlerResponse handleHeapAnalyze(const std::string& output_type)` | Heap 分析，返回 SVG |
+| `handleHeapChart` | `HandlerResponse handleHeapChart(const ChartOptions&)` | Heap 窗口式采集并出图 |
 | `handleHeapSvgRaw` | `HandlerResponse handleHeapSvgRaw()` | Heap 原始 SVG |
 | `handleHeapFlamegraphRaw` | `HandlerResponse handleHeapFlamegraphRaw()` | Heap FlameGraph SVG |
-| `handleGrowthAnalyze` | `HandlerResponse handleGrowthAnalyze(const std::string& output_type)` | Growth 分析，返回 SVG |
+| `handleGrowthChart` | `HandlerResponse handleGrowthChart(const ChartOptions&)` | Growth 采集并出图 |
 | `handleGrowthSvgRaw` | `HandlerResponse handleGrowthSvgRaw()` | Growth 原始 SVG |
 | `handleGrowthFlamegraphRaw` | `HandlerResponse handleGrowthFlamegraphRaw()` | Growth FlameGraph SVG |
 | `handlePprofProfile` | `HandlerResponse handlePprofProfile(int seconds)` | 标准 pprof CPU profile (二进制) |
@@ -300,7 +300,10 @@ std::string analyzeCPUProfile(int duration, const std::string& output_type = "fl
 
 **参数**:
 - `duration`: 采样时长（秒）
-- `output_type`: 输出类型（"flamegraph" 或 "pprof"）
+- `output_type`: 渲染方式（`"flamegraph"` 或 `"pprof"`）
+
+> 这是 **C++ 层**的形参。HTTP 层的等价参数叫 `renderer`，取值 `flamegraph` / `callgraph`
+> （见 README 的端点说明）——`callgraph` 对应这里的 `"pprof"`。
 
 **返回值**: SVG 字符串
 
@@ -325,7 +328,7 @@ std::string getRawCPUProfile(int seconds);
 
 宿主用 `startCPUProfiler()` 打开的会话**归调用方所有，不会被本函数停止或接管**。调用前可用
 `isProfilerRunning(ProfilerType::CPU)` 判断；HTTP 层则通过 `isCpuProfilerBusy()` 区分并返回
-`500`（`/pprof/profile`，Go 风格）或 `409`（`/api/cpu/*`）。
+`500`（`/pprof/profile`，Go 风格）或 `409`（`/api/pprof/cpu`）。
 
 ---
 
@@ -362,7 +365,7 @@ std::string analyzeHeapProfile(const std::string& output_type = "flamegraph");
 ```
 
 **参数**:
-- `output_type`: 输出类型（`"flamegraph"` 或 `"pprof"`）
+- `output_type`: 渲染方式（`"flamegraph"` 或 `"pprof"`）
 
 **返回值**: SVG 字符串；失败时返回 `{"error":"..."}` JSON 字符串
 
@@ -551,7 +554,7 @@ int main() {
 它会同时考虑"已有请求在采样"和"宿主占用了会话"两种情况。
 
 Heap 侧同理：`analyzeHeapProfile()` 与 `startHeapProfiler()` 互斥，谁先占谁赢。
-`/api/growth/analyze` 不占用任何会话，不受限制。
+`/api/pprof/growth` 不占用任何会话，不受限制。
 
 ---
 

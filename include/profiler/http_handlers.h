@@ -42,6 +42,32 @@ struct HandlerResponse {
     }
 };
 
+/// @brief Which graphical form a chart endpoint should produce
+///
+/// These are two genuinely different representations, not two styles of one:
+/// a flame graph is a stack of frames, a call graph is a node/edge diagram.
+enum class ChartRenderer {
+    /// Stacked frames (FlameGraph). Self-contained SVG; the classic choice.
+    FlameGraph,
+    /// Node/edge call graph produced by the pprof script via graphviz dot.
+    /// Carries better symbolisation (it resolves inline frames).
+    CallGraph,
+};
+
+/// @brief Options shared by the /api/pprof/{cpu,heap,growth} analysis endpoints
+struct ChartOptions {
+    ChartRenderer renderer = ChartRenderer::FlameGraph;
+    /// Collection window in seconds, clamped to 1..300. Note this is how long
+    /// allocations/samples are *collected*, not a sampling rate.
+    int duration = 10;
+    /// true  -> omit Content-Disposition so a browser renders the SVG in place
+    /// false -> send `Content-Disposition: attachment` to force a download
+    bool inline_display = true;
+};
+
+/// @brief Parse the `renderer` query value; unknown values fall back to FlameGraph
+ChartRenderer parseChartRenderer(const std::string& value);
+
 /// @brief Framework-agnostic profiler HTTP endpoint handlers
 ///
 /// Usage example with any framework:
@@ -60,67 +86,47 @@ public:
     // --- Status ---
     HandlerResponse handleStatus();
 
-    // --- CPU endpoints ---
-    /// @brief Whether a CPU profiling session is already claimed
-    ///
-    /// CPU profiling is exclusive: gperftools keeps one process-global sampling
-    /// session, so at most one request may sample at a time.
+    // --- Exclusivity probes ---
+    //
+    // Both are exposed so a web adapter can refuse a request on the event-loop
+    // thread — before queueing it — using the same wording the handlers produce.
+    /// @brief Whether a CPU sampling session is claimed (by a request or the host)
     bool isCpuProfilerBusy() const;
 
-    /// @brief The response to use when @ref isCpuProfilerBusy is true
-    ///
-    /// Provided so a web adapter can refuse a request on the event-loop thread —
-    /// before it is queued for execution — using the same wording and status the
-    /// handlers themselves produce. Calling it only makes sense while
-    /// @ref isCpuProfilerBusy is true.
-    ///
-    /// `pprof_style` selects the shape:
-    ///  - true  — the shape Go's net/http/pprof uses on /pprof/profile: HTTP 500,
-    ///            `text/plain`, plus an `X-Go-Pprof: 1` marker so `go tool pprof`
-    ///            reports the message instead of parsing it as profile data
-    ///  - false — HTTP 409 with a JSON error, for the custom /api/* endpoints
-    HandlerResponse cpuProfilerBusyResponse(bool pprof_style) const;
-
-    /// @brief Whether a heap analysis is already running
-    ///
-    /// Heap analysis reconfigures the single process-global heap profiler, so
-    /// concurrent calls are exclusive for the same reason CPU profiling is.
+    /// @brief Whether a heap analysis is running, or the host opened a heap session
     bool isHeapAnalyzerBusy() const;
 
-    /// @brief The response to use when @ref isHeapAnalyzerBusy is true
-    ///
-    /// Mirrors @ref cpuProfilerBusyResponse but for heap analysis, which has no
-    /// Go pprof equivalent to match: HTTP 409 with a JSON error.
+    /// @brief The response for a CPU request that arrived while the profiler is busy
+    /// @param pprof_style true -> Go's /pprof/profile shape (500 + text/plain +
+    ///        `X-Go-Pprof: 1`); false -> 409 with a JSON error for /api/* routes
+    HandlerResponse cpuProfilerBusyResponse(bool pprof_style) const;
+
+    /// @brief The response for a heap analysis that arrived while one is running
     HandlerResponse heapAnalyzerBusyResponse() const;
 
-    HandlerResponse handleCpuAnalyze(int duration, const std::string& output_type);
-    HandlerResponse handleCpuSvgRaw(int duration);
-    HandlerResponse handleCpuFlamegraphRaw(int duration);
+    // --- Analysis endpoints: one entry point per profiler ---
+    /// @brief Sample CPU for the requested window and render a chart
+    ///
+    /// Exclusive: refuses while another sampling session is active (409) rather
+    /// than queueing or preempting it.
+    HandlerResponse handleCpuChart(const ChartOptions& options);
 
-    // --- Heap endpoints ---
-    /// @param duration Collection window in seconds (clamped 1..300). Not a
-    ///        sampling rate -- that is fixed by TCMALLOC_SAMPLE_PARAMETER at
-    ///        process start -- but a longer window covers more allocations.
-    HandlerResponse handleHeapAnalyze(int duration, const std::string& output_type);
+    /// @brief Sample heap for the requested window and render a chart
+    /// @note Exclusive in the same way CPU is.
+    HandlerResponse handleHeapChart(const ChartOptions& options);
 
-    /// @brief Render a heap sample with the pprof script
-    /// @param duration Collection window in seconds (clamped 1..300); used only
-    ///        when @p state_based is false
-    /// @param state_based Which of the two heap sources to render:
-    ///        - false (default): run a collection window, no startup config needed
-    ///        - true: render tcmalloc's cumulative snapshot of the live heap
-    ///          (getRawHeapSample()), which requires TCMALLOC_SAMPLE_PARAMETER
-    HandlerResponse handleHeapSvgRaw(int duration, bool state_based = false);
+    /// @brief Render the current heap snapshot (state-based, not a window)
+    ///
+    /// Answers "what is in the heap now" rather than "what was allocated during
+    /// the window", so it needs TCMALLOC_SAMPLE_PARAMETER to have been set before
+    /// the process started. `renderer` is ignored when @p as_profile is true.
+    ///
+    /// @param options Chart options (renderer used only when @p as_profile is false)
+    /// @param as_profile Return the raw profile text instead of an SVG
+    HandlerResponse handleHeapSnapshot(const ChartOptions& options, bool as_profile);
 
-    /// @brief Render a heap sample as a FlameGraph
-    /// @param duration Collection window in seconds (clamped 1..300)
-    /// @param state_based See @ref handleHeapSvgRaw
-    HandlerResponse handleHeapFlamegraphRaw(int duration, bool state_based = false);
-
-    // --- Growth endpoints ---
-    HandlerResponse handleGrowthAnalyze(const std::string& output_type);
-    HandlerResponse handleGrowthSvgRaw();
-    HandlerResponse handleGrowthFlamegraphRaw();
+    /// @brief Sample heap growth and render a chart
+    HandlerResponse handleGrowthChart(const ChartOptions& options);
 
     // --- Standard pprof endpoints ---
     HandlerResponse handlePprofProfile(int seconds);

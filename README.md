@@ -39,7 +39,7 @@
 参考 Go pprof 提供两种互补的使用方式：
 
 1. **标准 pprof 模式** — `/pprof/profile`、`/pprof/heap` 返回原始 profile 文件，交给 `go tool pprof` 分析
-2. **一键分析模式** — `/api/cpu/analyze` 等直接返回 SVG，适合浏览器即时查看
+2. **一键分析模式** — `/api/pprof/cpu` 等直接返回 SVG，适合浏览器即时查看
 
 架构上分为两层，边界清晰：
 
@@ -150,15 +150,15 @@ cd build && ./profiler_example
 | 端点 | 并发请求的响应 |
 |------|----------------|
 | `/pprof/profile` | `500`，`text/plain`，`Could not enable CPU profiling: cpu profiling already in use`，并带 `X-Go-Pprof: 1` 头 |
-| `/api/cpu/analyze`、`/api/cpu/svg_raw`、`/api/cpu/flamegraph_raw` | `409`，`{"error":"cpu profiling already in use"}` |
+| `/api/pprof/cpu` | `409`，`{"error":"cpu profiling already in use"}` |
 
 `X-Go-Pprof: 1` 是给 `go tool pprof` 的信号：告诉它响应体是错误消息而非 profile 数据。
 
-**宿主自己开的会话不会被抢占。** 如果你的程序用 `startCPUProfiler()` 主动开了一段采样，此期间的 HTTP 请求会被拒绝（同上表），而**不会**停掉你那段采样。同理 `startHeapProfiler()` 开的 heap 会话也不会被 `/api/heap/analyze` 抢占。
+**宿主自己开的会话不会被抢占。** 如果你的程序用 `startCPUProfiler()` 主动开了一段采样，此期间的 HTTP 请求会被拒绝（同上表），而**不会**停掉你那段采样。同理 `startHeapProfiler()` 开的 heap 会话也不会被 `/api/pprof/heap` 抢占。
 
-**Heap 分析同样独占**。`HeapProfilerStart()` 与 CPU profiler 不同——它**没有失败模式**，重复调用会静默替换输出前缀，所以必须先原子认领再启动，否则并发调用会共用同一份快照。`/api/heap/analyze` 在已有分析进行时返回 `409` + `{"error":"heap profiling already in use"}`。
+**Heap 分析同样独占**。`HeapProfilerStart()` 与 CPU profiler 不同——它**没有失败模式**，重复调用会静默替换输出前缀，所以必须先原子认领再启动，否则并发调用会共用同一份快照。`/api/pprof/heap` 在已有分析进行时返回 `409` + `{"error":"heap profiling already in use"}`。
 
-`/api/growth/analyze` **不受此限制**：它读取 `GetHeapGrowthStacks()`，不占用任何 profiler 会话，可与 CPU 采样并存。
+`/api/pprof/growth` **不受此限制**：它读取 `GetHeapGrowthStacks()`，不占用任何 profiler 会话，可与 CPU 采样并存。
 
 快速接口（`/api/status`、`/`）不受采样影响，采样期间依然即时响应。
 
@@ -307,73 +307,66 @@ profiler.setLogLevel(profiler::LogLevel::Debug);
 
 由 `registerDrogonHandlers()` 注册的全部路由。
 
-> **Heap 的两套机制**（详见[下方说明](#heap-的两个端点语义相反)）：
-> `/pprof/heap` 是**状态式**（当前堆的累计快照），`/api/heap/*` 是**窗口式**（默认 1 秒内发生的分配）。
-> 二者不可互相替代，且**环境变量依赖相反**。
-
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| **标准 pprof 接口** | | |
-| `/pprof/profile` | GET | CPU profile 原始文件；`?seconds=N`，默认 **30**，范围 1–300 |
-| `/pprof/heap` | GET | **状态式**：当前堆的累计采样快照（原始文本，交给 `go tool pprof`）；**需** `TCMALLOC_SAMPLE_PARAMETER` |
-| `/pprof/growth` | GET | Heap growth 栈原始文本；无需上述环境变量 |
-| `/pprof/symbol` | POST | 符号化接口（Go pprof symbolz 协议） |
-| **一键分析（返回 SVG）** | | |
-| `/api/cpu/analyze` | GET/POST | 采样并返回 CPU 图；`?duration=N` 默认 10，范围 1–300 |
-| `/api/heap/analyze` | GET | **窗口式**：采集后渲染；`?duration=N` 默认 1，范围 1–300；**无需**环境变量 |
-| `/api/growth/analyze` | GET | 返回 Heap Growth 图 |
-| **原始 SVG 下载** | | |
-| `/api/cpu/svg_raw` | GET | pprof 生成的 CPU SVG；`?duration=N` 默认 10 |
-| `/api/heap/svg_raw` | GET | Heap SVG（pprof 渲染）；`?duration=N` 默认 1；`?source=state` 改为渲染**当前堆快照** |
-| `/api/growth/svg_raw` | GET | pprof 生成的 Growth SVG |
-| `/api/cpu/flamegraph_raw` | GET | FlameGraph 渲染的 CPU SVG；`?duration=N` 默认 10 |
-| `/api/heap/flamegraph_raw` | GET | Heap SVG（FlameGraph 渲染）；`?duration=N` 默认 1；`?source=state` 同上 |
-| `/api/growth/flamegraph_raw` | GET | FlameGraph 渲染的 Growth SVG |
-| **线程分析** | | |
-| `/api/thread/stacks` | GET | 所有线程的调用栈 |
-| **辅助与页面** | | |
-| `/` | GET | Web 控制面板 |
+| **分析接口（主动采样后出图）** | | |
+| `/api/pprof/cpu` | GET | 采样 CPU 并返回图 |
+| `/api/pprof/heap` | GET | **窗口式**：采集窗口内发生的分配并返回图 |
+| `/api/pprof/growth` | GET | 采集 heap growth 栈并返回图 |
+| **Heap 快照（状态式）** | | |
+| `/api/pprof/heap/snapshot` | GET | **状态式**：当前堆的累计快照（存量，非窗口） |
+| **状态与辅助** | | |
 | `/api/status` | GET | 各 profiler 的运行状态与输出路径（JSON） |
-| `/show_svg.html` | GET | CPU SVG 查看页 |
-| `/show_heap_svg.html` | GET | Heap SVG 查看页 |
-| `/show_growth_svg.html` | GET | Growth SVG 查看页 |
+| `/api/thread/stacks` | GET | 所有线程的调用栈 |
+| `/` | GET | Web 控制面板 |
+| **标准 pprof 接口（机器可读，`go tool pprof` 用）** | | |
+| `/pprof/profile` | GET | CPU profile 原始文件；`?seconds=N`，默认 **30**，范围 1–300 |
+| `/pprof/heap` | GET | 当前堆快照原始文本；**需** `TCMALLOC_SAMPLE_PARAMETER` |
+| `/pprof/growth` | GET | Heap growth 栈原始文本；无需该环境变量 |
+| `/pprof/symbol` | POST | 符号化（Go pprof symbolz 协议） |
 
-所有分析类接口都接受 `?output_type=flamegraph|pprof`：
+### 分析接口的参数
 
-- `pprof` — 由内置 pprof 脚本渲染的图形（**HTTP 层的默认值**）
-- `flamegraph` — 由 FlameGraph 渲染的火焰图
+三个 `/api/pprof/{cpu,heap,growth}` 端点共用同一组参数：
 
-> 注意默认值差异：C++ API `analyzeCPUProfile()` 的形参默认是 `"flamegraph"`，而 HTTP 路由在未传 `output_type` 时使用 `"pprof"`。想稳定拿到火焰图请显式写 `?output_type=flamegraph`。
+| 参数 | 取值 | 默认 | 说明 |
+|------|------|------|------|
+| `renderer` | `flamegraph` \| `callgraph` | `flamegraph` | **两种不同的图形**，见下 |
+| `duration` | 1–300 | **10** | 采集窗口（秒）。CPU/Growth 用于采样，heap 用于记录分配 |
+| `output` | `inline` \| `attachment` | `inline` | `inline` 不发 `Content-Disposition`，浏览器直接显示 SVG；`attachment` 强制下载 |
 
-### 使用示例
+`/api/pprof/heap/snapshot` 另用 `format`：
 
-```bash
-# CPU：拿原始 profile 交给 pprof 工具（默认 30 秒）
-curl 'http://localhost:8080/pprof/profile?seconds=10' > cpu.prof
-go tool pprof -http=:8081 cpu.prof
+| 参数 | 取值 | 默认 | 说明 |
+|------|------|------|------|
+| `format` | `profile` \| `svg` | `profile` | `profile` 返回原始 pprof 文本（交给 `go tool pprof`）；`svg` 渲染成图 |
+| `renderer` | 同上 | `flamegraph` | 仅 `format=svg` 时有意义 |
 
-# CPU 火焰图（显式指定 output_type）
-curl 'http://localhost:8080/api/cpu/analyze?duration=10&output_type=flamegraph' -o cpu.svg
+### 两种图形不是同一种东西
 
-# Heap（需先设置 TCMALLOC_SAMPLE_PARAMETER）
-curl 'http://localhost:8080/api/heap/analyze?output_type=flamegraph' -o heap.svg
+`renderer` 的选择会改变**图形表达**，不只是画法：
 
-# 所有线程调用栈
-curl 'http://localhost:8080/api/thread/stacks'
-```
+| 取值 | 产出 | 特点 |
+|------|------|------|
+| `flamegraph` | **火焰图**（栈帧堆叠） | 层次直观，适合看调用占比 |
+| `callgraph` | **调用图**（graphviz 节点/边） | 能解析内联帧，符号化更完整 |
 
-也支持直接让 pprof 从 URL 拉取：
+> ⚠️ **两者都不可在浏览器里缩放。** 生成的 SVG 内嵌了 pan/zoom 脚本，但依赖的
+> 元素或初始化挂钩并未出现在产物中（实测：FlameGraph 的 `zoom()` 找不到
+> `#viewport`，pprof 的 SVGPan 从未被初始化）。需要缩放时请把 SVG 下载后用桌面
+> 工具打开，或在浏览器里用页面缩放（Ctrl + 滚轮）。
 
-```bash
-go tool pprof -http=:8081 'http://localhost:8080/pprof/profile?seconds=10'
-```
+### 关于 `duration` 的默认值
+
+默认 **10 秒**而非更短，是实测结果：示例负载下 3 秒窗口有 **35–45%** 的请求采不到
+足够样本而渲染失败，10 秒窗口为 **0%**。分配稀疏进程需要更长窗口。
 
 ## 配置说明
 
 ### 环境变量 `TCMALLOC_SAMPLE_PARAMETER`
 
 控制 tcmalloc 的堆采样间隔（单位字节）。**默认值为 `0`，即关闭采样**。它影响的是**状态式**拉取路径
-（`GetHeapSample()`），也就是 `/pprof/heap` 与 `/api/heap/svg_raw`：
+（`GetHeapSample()`），也就是 `/pprof/heap` 与 `/api/pprof/heap/snapshot?format=profile`：
 
 ```bash
 export TCMALLOC_SAMPLE_PARAMETER=524288      # 512KB，开发环境常用
@@ -388,19 +381,19 @@ tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用�
 | 生产 | `2097152`（2MB）或更大，降低开销 |
 
 **不受该变量影响的路径**（它们走 `HeapProfilerStart/Dump`，由
-`HEAP_PROFILE_ALLOCATION_INTERVAL`（默认 1MB）等控制）：`/api/heap/analyze`、
-`/api/heap/flamegraph_raw`。Heap Growth（`/pprof/growth`、`/api/growth/*`）走
+`HEAP_PROFILE_ALLOCATION_INTERVAL`（默认 1MB）等控制）：`/api/pprof/heap`、
+`/api/pprof/heap/snapshot?format=svg`。Heap Growth（`/pprof/growth`、`/api/pprof/growth`）走
 `GetHeapGrowthStacks()`，也不需要该变量。
 
-> ⚠️ 不设该变量时：三个**窗口式**端点（`/api/heap/analyze`、`/api/heap/svg_raw`、
-> `/api/heap/flamegraph_raw`）仍然正常返回 SVG，因为它们各自运行自己的
-> `HeapProfilerStart/GetHeapProfile/Stop` 窗口；只有**状态式**的 `/pprof/heap` 返回 500。
+> ⚠️ 不设该变量时：**窗口式**端点（`/api/pprof/heap`）仍然正常返回 SVG，因为它自己运行
+> `HeapProfilerStart/GetHeapProfile/Stop` 窗口；而**状态式**的 `/pprof/heap` 与
+> `/api/pprof/heap/snapshot?format=profile` 返回 500。
 
 ### Heap 的两个端点语义相反
 
 这两个端点容易混淆，因为名字里都有 "heap"，但记录的是**完全不同的东西**：
 
-| | `/pprof/heap` | `/api/heap/{analyze,svg_raw,flamegraph_raw}` |
+| | `/pprof/heap`、`/api/pprof/heap/snapshot` | `/api/pprof/heap` |
 |---|---|---|
 | 语义 | **状态式**：当前堆里的累计采样 | **窗口式**：采集窗口内**发生的分配** |
 | 底层 | `GetHeapSample()` 拉取 | `HeapProfilerStart()` → `GetHeapProfile()` → `Stop()` |
@@ -411,26 +404,27 @@ tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用�
 
 关键差别在于**"存量"与"流量"**：
 
-- 进程已占 500MB 但停止分配 → `/pprof/heap` 能看到这 500MB；`/api/heap/analyze` 返回**空**并报
+- 进程已占 500MB 但停止分配 → `/pprof/heap` 能看到这 500MB；`/api/pprof/heap` 返回**空**并报
   `No heap profile data was produced`
-- 进程频繁 malloc/free，dump 时已全部释放 → `/api/heap/analyze` **能看到**这些分配；`/pprof/heap`
+- 进程频繁 malloc/free，dump 时已全部释放 → `/api/pprof/heap` **能看到**这些分配；`/pprof/heap`
   的当前堆则可能很小
 
 所以窗口式分析需要**被分析进程在采集窗口内确实有分配**。
 
 ⚠️ **heap 的 `duration` 不是采样率**：采样率由 `TCMALLOC_SAMPLE_PARAMETER` 在进程启动时固定，
 `duration` 只决定**采集多久**。分配稀疏的进程需要更长的窗口才能采到东西，所以它是"覆盖度"参数
-而不是"精度"参数。默认 1 秒，范围 1–300。
+而不是"精度"参数。默认 10 秒，范围 1–300。
 
-Web 控制面板的 Heap 区用一个**数据源**下拉在两套机制间切换，两者都能出图：
+Web 控制面板分成四块，各自对应一个端点：
 
-| 数据源 | 图表接口 | 说明 |
-|--------|----------|------|
-| 窗口式 | `/api/heap/{svg_raw,flamegraph_raw}?duration=N` | 采集 N 秒后渲染 |
-| 状态式 | `/api/heap/{svg_raw,flamegraph_raw}?source=state` | 渲染当前堆累计快照（对应 `/pprof/heap`） |
+| 区块 | 端点 | 说明 |
+|------|------|------|
+| CPU Profiler | `/api/pprof/cpu` | 采样后出图 |
+| Heap Profiler | `/api/pprof/heap` | **窗口式**：采集窗口内的分配（流量） |
+| Heap Snapshot | `/api/pprof/heap/snapshot` | **状态式**：当前堆累计快照（存量） |
+| Heap Growth | `/api/pprof/growth` | 增长栈分析 |
 
-面板提供「🔍 查看图表」「📥 下载图表 (SVG)」，以及「📄 查看原始 profile」「📥 下载 profile 文本」
-（后者走 `/pprof/heap`，用于交给 `go tool pprof` 分析）。
+每块都有「📥 下载…」按钮；快照那块另提供原始 profile 文本下载（交给 `go tool pprof` 分析）。
 
 ### 依赖版本
 

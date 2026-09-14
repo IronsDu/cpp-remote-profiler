@@ -21,6 +21,20 @@
 
 namespace {
 
+/// Build ChartOptions concisely for tests.
+profiler::ChartOptions opts(int duration = 1, profiler::ChartRenderer renderer = profiler::ChartRenderer::FlameGraph,
+                            bool inline_display = true) {
+    profiler::ChartOptions o;
+    o.duration = duration;
+    o.renderer = renderer;
+    o.inline_display = inline_display;
+    return o;
+}
+
+} // namespace
+
+namespace {
+
 /// Handlers that never touch the filesystem or spawn pprof can be tested
 /// directly. Anything that renders an SVG shells out to ./pprof and is covered
 /// by test_full_flow instead.
@@ -60,21 +74,12 @@ TEST_F(HttpHandlersTest, StatusUsesMillisecondDurationKeys) {
 }
 
 // ---------------------------------------------------------------------------
-// output_type validation
+// renderer parsing
 // ---------------------------------------------------------------------------
-
-TEST_F(HttpHandlersTest, InvalidOutputTypeIsRejectedWith400) {
-    auto resp = handlers.handleCpuAnalyze(1, "iciclegraph");
-
-    EXPECT_EQ(resp.status, 400);
-    EXPECT_NE(resp.body.find("output_type"), std::string::npos) << "error message should name the offending parameter";
-}
-
-TEST_F(HttpHandlersTest, EmptyOutputTypeIsRejected) {
-    auto resp = handlers.handleCpuAnalyze(1, "");
-    EXPECT_EQ(resp.status, 400);
-}
-
+// (an unknown renderer is not an error: parseChartRenderer falls back to
+// FlameGraph rather than failing the request, so there is no 400 case to assert.
+// The mapping itself is covered by ChartRendererParsing.)
+//
 // ---------------------------------------------------------------------------
 // HandlerResponse helpers
 // ---------------------------------------------------------------------------
@@ -152,9 +157,9 @@ TEST(ConcurrentCpuProfilingTest, RequestsFailFastWhileASessionIsSampling) {
 
     // Every CPU entry point must refuse immediately, not wait for the sampler.
     const auto t0 = std::chrono::steady_clock::now();
-    EXPECT_EQ(handlers.handleCpuAnalyze(5, "pprof").status, 409);
-    EXPECT_EQ(handlers.handleCpuSvgRaw(5).status, 409);
-    EXPECT_EQ(handlers.handleCpuFlamegraphRaw(5).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(5)).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(5, profiler::ChartRenderer::CallGraph)).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(5)).status, 409);
     const auto elapsed = std::chrono::steady_clock::now() - t0;
     EXPECT_LT(elapsed, std::chrono::milliseconds(100))
         << "rejection must be immediate, not queued behind the running session";
@@ -275,8 +280,8 @@ TEST(HostOwnedSessionTest, HandlersReportTheHostSessionAsBusy) {
     ASSERT_EQ(resp.headers.count("X-Go-Pprof"), 1u);
 
     // The /api/* endpoints report a conflict.
-    EXPECT_EQ(handlers.handleCpuAnalyze(1, "pprof").status, 409);
-    EXPECT_EQ(handlers.handleCpuSvgRaw(1).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(1)).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(1, profiler::ChartRenderer::CallGraph)).status, 409);
 
     profiler.stopCPUProfiler();
 }
@@ -292,7 +297,7 @@ TEST(HostOwnedSessionTest, HeapAnalysisRefusesToTakeOverAHostSession) {
     EXPECT_NE(result.find("heap profiling already in use"), std::string::npos) << result;
     EXPECT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::HEAP));
 
-    EXPECT_EQ(handlers.handleHeapAnalyze(1, "pprof").status, 409);
+    EXPECT_EQ(handlers.handleHeapChart(opts(1)).status, 409);
 
     EXPECT_TRUE(profiler.stopHeapProfiler());
 }
@@ -367,7 +372,7 @@ TEST(ConcurrentHeapAnalysisTest, HandlerReportsConflict) {
     HeapAnalysisHolder holder{profiler};
     ASSERT_TRUE(waitForHeapClaim(profiler));
 
-    auto resp = handlers.handleHeapAnalyze(1, "pprof");
+    auto resp = handlers.handleHeapChart(opts(1));
 
     EXPECT_EQ(resp.status, 409);
     EXPECT_NE(resp.body.find("heap profiling already in use"), std::string::npos) << resp.body;
@@ -389,36 +394,33 @@ TEST(ConcurrentHeapAnalysisTest, ClaimIsReleasedAfterwards) {
 // Heap analysis API shape
 // ---------------------------------------------------------------------------
 
-TEST_F(HttpHandlersTest, HeapAnalysisTakesACollectionWindow) {
-    // Heap analysis takes a duration, but it is a *collection window*, not a
-    // sampling rate: the rate is fixed by TCMALLOC_SAMPLE_PARAMETER at process
-    // start. A longer window covers more allocations, which is what a sparsely
-    // allocating process needs. Guard the contract so the distinction cannot
-    // silently regress into "duration is accepted but ignored".
-    static_assert(std::is_invocable_v<decltype(&profiler::ProfilerHttpHandlers::handleHeapAnalyze),
-                                      profiler::ProfilerHttpHandlers*, int, const std::string&>,
-                  "handleHeapAnalyze must take (duration, output_type)");
-
-    // The renderers take one too, since each can run its own sampling window.
-    // Their full signature (duration, state_based) is asserted separately in
-    // HeapRenderersCanDrawEitherSource.
-}
-
-TEST_F(HttpHandlersTest, HeapAnalyzeRejectsInvalidOutputType) {
-    auto resp = handlers.handleHeapAnalyze(1, "bogus");
-    EXPECT_EQ(resp.status, 400);
-}
-
-TEST_F(HttpHandlersTest, HeapRenderersCanDrawEitherSource) {
-    // Both renderers must be invocable for either heap source, so the UI can
-    // offer a graph for the state-based snapshot too -- not only the raw text.
+TEST_F(HttpHandlersTest, ChartEndpointsTakeDurationAndRenderer) {
+    // Each analysis endpoint takes a ChartOptions carrying duration, renderer and
+    // delivery mode. The duration is a *collection window*, not a sampling rate:
+    // the rate is fixed by TCMALLOC_SAMPLE_PARAMETER at process start. A longer
+    // window covers more allocations, which is what a sparsely allocating process
+    // needs. Guard the contract so it cannot regress into "duration is ignored".
     using H = profiler::ProfilerHttpHandlers;
 
-    auto svg = static_cast<profiler::HandlerResponse (H::*)(int, bool)>(&H::handleHeapSvgRaw);
-    EXPECT_TRUE((std::is_invocable_v<decltype(svg), H*, int, bool>));
+    static_assert(std::is_invocable_v<decltype(&H::handleCpuChart), H*, const profiler::ChartOptions&>,
+                  "handleCpuChart must take ChartOptions");
+    static_assert(std::is_invocable_v<decltype(&H::handleHeapChart), H*, const profiler::ChartOptions&>,
+                  "handleHeapChart must take ChartOptions");
+    static_assert(std::is_invocable_v<decltype(&H::handleGrowthChart), H*, const profiler::ChartOptions&>,
+                  "handleGrowthChart must take ChartOptions");
+    static_assert(std::is_invocable_v<decltype(&H::handleHeapSnapshot), H*, const profiler::ChartOptions&, bool>,
+                  "handleHeapSnapshot must take (ChartOptions, as_profile)");
+}
 
-    auto fg = static_cast<profiler::HandlerResponse (H::*)(int, bool)>(&H::handleHeapFlamegraphRaw);
-    EXPECT_TRUE((std::is_invocable_v<decltype(fg), H*, int, bool>));
+TEST_F(HttpHandlersTest, ChartRendererParsing) {
+    // "callgraph" is the pprof/graphviz diagram, "flamegraph" is FlameGraph. The
+    // old parameter was called output_type and its values named a tool rather
+    // than the resulting picture, which is what these names replace.
+    EXPECT_EQ(profiler::parseChartRenderer("callgraph"), profiler::ChartRenderer::CallGraph);
+    EXPECT_EQ(profiler::parseChartRenderer("flamegraph"), profiler::ChartRenderer::FlameGraph);
+    // Unknown or empty values fall back rather than failing the request.
+    EXPECT_EQ(profiler::parseChartRenderer(""), profiler::ChartRenderer::FlameGraph);
+    EXPECT_EQ(profiler::parseChartRenderer("pprof"), profiler::ChartRenderer::FlameGraph);
 }
 
 TEST_F(HttpHandlersTest, StateBasedRenderingReportsTheMissingSamplingVariable) {
@@ -433,7 +435,7 @@ TEST_F(HttpHandlersTest, StateBasedRenderingReportsTheMissingSamplingVariable) {
     ASSERT_TRUE(plain.getRawHeapSample().empty()) << "precondition: sampling is off in the test process";
 
     profiler::ProfilerHttpHandlers h(plain);
-    auto state = h.handleHeapSvgRaw(1, /*state_based=*/true);
+    auto state = h.handleHeapSnapshot(opts(1), /*as_profile=*/false);
     EXPECT_EQ(state.status, 500);
     EXPECT_NE(state.body.find("TCMALLOC_SAMPLE_PARAMETER"), std::string::npos) << state.body;
 }
@@ -444,7 +446,7 @@ TEST_F(HttpHandlersTest, WindowBasedRenderingDoesNotMentionTheVariable) {
 
     // Duration is clamped, and the window path must not blame the environment
     // variable it does not depend on.
-    auto resp = h.handleHeapSvgRaw(0, /*state_based=*/false);
+    auto resp = h.handleHeapChart(opts(0));
     if (resp.status == 500) {
         EXPECT_EQ(resp.body.find("TCMALLOC_SAMPLE_PARAMETER"), std::string::npos)
             << "window-based failure must not blame a variable it does not need: " << resp.body;
