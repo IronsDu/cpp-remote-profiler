@@ -333,7 +333,7 @@ profiler.setLogLevel(profiler::LogLevel::Debug);
 |------|------|------|------|
 | `renderer` | `flamegraph` \| `callgraph` | `flamegraph` | **两种不同的图形**，见下 |
 | `duration` | 1–300 | **10** | 采集窗口（秒）。CPU/Growth 用于采样，heap 用于记录分配 |
-| `output` | `inline` \| `attachment` | `inline` | `inline` 不发 `Content-Disposition`，浏览器直接显示 SVG；`attachment` 强制下载 |
+| `output` | `inline` \| `attachment` | `inline` | 见下方「两种交付方式」 |
 
 `/api/pprof/heap/snapshot` 另用 `format`：
 
@@ -341,6 +341,21 @@ profiler.setLogLevel(profiler::LogLevel::Debug);
 |------|------|------|------|
 | `format` | `profile` \| `svg` | `profile` | `profile` 返回原始 pprof 文本（交给 `go tool pprof`）；`svg` 渲染成图 |
 | `renderer` | 同上 | `flamegraph` | 仅 `format=svg` 时有意义 |
+
+### 两种交付方式
+
+`output` 决定浏览器是**显示**还是**下载**同一份 SVG。区别**只在响应头**：
+
+| 取值 | `Content-Type` | `Content-Disposition` | 浏览器行为 |
+|------|----------------|----------------------|-----------|
+| `inline`（默认） | `image/svg+xml` | **不发** | 当作 SVG 文档**直接渲染** |
+| `attachment` | `image/svg+xml` | `attachment; filename=…` | **下载**为文件 |
+
+所以想看一眼图表，直接把 URL 粘到地址栏即可，无需下载；需要存盘或交给桌面工具时用
+`output=attachment`。Web 面板每个区块都提供「🔗 打开」（inline）与「📥 下载」（attachment）两个按钮。
+
+> ⚠️ `inline` 只是"显示"，**不代表可缩放**——产物内嵌的 pan/zoom 脚本依赖的元素/初始化挂钩
+> 缺失（见下）。需要缩放请下载后用桌面工具打开，或用浏览器页面缩放。
 
 ### 两种图形不是同一种东西
 
