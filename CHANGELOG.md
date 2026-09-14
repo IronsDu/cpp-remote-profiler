@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `profiler/async_executor.h` — bounded single-worker executor for long-running jobs
 
 ### Changed
+- The Heap Snapshot section is one **output** dropdown (raw profile text / flame graph / call graph) with a single 打开 and 下载 pair, instead of separate buttons per product. Three options, one endpoint: `?format=profile`, `?format=svg&renderer=flamegraph`, `?format=svg&renderer=callgraph`.
+- Each chart section owns its renderer selector. The snapshot section previously read the Heap Profiler section's dropdown, so which picture you got from the snapshot depended on a control in a different block.
+- Every section offers 打开 (`output=inline`) alongside 下载 (`output=attachment`). The inline mode was reachable only by hand-assembling a URL before, since the buttons hard-coded attachment -- a feature nothing in the UI exercised.
 - **Breaking:** the HTTP API was consolidated. Nine endpoints across three
   profiler types became four:
 

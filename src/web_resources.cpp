@@ -241,9 +241,16 @@ static const char INDEX_PAGE[] = R"HTML(
                     <b>需要</b>在进程启动前设置 <code>TCMALLOC_SAMPLE_PARAMETER</code>，否则返回 500。
                     刚启动的进程可能显示空快照（tcmalloc 在第一次采样事件前不报告数据），稍等再试即可。
                 </span>
-                <button class="view-btn" onclick="openSnapshot('profile')">🔗 打开 profile 文本</button>
-                <button class="download-btn" id="snapshot-profile-btn" onclick="downloadSnapshot('profile')">📥 下载 profile 文本</button>
-                <button class="download-btn" id="snapshot-svg-btn" onclick="downloadSnapshot('svg')">📥 下载快照图 (SVG)</button>
+                <div class="input-group">
+                    <label for="snapshot-output">快照输出:</label>
+                    <select id="snapshot-output">
+                        <option value="profile">原始 profile 文本</option>
+                        <option value="flamegraph">火焰图 (FlameGraph)</option>
+                        <option value="callgraph">调用图 (callgraph)</option>
+                    </select>
+                </div>
+                <button class="view-btn" onclick="openSnapshot()">🔗 打开</button>
+                <button class="download-btn" id="snapshot-btn" onclick="downloadSnapshot()">📥 下载</button>
             </div>
         </div>
 
@@ -351,11 +358,28 @@ static const char INDEX_PAGE[] = R"HTML(
             window.open(url, '_blank');
         }
 
-        function openSnapshot(format) {
-            const p = new URLSearchParams({ format, output: 'inline' });
-            if (format === 'svg') p.set('renderer', document.getElementById('heap-renderer').value);
-            const url = `/api/pprof/heap/snapshot?${p.toString()}`;
-            log(`🔗 正在打开堆快照 (${format === 'svg' ? '渲染图' : '原始 profile'})...\n    ${url}`);
+        /// 组装快照请求。下拉里的"原始 profile 文本"走 format=profile，
+        /// 图形两项走 format=svg + renderer。
+        function snapshotUrl(output, delivery) {
+            const p = new URLSearchParams({ output: delivery });
+            if (output === 'profile') {
+                p.set('format', 'profile');
+            } else {
+                p.set('format', 'svg');
+                p.set('renderer', output);
+            }
+            return `/api/pprof/heap/snapshot?${p.toString()}`;
+        }
+
+        function snapshotOutputLabel(output) {
+            return output === 'profile' ? '原始 profile 文本'
+                 : output === 'flamegraph' ? '火焰图' : '调用图';
+        }
+
+        function openSnapshot() {
+            const output = document.getElementById('snapshot-output').value;
+            const url = snapshotUrl(output, 'inline');
+            log(`🔗 正在打开堆快照 (${snapshotOutputLabel(output)})...\n    ${url}`);
             window.open(url, '_blank');
         }
 
@@ -384,26 +408,24 @@ static const char INDEX_PAGE[] = R"HTML(
                 });
         }
 
-        /// Heap 快照：format=profile 取原始文本（交 go tool pprof），format=svg 取渲染图。
-        function downloadSnapshot(format) {
-            const btn = document.getElementById(format === 'svg' ? 'snapshot-svg-btn' : 'snapshot-profile-btn');
+        /// Heap 快照：产出由 snapshot-output 下拉决定（原始文本 / 火焰图 / 调用图）。
+        function downloadSnapshot() {
+            const output = document.getElementById('snapshot-output').value;
+            const btn = document.getElementById('snapshot-btn');
             const original = btn.textContent;
             btn.disabled = true;
             btn.textContent = '⏳ 生成中...';
-            const renderer = document.getElementById('heap-renderer').value;
-            log(`📥 正在获取堆快照 (${format === 'svg' ? '渲染图' : '原始 profile'})...`);
+            log(`📥 正在获取堆快照 (${snapshotOutputLabel(output)})...`);
 
-            const p = new URLSearchParams({ format, output: 'attachment' });
-            if (format === 'svg') p.set('renderer', renderer);
-
+            // Promise.resolve() 包一层：同步异常也会走 catch，否则按钮会永久 disabled
             Promise.resolve()
-                .then(() => fetch(`/api/pprof/heap/snapshot?${p.toString()}`))
+                .then(() => fetch(snapshotUrl(output, 'attachment')))
                 .then(r => (r.ok ? r.blob() : r.text().then(t => Promise.reject(new Error(errorTextFrom(r, t))))))
                 .then(blob => {
-                    const name = format === 'svg' ? `heap_snapshot_${timestamp()}.svg` : 'heap.prof';
+                    const name = output === 'profile' ? 'heap.prof' : `heap_snapshot_${timestamp()}.svg`;
                     saveBlob(blob, name);
-                    log(`✅ 堆快照已保存 ${name} (${(blob.size / 1024).toFixed(1)} KB)\\n` +
-                        (format === 'svg' ? '' : `   分析: go tool pprof ./your_app ${name}`));
+                    log(`✅ 堆快照已保存 ${name} (${(blob.size / 1024).toFixed(1)} KB)\n` +
+                        (output === 'profile' ? `   分析: go tool pprof ./your_app ${name}` : ''));
                 })
                 .catch(e => log(`❌ 堆快照失败: ${e.message}`))
                 .finally(() => {

@@ -339,7 +339,7 @@ profiler.setLogLevel(profiler::LogLevel::Debug);
 
 | 参数 | 取值 | 默认 | 说明 |
 |------|------|------|------|
-| `format` | `profile` \| `svg` | `profile` | `profile` 返回原始 pprof 文本（交给 `go tool pprof`）；`svg` 渲染成图 |
+| `format` | `profile` \| `svg` | `profile` | `profile` 返回原始 pprof 文本（交给 `go tool pprof`）；`svg` 渲染成图（面板的下拉即这三项：文本 / 火焰图 / 调用图） |
 | `renderer` | 同上 | `flamegraph` | 仅 `format=svg` 时有意义 |
 
 ### 两种交付方式
@@ -439,7 +439,15 @@ Web 控制面板分成四块，各自对应一个端点：
 | Heap Snapshot | `/api/pprof/heap/snapshot` | **状态式**：当前堆累计快照（存量） |
 | Heap Growth | `/api/pprof/growth` | 增长栈分析 |
 
-每块都有「📥 下载…」按钮；快照那块另提供原始 profile 文本下载（交给 `go tool pprof` 分析）。
+每块都有「🔗 打开」（inline，浏览器内显示）与「📥 下载」（attachment）两个按钮。
+
+Heap Snapshot 那块用一个**快照输出**下拉选择产出，三种选项走同一个端点：
+
+| 下拉选项 | 实际请求 |
+|----------|----------|
+| 原始 profile 文本 | `?format=profile`（交给 `go tool pprof`） |
+| 火焰图 (FlameGraph) | `?format=svg&renderer=flamegraph` |
+| 调用图 (callgraph) | `?format=svg&renderer=callgraph` |
 
 ### 依赖版本
 

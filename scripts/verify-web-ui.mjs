@@ -143,14 +143,26 @@ try {
         document.querySelectorAll('button[onclick^="openChart"], button[onclick^="openSnapshot"]').length);
     record('panel exposes the inline (open in place) actions', openButtons === 4, `found ${openButtons}`);
 
+    // Every chart-producing section owns its renderer selector. The snapshot
+    // section previously read the Heap Profiler's dropdown, so which picture you
+    // got depended on a control in a different section.
+    const selectors = await page.evaluate(() => ({
+        cpu: !!document.getElementById('cpu-renderer'),
+        heap: !!document.getElementById('heap-renderer'),
+        growth: !!document.getElementById('growth-renderer'),
+        snapshot: !!document.getElementById('snapshot-output'),
+    }));
+    record('each section has its own renderer selector', Object.values(selectors).every(Boolean),
+           JSON.stringify(selectors));
+
     const controls = await page.evaluate(() => ({
         cpuDuration: !!document.getElementById('cpu-duration'),
         cpuRenderer: !!document.getElementById('cpu-renderer'),
         heapDuration: !!document.getElementById('heap-duration'),
         heapRenderer: !!document.getElementById('heap-renderer'),
         growthRenderer: !!document.getElementById('growth-renderer'),
-        snapshotButtons: !!document.getElementById('snapshot-profile-btn') &&
-                         !!document.getElementById('snapshot-svg-btn'),
+        snapshotOutput: !!document.getElementById('snapshot-output'),
+        snapshotButton: !!document.getElementById('snapshot-btn'),
     }));
     record('all chart controls present', Object.values(controls).every(Boolean),
            JSON.stringify(controls));
@@ -193,11 +205,13 @@ try {
     console.log('\nHeap growth chart');
     await checkDownload('growth chart', () => downloadChart('growth'));
 
-    console.log('\nHeap snapshot (raw profile)');
-    await checkDownload('snapshot profile', () => downloadSnapshot('profile'));
-
-    console.log('\nHeap snapshot (rendered SVG)');
-    await checkDownload('snapshot svg', () => downloadSnapshot('svg'));
+    // The snapshot section is one dropdown (raw text / flame graph / call graph)
+    // plus one download button, so each option must produce a distinct file.
+    for (const output of ['profile', 'flamegraph', 'callgraph']) {
+        console.log(`\nHeap snapshot (${output})`);
+        await page.select('#snapshot-output', output);
+        await checkDownload(`snapshot ${output}`, () => downloadSnapshot());
+    }
 
     // The delivery modes must actually differ in the response, not just in the
     // query string: `inline` omits Content-Disposition so the browser renders the
@@ -227,6 +241,28 @@ try {
     record('both modes return the same kind of payload',
            modes.inline.bytes > 1000 && modes.attachment.bytes > 1000,
            `inline=${modes.inline.bytes}B attachment=${modes.attachment.bytes}B`);
+
+    // The snapshot endpoint must honour renderer too, for both values.
+    console.log('\nHeap snapshot renderers');
+    const snap = await page.evaluate(async () => {
+        const out = {};
+        for (const renderer of ['flamegraph', 'callgraph']) {
+            const r = await fetch(`/api/pprof/heap/snapshot?format=svg&renderer=${renderer}`);
+            const body = await r.text();
+            out[renderer] = {
+                status: r.status,
+                rects: (body.match(/<rect/g) || []).length,
+                polygons: (body.match(/<polygon/g) || []).length,
+            };
+        }
+        return out;
+    });
+    record('snapshot renders a flame graph',
+           snap.flamegraph.status === 200 && snap.flamegraph.rects > 0 && snap.flamegraph.polygons === 0,
+           JSON.stringify(snap.flamegraph));
+    record('snapshot renders a call graph',
+           snap.callgraph.status === 200 && snap.callgraph.polygons > 0 && snap.callgraph.rects === 0,
+           JSON.stringify(snap.callgraph));
 
     record('no JavaScript errors during the run', pageErrors.length === 0, pageErrors.join(' | '));
 
