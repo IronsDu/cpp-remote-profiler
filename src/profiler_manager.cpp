@@ -264,8 +264,16 @@ bool ProfilerManager::stopHeapProfiler() {
     }
 
     if (IsHeapProfilerRunning()) {
-        // 保存 heap profile 到文件
-        std::string heap_profile = GetHeapProfile();
+        // GetHeapProfile() returns a malloc'd string that the caller must free;
+        // converting it straight into a std::string lost the pointer and leaked
+        // the entire profile on every stop (LSan measured ~11.6KB per call). Take
+        // ownership first, then release it explicitly.
+        char* profile = GetHeapProfile();
+        std::string heap_profile;
+        if (profile != nullptr) {
+            heap_profile.assign(profile);
+            free(profile);
+        }
         std::string output_path = profiler_states_[ProfilerType::HEAP].output_path;
 
         std::ofstream file(output_path);

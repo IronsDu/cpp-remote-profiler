@@ -49,6 +49,15 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
 - Installation layout made consistent across `lib`/`lib64` hosts so `find_package()` works (GNUInstallDirs is now included before the install rules)
 
 ### Fixed
+- `stopHeapProfiler()` freed nothing for the profile it generates:
+  `GetHeapProfile()` returns a malloc'd string the caller must `free()`, and
+  letting it convert directly into a `std::string` discarded the pointer, leaking
+  the entire profile on every stop (LeakSanitizer: ~11.6KB per call). The path
+  only became reachable once `analyzeHeapProfile()` and the new
+  `getRawHeapProfileSample()` started routing through `stopHeapProfiler()`, but
+  the leak itself is older: that function previously had no callers at all.
+  Surfaced by the new HttpHandlersTest cases, which are the first to drive
+  start/stop directly.
 - `~ProfilerManager()` did not stop the heap profiler: it called `IsHeapProfilerRunning()`, a query whose result was discarded, leaving the process-global profiler recording after the object was destroyed and still dumping profiles during process exit
 - `/pprof/symbol` now implements the Go pprof symbolz protocol correctly
 - CMake package config exports the correct targets and dependency lookup
