@@ -102,6 +102,7 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
 - Installation layout made consistent across `lib`/`lib64` hosts so `find_package()` works (GNUInstallDirs is now included before the install rules)
 
 ### Fixed
+- Downloaded charts no longer overwrite each other. Filenames were built from a second-precision timestamp, so two downloads completing within the same second produced the same name and the browser silently replaced the first file with the second -- picking 火焰图 then 调用图 for the heap snapshot lost the flame graph, and the panel still reported both as saved. The timestamp now carries milliseconds. Found because the browser regression's download check counted files instead of comparing names, so an overwrite looked like a success; it now tracks the filename set and asserts that each of the seven downloads produced its own file.
 
 
 - The test suite is safe to run in parallel. The profiler's intermediate artifacts

@@ -341,8 +341,14 @@ static const char INDEX_PAGE[] = R"HTML(
             return detail;
         }
 
+        /// 生成文件名用的时间戳，**精确到毫秒**。
+        ///
+        /// 只精确到秒是不够的：连续下载两次（例如先取火焰图快照、再取调用图快照，
+        /// 两次都可能在同 1 秒内完成）会得到**同一个文件名**，浏览器于是用第二个
+        /// 覆盖第一个——表现为"点了下载，文件却没多出来"。
+        /// ISO 串形如 2026-09-15T14:01:16.123Z，去掉结尾的 'Z' 并替换分隔符即可直接当文件名。
         function timestamp() {
-            return new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            return new Date().toISOString().replace(/[:.]/g, '-').slice(0, -1);
         }
 
         /// 在浏览器里直接打开产物（output=inline）。

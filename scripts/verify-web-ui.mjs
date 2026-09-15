@@ -169,25 +169,33 @@ try {
 
     async function waitForFileCount(before, timeoutMs = 60000) {
         const deadline = Date.now() + timeoutMs;
+        const read = () => fs.readdirSync(DOWNLOAD_DIR).filter(f => !f.endsWith('.crdownload'));
         while (Date.now() < deadline) {
-            const files = fs.readdirSync(DOWNLOAD_DIR).filter(f => !f.endsWith('.crdownload'));
+            const files = read();
             if (files.length > before) return files;
             await new Promise(r => setTimeout(r, 250));
         }
-        return fs.readdirSync(DOWNLOAD_DIR).filter(f => !f.endsWith('.crdownload'));
+        return read();
     }
 
     async function checkDownload(name, clickExpr) {
-        const before = fs.readdirSync(DOWNLOAD_DIR).filter(f => !f.endsWith('.crdownload')).length;
+        // Track the set of filenames, not just the count: a download that reuses an
+        // existing name overwrites it, leaving the count unchanged. That is exactly
+        // how a second-precision filename timestamp hid a real defect -- the
+        // call-graph snapshot silently replaced the flame-graph one, and a
+        // count-based check reported success.
+        const before = new Set(fs.readdirSync(DOWNLOAD_DIR).filter(f => !f.endsWith('.crdownload')));
         requests.length = 0;
         await page.evaluate(clickExpr);
-        const files = await waitForFileCount(before);
-        const saved = files.length > before;
+        const files = await waitForFileCount(before.size);
+        const added = files.filter(f => !before.has(f));
+        const saved = added.length > 0;
         const disabled = await page.$$eval('button', bs =>
             bs.filter(b => b.disabled).map(b => b.textContent.trim()));
         const logText = await page.$eval('#output', el => el.textContent.replace(/\s+/g, ' ').slice(0, 90));
         record(`${name}: request issued`, requests.length > 0, requests.join(', '));
-        record(`${name}: file saved`, saved, `files=${files.length}`);
+        record(`${name}: file saved`, saved,
+               saved ? `added ${added.join(', ')}` : `no new filename (files=${files.length})`);
         record(`${name}: no button left disabled`, disabled.length === 0, disabled.join(' | '));
         if (!saved) console.log(`        log panel: ${logText}`);
     }
@@ -273,6 +281,14 @@ try {
     }
     const emptyFiles = savedFiles.filter(f => fs.statSync(path.join(DOWNLOAD_DIR, f)).size === 0);
     record('every saved file is non-empty', emptyFiles.length === 0, emptyFiles.join(', '));
+
+    // Seven downloads are exercised -- cpu flamegraph, cpu callgraph, heap,
+    // growth, and the three snapshot outputs -- so fewer files means two of them
+    // ended up with the same name and one overwrote the other.
+    const EXPECTED_DOWNLOADS = 7;
+    record('each download produced its own file',
+           savedFiles.length >= EXPECTED_DOWNLOADS,
+           `${savedFiles.length} files (expected ${EXPECTED_DOWNLOADS})`);
 } finally {
     await browser.close();
 }

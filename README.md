@@ -130,6 +130,17 @@ cd build && ./profiler_example
 
 服务监听 `http://localhost:8080`。
 
+示例程序会起几个**有名字的后台线程**，便于验证 `/api/thread/stacks`：
+
+| 线程名 | 行为 | 预期栈顶 |
+|--------|------|----------|
+| `profiler-worker` | 跑 CPU/内存负载后 sleep 5s | `clock_nanosleep` |
+| `profiler-sleeper` | 每 1.5s 醒一次 | `clock_nanosleep` |
+| `profiler-parked` | 永久等在条件变量上 | futex 等待 |
+
+> 端点输出里会看到 `profiler-sleepe`（少一个 `r`）——这是**内核把线程名截断到 15 字符**，
+> 不是拼写错误。输出读的是 `/proc/<tid>/comm`，与 `ps`/`top` 显示的值一致。
+
 ## 运行时依赖
 
 `ProfilerManager` 构造时会**向进程当前工作目录写入两个脚本**，分析接口通过相对路径调用它们：
