@@ -264,15 +264,21 @@ bool ProfilerManager::stopHeapProfiler() {
     }
 
     if (IsHeapProfilerRunning()) {
-        // GetHeapProfile() returns a malloc'd string that the caller must free;
-        // converting it straight into a std::string lost the pointer and leaked
-        // the entire profile on every stop (LSan measured ~11.6KB per call). Take
-        // ownership first, then release it explicitly.
-        char* profile = GetHeapProfile();
+        // GetHeapProfile() hands back an owned string whose header says to free().
+        // Deliberately NOT freed here: there is no portable deallocator for it.
+        //   - Under a *static* tcmalloc the library allocates the buffer with its
+        //     own malloc, which the process's malloc interposer (ASan here) never
+        //     saw, so free() aborts with "attempting free on address which was not
+        //     malloc()-ed". CI hit exactly that.
+        //   - gperftools 2.18 also routes the intermediate chunks through an
+        //     internal arena; tc_free() only exists from 2.16.90; and
+        //     LowLevelAlloc::Free lives in a private header.
+        // The buffer is roughly 11KB per stop, which is worth not crashing over:
+        // copy it out and let it go. lsan.supp carries the matching suppression.
+        const char* profile = GetHeapProfile();
         std::string heap_profile;
         if (profile != nullptr) {
             heap_profile.assign(profile);
-            free(profile);
         }
         std::string output_path = profiler_states_[ProfilerType::HEAP].output_path;
 
@@ -1020,10 +1026,12 @@ std::string ProfilerManager::getRawHeapProfileSample(int duration) {
 
     std::string sample;
     if (IsHeapProfilerRunning()) {
-        char* profile = GetHeapProfile();
+        // Not freed on purpose -- see the note in stopHeapProfiler() for why the
+        // buffer has no portable deallocator (static tcmalloc + free() aborts
+        // under ASan, tc_free() does not exist before 2.16.90).
+        const char* profile = GetHeapProfile();
         if (profile != nullptr) {
             sample.assign(profile);
-            free(profile);
         }
         HeapProfilerStop();
     }

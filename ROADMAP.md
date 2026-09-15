@@ -98,6 +98,12 @@
 
 ### 待修
 
+- **`GetHeapProfile()` 的返回缓冲区没有可移植的释放方式**：头文件说调用方应 `free()`，
+  上游测试也这么做，但静态链接 tcmalloc 时该缓冲区来自库自身的分配器，进程的 malloc
+  拦截器（ASan）不认识它，`free()` 会 abort；`tc_free()` 仅 gperftools ≥ 2.16.90 存在；
+  2.18 还把中间 chunk 走内部 arena，其 `Free` 在私有头文件里。当前选择是**不释放**
+  （每次约 11KB，已在 `lsan.supp` 登记）。若将来 gperftools 提供公开释放函数，应改回释放。
+
 - **生成的 SVG 无法缩放**：FlameGraph 的 `zoom()` 找不到它要操作的 `#viewport`（其产物只有
   `#frames`），pprof 的 SVGPan 库则从未被初始化（产物缺少 `onload` 挂钩）。两条路径的交互脚本
   都是死代码。可选方案：改为在服务端生成自己的交互式 SVG，或在文档中明确"下载后用桌面工具看"。

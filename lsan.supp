@@ -6,3 +6,14 @@
 # This is expected behavior and not a real memory leak.
 # See: https://github.com/gperftools/gperftools
 leak:MallocExtension::Initialize
+
+# The string returned by GetHeapProfile() is intentionally not freed.
+#
+# Its header says the caller should free() it, but there is no portable
+# deallocator: with a statically linked tcmalloc the buffer comes from the
+# library's own allocator, which the process's malloc interposer never saw, so
+# free() aborts with "attempting free on address which was not malloc()-ed".
+# gperftools 2.18 additionally routes the intermediate chunks through an internal
+# arena, tc_free() only exists from 2.16.90, and LowLevelAlloc::Free lives in a
+# private header. The buffer is ~11KB per stop, so retaining it is the safe trade.
+leak:GetHeapProfile
