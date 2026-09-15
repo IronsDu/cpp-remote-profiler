@@ -372,17 +372,22 @@ bool stopHeapProfiler();
 采集 Heap 并生成图表 SVG。
 
 ```cpp
-std::string analyzeHeapProfile(const std::string& output_type = "flamegraph");
+std::string analyzeHeapProfile(int duration = 1, const std::string& output_type = "flamegraph");
 ```
 
 **参数**:
+- `duration`: 采集窗口（秒），默认 **1**，内部钳制到 1..300
 - `output_type`: 渲染方式（`"flamegraph"` 或 `"pprof"`）
 
 **返回值**: SVG 字符串；失败时返回 `{"error":"..."}` JSON 字符串
 
-**说明**: **没有 duration 参数**。gperftools 的 heap profiling 是按分配驱动的：`HeapProfilerStart()`
-开始记录，`HeapProfilerDump()` 写出快照，与经过的时间无关。实现内部只开启一个固定的采样窗口（1 秒），
-然后 dump。
+**说明**: `duration` 是**采集窗口**，不是采样率。gperftools 的 heap profiling 按分配驱动：
+`HeapProfilerStart()` 开始记录，`HeapProfilerDump()` 写出快照。窗口决定**覆盖多久的分配**，
+采样率则由 `TCMALLOC_SAMPLE_PARAMETER` 在进程启动前固定，运行时不可调。
+
+> ⚠️ **C++ 层默认 1 秒，HTTP 层默认 10 秒**。HTTP 层用更长默认值是实测结果：短窗口经常
+> 采不到足够的分配而渲染失败。直接调用此函数时，分配稀疏的进程请显式传入更大的
+> `duration`。
 
 **记录的是"窗口内发生的分配"，不是"当前堆里的内存"** —— 这是最容易误解的一点：
 

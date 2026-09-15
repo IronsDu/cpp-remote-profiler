@@ -28,7 +28,7 @@
 - **Heap Growth Profiling** — 堆增长栈分析，无需 `TCMALLOC_SAMPLE_PARAMETER`
 - **线程堆栈捕获** — 采集进程内所有线程的调用栈，支持动态线程数
 - **标准 pprof 接口** — `/pprof/*` 兼容 Go pprof 工具链
-- **一键分析** — `/api/*/analyze` 直接返回火焰图 SVG，浏览器可看
+- **一键分析** — `/api/pprof/*` 直接返回渲染好的 SVG（默认火焰图，可选调用图），浏览器可显示
 - **框架无关** — `ProfilerHttpHandlers` 返回普通结构体，可接入任意 Web 框架
 - **可选 Web 层** — 核心库不依赖任何 Web 框架
 - **可配置日志** — 实现 `LogSink` 即可接入宿主应用的日志系统
@@ -39,7 +39,8 @@
 参考 Go pprof 提供两种互补的使用方式：
 
 1. **标准 pprof 模式** — `/pprof/profile`、`/pprof/heap` 返回原始 profile 文件，交给 `go tool pprof` 分析
-2. **一键分析模式** — `/api/pprof/cpu` 等直接返回 SVG，适合浏览器即时查看
+2. **一键分析模式** — `/api/pprof/cpu` 等直接返回 SVG（`renderer=flamegraph` 火焰图或 `renderer=callgraph` 调用图），
+   默认 `output=inline`，浏览器可直接显示
 
 架构上分为两层，边界清晰：
 
@@ -48,7 +49,12 @@
 - `ProfilerHttpHandlers` — 位于核心库中，返回 `HandlerResponse{status, content_type, body, headers}`，不绑定任何框架
 - `ProfilerManager` — 普通类而非单例，生命周期由使用者管理
 
-接口命名规则：`/pprof/*` 为 Go pprof 标准接口；`/api/*` 为项目自定义的分析/辅助接口；`/show_*.html` 为内置的 SVG 查看页。
+接口命名规则：
+
+- `/pprof/*` — Go pprof 标准接口，返回**原始 profile** 供 `go tool pprof` 消费
+- `/api/pprof/*` — 项目自定义的**分析接口**，服务端采样/渲染后直接返回 SVG
+- `/api/status`、`/api/thread/stacks` — 状态查询与线程栈
+- `/` — Web 控制面板（不再有独立的查看器页）
 
 ## 快速开始
 
@@ -263,7 +269,7 @@ int main() {
 
 int main() {
     profiler::ProfilerManager profiler;
-    profiler::registerDrogonHandlers(profiler);   // 注册全部 /pprof/* 与 /api/* 路由
+    profiler::registerDrogonHandlers(profiler);   // 注册 /pprof/* 与 /api/pprof/* 等全部路由
     drogon::app().addListener("0.0.0.0", 8080).run();
 }
 ```

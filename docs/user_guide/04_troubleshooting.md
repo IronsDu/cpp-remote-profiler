@@ -719,12 +719,16 @@ int main() {
 **A**: CPU 与 Heap 是两套独立的 profiling 状态，可以并存。但**同一时刻只能有一个 CPU 采样会话**：`analyzeCPUProfile()` / `getRawCPUProfile()` 会先原子认领会话，认领失败即拒绝，**不会**打断正在采样的另一方（包括宿主用 `startCPUProfiler()` 开的会话）。
 
 ### Q: Heap 窗口式采集的 `duration` 是什么意思？
-**A**: 因为对 heap profiling 而言时长没有意义。gperftools 的 heap profiling 是**按分配驱动**的：`HeapProfilerStart()` 开始记录、`HeapProfilerDump()` 写出快照，采样率由**进程启动时**的 `TCMALLOC_SAMPLE_PARAMETER` 决定，与运行时长无关。
+**A**: 它决定**采集多久**（覆盖度），不是**采样率**（精度）。gperftools 的 heap profiling 按分配驱动：
+`HeapProfilerStart()` 开始记录、`HeapProfilerDump()` 写出快照；采样率由**进程启动时**的
+`TCMALLOC_SAMPLE_PARAMETER` 决定，运行时不可调。
 
-该接口内部只开一个固定的 1 秒窗口让应用自身的分配被记录，然后 dump。要提高采样精度，请**在启动前**设置 `TCMALLOC_SAMPLE_PARAMETER=524288`（默认 `0` 表示不采样，此时快照会明显偏稀疏）。
+所以 `duration` 越长，覆盖到的分配越多——分配稀疏的进程需要更长窗口才采得到东西。HTTP 层默认
+**10 秒**（实测 3 秒窗口失败率 35–45%）。要提高**采样精度**则必须**在启动前**设置
+`TCMALLOC_SAMPLE_PARAMETER=524288`（默认 `0` 表示不采样，此时快照会明显偏稀疏）。
 
 ### Q: heap 图是空的 / 报 "No heap profile data was produced"？
-**A**: 说明这 1 秒窗口内进程**没有发生内存分配**。heap profiler 记录的是**窗口内的分配事件**，不是当前堆的内容，所以不会凭空造出数据。请确保被分析进程正处于负载中，或在窗口内制造真实分配后再试。
+**A**: 说明该采集窗口内进程**没有发生内存分配**。heap profiler 记录的是**窗口内的分配事件**，不是当前堆的内容，所以不会凭空造出数据。请确保被分析进程正处于负载中，或在窗口内制造真实分配后再试。
 
 ### Q: 进程内存很高，为什么 heap 图却是空的？
 **A**: `/api/pprof/heap` 是**窗口式**的：只记录采集窗口内**新发生**的分配（流量），不反映此刻堆里的存量。`duration` 决定采集多久，默认 10 秒——实测 3 秒窗口有 35–45% 的请求采不到样本而失败。如果内存是在采样开始前分配的、窗口内已停止分配，结果就是空的。
