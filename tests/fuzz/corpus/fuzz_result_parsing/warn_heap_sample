@@ -1,0 +1,2 @@
+%warn: TCMALLOC_SAMPLE_PARAMETER is not set
+heap profile: 0: 0 [ 0: 0] @ heap_v2/0

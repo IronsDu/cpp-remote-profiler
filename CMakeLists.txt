@@ -23,6 +23,13 @@ option(ENABLE_COVERAGE "Enable code coverage reporting" OFF)
 
 option(BUILD_DOCS "Build API documentation" OFF)
 
+# Fuzz targets (libFuzzer). Off by default: they need a clang with the fuzzer
+# runtime and are run deliberately, not as part of a normal build.
+option(REMOTE_PROFILER_BUILD_FUZZERS "Build libFuzzer targets" OFF)
+# A cache string, not option(): option() would type it BOOL, and its numeric value
+# would be dropped on any re-configure.
+set(REMOTE_PROFILER_FUZZ_SECONDS 20 CACHE STRING "Seconds each fuzz target runs in the smoke test")
+
 message(STATUS "Build options:")
 message(STATUS "  BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
 message(STATUS "  REMOTE_PROFILER_INSTALL: ${REMOTE_PROFILER_INSTALL}")
@@ -31,6 +38,7 @@ message(STATUS "  REMOTE_PROFILER_BUILD_TESTS: ${REMOTE_PROFILER_BUILD_TESTS}")
 message(STATUS "  REMOTE_PROFILER_ENABLE_WEB: ${REMOTE_PROFILER_ENABLE_WEB}")
 message(STATUS "  ENABLE_COVERAGE: ${ENABLE_COVERAGE}")
 message(STATUS "  BUILD docs: ${BUILD_DOCS}")
+message(STATUS "  BUILD fuzzers: ${REMOTE_PROFILER_BUILD_FUZZERS}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -276,6 +284,19 @@ if(REMOTE_PROFILER_BUILD_TESTS)
     )
     add_test(NAME ResultParsingTest COMMAND test_result_parsing)
 
+    # Renderer-output and request-body parsing (core only). The fuzz targets in
+    # tests/fuzz/ explore the same functions; these pin their documented behaviour.
+    add_executable(test_renderer_parsing tests/test_renderer_parsing.cpp)
+    target_link_libraries(test_renderer_parsing
+        PRIVATE
+        profiler_core
+        GTest::gtest
+        GTest::gtest_main
+        pthread
+    )
+    target_include_directories(test_renderer_parsing PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME RendererParsingTest COMMAND test_renderer_parsing)
+
     # Thread stack capture (core only -- works without Drogon)
     add_executable(test_thread_stacks tests/test_thread_stacks.cpp)
     target_link_libraries(test_thread_stacks
@@ -290,6 +311,63 @@ if(REMOTE_PROFILER_BUILD_TESTS)
     message(STATUS "Tests will be built")
 else()
     message(STATUS "Tests disabled")
+endif()
+
+# ============================================================================
+# Fuzz targets (libFuzzer)
+# ============================================================================
+# Kept separate from the GoogleTest targets: these need -fsanitize=fuzzer and are
+# long-running by nature. Each one links only profiler_core, so a fuzz build does
+# not drag in Drogon.
+if(REMOTE_PROFILER_BUILD_FUZZERS)
+    # enable_testing() otherwise happens only inside the GoogleTest block, so a
+    # fuzz-only build (tests off) would build the targets but register nothing.
+    if(NOT REMOTE_PROFILER_BUILD_TESTS)
+        enable_testing()
+    endif()
+
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "REMOTE_PROFILER_BUILD_FUZZERS requires clang (libFuzzer is part of the "
+            "clang runtime); the current compiler is ${CMAKE_CXX_COMPILER_ID}.")
+    endif()
+
+    # Fuzzing wants coverage instrumentation plus a sanitizer to catch the memory
+    # errors the coverage alone would miss.
+    set(FUZZ_SANITIZERS "fuzzer,address,undefined")
+
+    # Shared flags so all three targets behave identically.
+    function(add_fuzz_target name source)
+        add_executable(${name} tests/fuzz/${source})
+        target_link_libraries(${name} PRIVATE profiler_core pthread)
+        # The targets under test live in src/internal/, which profiler_core exposes
+        # only to itself; fuzzing the parsing helpers is exactly the point here.
+        target_include_directories(${name} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+        target_compile_options(${name} PRIVATE -fsanitize=${FUZZ_SANITIZERS} -fno-omit-frame-pointer -g)
+        target_link_options(${name} PRIVATE -fsanitize=${FUZZ_SANITIZERS})
+        # A corpus directory per target, seeded from tests/fuzz/corpus/<name>.
+        set(corpus_dir "${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/corpus/${name}")
+        file(MAKE_DIRECTORY "${corpus_dir}")
+        add_test(NAME ${name}
+                 COMMAND ${name} -runs=1 -seed=1 "${corpus_dir}")
+        set_tests_properties(${name} PROPERTIES LABELS "fuzz")
+    endfunction()
+
+    add_fuzz_target(fuzz_renderer_output fuzz_renderer_output.cpp)
+    add_fuzz_target(fuzz_result_parsing fuzz_result_parsing.cpp)
+    add_fuzz_target(fuzz_http_params fuzz_http_params.cpp)
+
+    # Smoke test: run each target for a bounded time so CI exercises more than the
+    # corpus. Excluded from the default test run because it takes minutes.
+    add_test(NAME FuzzSmoke
+             COMMAND ${CMAKE_COMMAND}
+                     -DFUZZ_SECONDS=${REMOTE_PROFILER_FUZZ_SECONDS}
+                     -DFUZZ_BINARIES=$<TARGET_FILE:fuzz_renderer_output>,$<TARGET_FILE:fuzz_result_parsing>,$<TARGET_FILE:fuzz_http_params>
+                     -DCORPUS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/corpus
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run-fuzz-smoke.cmake)
+    set_tests_properties(FuzzSmoke PROPERTIES LABELS "fuzz" TIMEOUT 900)
+
+    message(STATUS "Fuzz targets will be built (smoke test: ${REMOTE_PROFILER_FUZZ_SECONDS}s each)")
 endif()
 
 # Note: Web files are now embedded in C++ code (src/web_resources.cpp)

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- libFuzzer targets for the parsers, behind `-DREMOTE_PROFILER_BUILD_FUZZERS=ON`
+  (clang only, off by default): `fuzz_renderer_output`, `fuzz_result_parsing`,
+  `fuzz_http_params`, with a committed seed corpus each. `ctest -L fuzz` replays the
+  corpora and then runs a bounded smoke pass; a new CI job builds and runs them, and
+  uploads crash reproducers on failure.
+- The parsing these targets cover moved into `internal/renderer_output_parsing.h` and
+  is now exercised by unit tests as well. Three copies of the same logic were
+  involved: the flamegraph "ERROR:" extraction existed twice (HTTP layer and core),
+  and the pprof symbolz body splitting was inline in the handler. Each had drifted
+  slightly, so a fix to one would not have reached the others.
+- `internal::parseSymbolRequest()` strips a trailing `\r`, so CRLF bodies from a
+  client now resolve their addresses instead of passing a stray `\r` to stoull().
 
 
 - `/api/thread/stacks` (and `getThreadCallStacks()`) print each thread's **name** next to its tid, read from `/proc/<tid>/comm`. A bare tid is not identifiable when reading the output afterwards; the name is what tells you that thread 1234 is `DrogonIoLoop` and 1235 is a worker parked on a futex.
