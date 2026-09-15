@@ -7,6 +7,27 @@
 #include <iostream>
 #include <thread>
 
+namespace {
+
+/// Keep one core busy for at least @p ms milliseconds.
+///
+/// gperftools samples whichever threads are *running*, so a window spent in
+/// sleep() legitimately yields an empty profile. Tests that require a non-empty
+/// profile must therefore generate real CPU work for the whole window instead of
+/// sleeping through it -- otherwise they fail whenever the machine happens to be
+/// idle, which is exactly how this test failed under parallel ctest.
+void burnCPUFor(int ms) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    volatile uint64_t sink = 0;
+    while (std::chrono::steady_clock::now() < deadline) {
+        for (int i = 0; i < 20000; ++i) {
+            sink += static_cast<uint64_t>(i) * 2654435761u;
+        }
+    }
+}
+
+} // namespace
+
 // 测试1: 验证 gperftools 生成的 profile 文件格式
 TEST(FullFlowTest, GperftoolsGeneratesValidProfile) {
     const char* profile_path = "/tmp/test_full.prof";
@@ -25,7 +46,8 @@ TEST(FullFlowTest, GperftoolsGeneratesValidProfile) {
         std::sort(data.begin(), data.end());
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Keep sampling real work rather than idling: see burnCPUFor().
+    burnCPUFor(500);
 
     // 停止 profiler
     ProfilerStop();
@@ -163,8 +185,16 @@ TEST(FullFlowTest, ConcurrentProfilingRequests) {
 TEST(FullFlowTest, GetRawCPUProfile) {
     profiler::ProfilerManager profiler;
 
+    // Sample while work is actually running: the profiler only records samples
+    // from executing threads, so a 1s window with nothing to sample returns an
+    // empty profile by design. The workload used to be absent here, which made
+    // the non-empty assertion below depend on machine load.
+    std::thread burner{[]() { burnCPUFor(1200); }};
+
     // 获取原始 profile 数据（采样 1 秒）
     std::string profile_data = profiler.getRawCPUProfile(1);
+
+    burner.join();
 
     // 应该返回非空数据
     ASSERT_FALSE(profile_data.empty()) << "getRawCPUProfile returned empty data";

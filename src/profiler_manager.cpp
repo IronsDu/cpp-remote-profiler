@@ -5,6 +5,7 @@
 #include "internal/embed_pprof.h"
 #include "internal/log_macros.h"
 #include "internal/log_manager.h"
+#include "internal/result_parsing.h"
 #include "internal/symbolize.h"
 #include <algorithm>
 #include <atomic>
@@ -17,6 +18,7 @@
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <fcntl.h>
+#include <filesystem>
 #include <fstream>
 #include <gperftools/heap-profiler.h>
 #include <gperftools/malloc_extension.h>
@@ -36,6 +38,30 @@
 #include <vector>
 
 PROFILER_NAMESPACE_BEGIN
+
+namespace {
+
+/// Read an entire file into a string. Returns false if it cannot be opened.
+///
+/// Used for profile artifacts written by gperftools: reading them back into our
+/// own std::string keeps ownership on our side of the boundary, which
+/// GetHeapProfile()'s return value does not allow (see stopHeapProfiler()).
+bool readWholeFile(const std::string& path, std::string* out) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open())
+        return false;
+
+    file.seekg(0, std::ios::end);
+    const std::streamoff size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    if (size > 0) {
+        out->resize(static_cast<size_t>(size));
+        file.read(&(*out)[0], size);
+    }
+    return true;
+}
+
+} // namespace
 
 // Static member initialization
 // Process-global, like the gperftools sampling session it guards.
@@ -263,14 +289,48 @@ bool ProfilerManager::stopHeapProfiler() {
     }
 
     if (IsHeapProfilerRunning()) {
-        // 保存 heap profile 到文件
-        std::string heap_profile = GetHeapProfile();
-        std::string output_path = profiler_states_[ProfilerType::HEAP].output_path;
+        const std::string output_path = profiler_states_[ProfilerType::HEAP].output_path;
+
+        // Write the snapshot to disk and read it back, rather than taking it from
+        // GetHeapProfile(). That function hands back a buffer the caller is told to
+        // free(), but no deallocator is correct across the supported gperftools
+        // range: under a statically linked tcmalloc the buffer belongs to the
+        // library's own allocator, which the process's malloc interposer never saw,
+        // so free() aborts (this is what broke CI); tc_free() only exists from
+        // 2.16.90; and 2.18 routes intermediate chunks through an internal arena
+        // whose Free sits in a private header. Dumping to a file keeps the memory
+        // on our side, so there is nothing to free and no leak to suppress.
+        //
+        // HeapProfilerDump() appends ".<sequence>.heap" to the profiler's prefix,
+        // which is the path startHeapProfiler() was given -- so the dump lands next
+        // to output_path under a derived name, not at output_path itself.
+        const std::filesystem::path output_as_path(output_path);
+        const std::string dump_dir = output_as_path.has_parent_path() ? output_as_path.parent_path().string() : ".";
+        const std::string dump_prefix = output_as_path.filename().string();
+
+        PROFILER_DEBUG("Calling HeapProfilerDump()...");
+        HeapProfilerDump("stop");
+
+        // gperftools writes the dump from a signal-adjacent context; give the
+        // filesystem a moment to make it visible, as the analysis path does.
+        usleep(100000);
+
+        std::string heap_profile;
+        const std::string dump_file = findLatestHeapProfile(dump_dir, dump_prefix);
+        if (dump_file.empty()) {
+            PROFILER_WARNING("HeapProfilerDump() produced no .heap file matching '{}' in {}", dump_prefix, dump_dir);
+        } else {
+            PROFILER_INFO("Using heap dump: {}", dump_file);
+            if (!readWholeFile(dump_file, &heap_profile))
+                PROFILER_ERROR("Failed to read heap dump: {}", dump_file);
+        }
 
         std::ofstream file(output_path);
         if (file.is_open()) {
             file << heap_profile;
             file.close();
+        } else {
+            PROFILER_WARNING("Failed to write heap profile to {}", output_path);
         }
 
         HeapProfilerStop();
@@ -349,6 +409,19 @@ std::string ProfilerManager::generateFlameGraph(const std::string& collapsed_fil
         return R"({"error": "flamegraph.pl did not generate valid SVG"})";
     }
 
+    // flamegraph.pl answers empty or unusable input with a *valid* SVG whose only
+    // content is an error message, so the structural check above passes and a
+    // 200 carrying "ERROR: ..." would reach the caller. Treat that as a failure
+    // and say why, since the usual cause is a profile with no samples.
+    if (svg_output.find("ERROR:") != std::string::npos) {
+        auto error_pos = svg_output.find("ERROR:");
+        auto error_end = svg_output.find('<', error_pos);
+        std::string message = svg_output.substr(error_pos, error_end - error_pos);
+        PROFILER_ERROR("flamegraph.pl reported: {}", message);
+        return R"({"error": "No stack samples to render (profile is empty). The sampled window may have been too short or the process was idle; try a longer duration or sample under load. flamegraph.pl said: )" +
+               message + R"("})";
+    }
+
     return svg_output;
 }
 
@@ -424,7 +497,7 @@ bool ProfilerManager::isHeapAnalysisInProgress() const {
 }
 
 std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& output_type) {
-    std::string profile_path = profile_dir_ + "/cpu_analyze.prof";
+    std::string profile_path = profile_dir_ + "/cpu_analyze_" + std::to_string(::getpid()) + ".prof";
 
     // Step 1: Claim the CPU profiling session.
     //
@@ -497,7 +570,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         PROFILER_INFO("Generating FlameGraph output...");
 
         // Step 5a: Generate collapsed format using pprof --collapsed
-        std::string collapsed_file = "/tmp/cpu_collapsed.prof";
+        std::string collapsed_file = "/tmp/cpu_collapsed_" + std::to_string(::getpid()) + ".prof";
         std::ostringstream collapsed_cmd;
         collapsed_cmd << "./pprof --collapsed " << exe_path << " " << profile_path << " > " << collapsed_file
                       << " 2>&1";
@@ -596,14 +669,18 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
     return svg_output;
 }
 
-std::string ProfilerManager::analyzeHeapProfile(const std::string& output_type) {
+std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string& output_type) {
     // gperftools heap profiling is allocation driven: HeapProfilerStart() begins
     // recording and HeapProfilerDump() writes a snapshot. Unlike the CPU
     // profiler there is no sampling period to tune -- the sample rate comes from
     // TCMALLOC_SAMPLE_PARAMETER, which tcmalloc reads once at process startup.
     // So there is no user-facing duration here: we simply open a short window
     // during which the application's own allocations get recorded, then dump.
-    static constexpr int kSampleWindowSeconds = 1;
+    // Guard the window the same way the CPU path guards its sampling duration.
+    if (duration < 1)
+        duration = 1;
+    if (duration > 300)
+        duration = 300;
 
     PROFILER_INFO("=== Starting Heap Profile Analysis ===");
 
@@ -667,8 +744,8 @@ std::string ProfilerManager::analyzeHeapProfile(const std::string& output_type) 
     // allocations here: a profiler must report the host process's real memory
     // behaviour, and fabricating allocations both pollutes the result and leaks
     // memory in the process under test.
-    PROFILER_INFO("Collecting heap samples for {} second(s)...", kSampleWindowSeconds);
-    sleep(kSampleWindowSeconds);
+    PROFILER_INFO("Collecting heap samples for {} second(s)...", duration);
+    sleep(duration);
 
     // Step 5: Take the snapshot, then stop
     if (IsHeapProfilerRunning()) {
@@ -715,7 +792,7 @@ std::string ProfilerManager::analyzeHeapProfile(const std::string& output_type) 
         PROFILER_INFO("Generating Heap FlameGraph...");
 
         // Step 9a: Generate collapsed format using pprof --collapsed
-        std::string collapsed_file = "/tmp/heap_collapsed.prof";
+        std::string collapsed_file = "/tmp/heap_collapsed_" + std::to_string(::getpid()) + ".prof";
         std::ostringstream collapsed_cmd;
         collapsed_cmd << "./pprof --collapsed " << exe_path << " " << latest_heap_file << " > " << collapsed_file
                       << " 2>&1";
@@ -865,7 +942,7 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
     FlagGuard guard{cpu_profiling_in_progress_};
 
     // Generate temporary profile file path
-    std::string profile_path = profile_dir_ + "/pprof_cpu_temp.prof";
+    std::string profile_path = profile_dir_ + "/pprof_cpu_temp_" + std::to_string(::getpid()) + ".prof";
 
     // Start CPU profiler. A session opened through startCPUProfiler() belongs to
     // the caller, so refuse rather than stopping it; the caller of this function
@@ -938,13 +1015,91 @@ std::string ProfilerManager::getRawHeapSample() {
     // GetHeapSample writes the heap profile into the string
     MallocExtension::instance()->GetHeapSample(&heap_sample);
 
-    if (heap_sample.empty()) {
-        PROFILER_ERROR("Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER environment variable is set.");
+    if (internal::isEmptyHeapSample(heap_sample)) {
+        PROFILER_ERROR("Heap sampling is off or produced no data. Set TCMALLOC_SAMPLE_PARAMETER "
+                       "(e.g. 524288) before starting the process.");
         return "";
     }
 
     PROFILER_INFO("Heap sample size: {} bytes", heap_sample.size());
     return heap_sample;
+}
+
+std::string ProfilerManager::getRawHeapProfileSample(int duration) {
+    if (duration < 1)
+        duration = 1;
+    if (duration > 300)
+        duration = 300;
+
+    // Same claim as analyzeHeapProfile(): the heap profiler is process-global, so
+    // a window may only be opened by one caller at a time.
+    {
+        bool expected = false;
+        if (!heap_analysis_in_progress_.compare_exchange_strong(expected, true)) {
+            PROFILER_ERROR("Heap analysis already in progress; rejecting this request");
+            return R"({"error": "heap profiling already in use"})";
+        }
+    }
+
+    struct ClaimGuard {
+        static void release() {
+            heap_analysis_in_progress_.store(false);
+        }
+        ~ClaimGuard() {
+            release();
+        }
+    } claim_guard;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (profiler_states_[ProfilerType::HEAP].is_running) {
+            PROFILER_ERROR("A heap profiler session is already open; refusing to take it over");
+            return R"({"error": "heap profiling already in use"})";
+        }
+    }
+
+    // Unique prefix: keeps this window's records separate from any other run, and
+    // it is also where HeapProfilerDump() below writes (it appends ".<seq>.heap").
+    auto now = std::chrono::system_clock::now();
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    std::string prefix_basename =
+        "heap_raw_" + std::to_string(timestamp) + "_" + std::to_string(heap_prefix_sequence_.fetch_add(1));
+    std::string prefix = profile_dir_ + "/" + prefix_basename;
+
+    PROFILER_INFO("Collecting heap samples for {} second(s) (raw)...", duration);
+    HeapProfilerStart(prefix.c_str());
+    sleep(duration);
+
+    std::string sample;
+    if (IsHeapProfilerRunning()) {
+        // Dump to disk and read it back instead of calling GetHeapProfile(): the
+        // buffer that function returns has no deallocator that is correct across
+        // the supported gperftools range (see stopHeapProfiler()). Going through a
+        // file keeps the memory on our side, so nothing needs freeing.
+        PROFILER_DEBUG("Calling HeapProfilerDump()...");
+        HeapProfilerDump("raw");
+        HeapProfilerStop();
+
+        const std::string dump_file = findLatestHeapProfile(profile_dir_, prefix_basename);
+        if (dump_file.empty()) {
+            PROFILER_WARNING("HeapProfilerDump() produced no .heap file matching '{}' in {}", prefix_basename,
+                             profile_dir_);
+        } else {
+            PROFILER_INFO("Using heap dump: {}", dump_file);
+            if (!readWholeFile(dump_file, &sample))
+                PROFILER_ERROR("Failed to read heap dump: {}", dump_file);
+        }
+    }
+
+    ClaimGuard::release();
+
+    if (internal::isEmptyHeapSample(sample)) {
+        PROFILER_ERROR("Heap profiling produced no data in the {}s window", duration);
+        return R"({"error": "No heap profile data was produced. The heap profiler only records allocations made while it is running, so the analyzed process must be actively allocating. Increase the duration for a process that allocates sparsely."})";
+    }
+
+    PROFILER_INFO("Raw heap profile size: {} bytes", sample.size());
+    return sample;
 }
 
 std::string ProfilerManager::getRawHeapGrowthStacks() {
@@ -962,128 +1117,6 @@ std::string ProfilerManager::getRawHeapGrowthStacks() {
 
     PROFILER_INFO("Heap growth stacks size: {} bytes", heap_growth_stacks.size());
     return heap_growth_stacks;
-}
-
-std::string ProfilerManager::getThreadStacks() {
-    std::ostringstream result;
-
-    // Open /proc/self/task directory to list all threads
-    DIR* task_dir = opendir("/proc/self/task");
-    if (!task_dir) {
-        PROFILER_ERROR("Failed to open /proc/self/task");
-        return "";
-    }
-
-    result << "Thread Stacks Snapshot\n";
-    result << "======================\n\n";
-
-    // Iterate through all thread directories
-    struct dirent* entry;
-    int thread_count = 0;
-
-    while ((entry = readdir(task_dir)) != nullptr) {
-        // Skip "." and ".." entries
-        if (entry->d_name[0] == '.') {
-            continue;
-        }
-
-        // Get thread ID
-        pid_t tid = atoi(entry->d_name);
-        if (tid == 0) {
-            continue;
-        }
-
-        thread_count++;
-
-        result << "Thread " << tid << ":\n";
-
-        // Read thread stat to get state and name
-        std::string stat_file = std::string("/proc/self/task/") + entry->d_name + "/stat";
-        std::ifstream stat_stream(stat_file);
-
-        if (stat_stream.is_open()) {
-            std::string line;
-            if (std::getline(stat_stream, line)) {
-                // Parse stat file (format: pid (comm) state ...)
-                size_t open_paren = line.find('(');
-                size_t close_paren = line.find(')', open_paren);
-
-                if (open_paren != std::string::npos && close_paren != std::string::npos) {
-                    std::string name = line.substr(open_paren + 1, close_paren - open_paren - 1);
-
-                    // Get state character (after close_paren + 2)
-                    if (close_paren + 2 < line.length()) {
-                        char state = line[close_paren + 2];
-
-                        // Convert state to readable format
-                        const char* state_str = "Unknown";
-                        switch (state) {
-                        case 'R':
-                            state_str = "Running";
-                            break;
-                        case 'S':
-                            state_str = "Sleeping";
-                            break;
-                        case 'D':
-                            state_str = "Disk sleep";
-                            break;
-                        case 'Z':
-                            state_str = "Zombie";
-                            break;
-                        case 'T':
-                            state_str = "Stopped";
-                            break;
-                        case 't':
-                            state_str = "Tracing stop";
-                            break;
-                        case 'X':
-                            state_str = "Dead";
-                            break;
-                        case 'x':
-                            state_str = "Dead";
-                            break;
-                        case 'K':
-                            state_str = "Wakekill";
-                            break;
-                        case 'W':
-                            state_str = "Waking";
-                            break;
-                        case 'P':
-                            state_str = "Parked";
-                            break;
-                        }
-
-                        result << "  Name: " << name << "\n";
-                        result << "  State: " << state_str << " (" << state << ")\n";
-                    }
-                }
-            }
-            stat_stream.close();
-        }
-
-        // Try to read wchan (what thread is waiting on)
-        std::string wchan_file = std::string("/proc/self/task/") + entry->d_name + "/wchan";
-        std::ifstream wchan_stream(wchan_file);
-
-        if (wchan_stream.is_open()) {
-            std::string wchan;
-            if (std::getline(wchan_stream, wchan) && !wchan.empty()) {
-                result << "  Waiting in: " << wchan << "\n";
-            }
-            wchan_stream.close();
-        }
-
-        result << "\n";
-    }
-
-    closedir(task_dir);
-
-    result << "Total threads: " << thread_count << "\n";
-
-    std::string output = result.str();
-    PROFILER_INFO("Thread stacks collected, size: {} bytes", output.size());
-
-    return output;
 }
 
 // Signal handler for capturing stack traces (signal-safe)
@@ -1327,6 +1360,25 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
     return result;
 }
 
+namespace {
+
+/// Read a thread's name from /proc/<tid>/comm (what ps and top display).
+///
+/// Returns an empty string when the thread has exited or the file cannot be
+/// read, in which case the caller prints a bare tid rather than failing.
+std::string readThreadName(pid_t tid) {
+    std::ifstream comm("/proc/self/task/" + std::to_string(tid) + "/comm");
+    std::string name;
+    if (comm.is_open())
+        std::getline(comm, name);
+    // The kernel truncates to 15 characters and may leave a trailing newline.
+    while (!name.empty() && (name.back() == '\n' || name.back() == '\r' || name.back() == ' '))
+        name.pop_back();
+    return name;
+}
+
+} // namespace
+
 std::string ProfilerManager::getThreadCallStacks() {
     std::ostringstream result;
 
@@ -1340,7 +1392,14 @@ std::string ProfilerManager::getThreadCallStacks() {
 
     // Process each thread's stack
     for (const auto& trace : stacks) {
-        result << "Thread " << trace.tid << ":\n";
+        // Include the thread's name. A bare tid means nothing when reading the
+        // output afterwards, whereas "DrogonIoLoop" or "worker-3" identifies the
+        // thread at a glance. Same source ps and top use.
+        result << "Thread " << trace.tid;
+        const std::string name = readThreadName(trace.tid);
+        if (!name.empty())
+            result << " (" << name << ")";
+        result << ":\n";
         result << "  Frames: " << trace.depth << "\n";
 
         // Symbolize and print each frame using abseil

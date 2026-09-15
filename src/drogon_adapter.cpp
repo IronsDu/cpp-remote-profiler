@@ -22,8 +22,11 @@ static void sendResponse(const HandlerResponse& hr, std::function<void(const dro
         resp->setContentTypeCode(drogon::CT_TEXT_HTML);
     } else if (hr.content_type == "application/json") {
         resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-    } else if (hr.content_type == "image/svg+xml" || hr.content_type == "text/xml") {
-        resp->setContentTypeCode(drogon::CT_TEXT_XML);
+    } else if (hr.content_type == "image/svg+xml") {
+        // CT_IMAGE_SVG_XML, not CT_TEXT_XML: the latter is the generic XML type.
+        // The SVG type is what tells the browser to treat the body as an image
+        // document (and what makes "save image as" work as an SVG).
+        resp->setContentTypeCode(drogon::CT_IMAGE_SVG_XML);
     } else if (hr.content_type == "application/octet-stream") {
         resp->setContentTypeCode(drogon::CT_APPLICATION_OCTET_STREAM);
     } else {
@@ -99,6 +102,43 @@ void runAsync(const std::shared_ptr<AsyncExecutor>& executor, const drogon::Http
     }
 }
 
+/// Read the analysis endpoints' query parameters into a ChartOptions.
+///
+/// Defaults are deliberate: `duration` 10s because short windows collect too few
+/// samples to render (measured: 3s failed 35-45% of the time, 10s never), and
+/// `inline` so a plain link shows the SVG instead of downloading it.
+ChartOptions chartOptionsFrom(const drogon::HttpRequestPtr& req) {
+    ChartOptions options;
+
+    options.renderer = parseChartRenderer(req->getParameter("renderer"));
+
+    auto d = req->getParameter("duration");
+    if (!d.empty()) {
+        try {
+            options.duration = std::stoi(d);
+        } catch (...) {}
+    }
+
+    if (req->getParameter("output") == "attachment")
+        options.inline_display = false;
+
+    return options;
+}
+
+/// Whether a CPU request should be refused, and with what.
+std::optional<HandlerResponse> cpuBusyRejection(const ProfilerHttpHandlers& handlers) {
+    if (handlers.isCpuProfilerBusy())
+        return handlers.cpuProfilerBusyResponse(/*pprof_style=*/false);
+    return std::nullopt;
+}
+
+/// Whether a heap analysis request should be refused, and with what.
+std::optional<HandlerResponse> heapBusyRejection(const ProfilerHttpHandlers& handlers) {
+    if (handlers.isHeapAnalyzerBusy())
+        return handlers.heapAnalyzerBusyResponse();
+    return std::nullopt;
+}
+
 } // namespace
 
 void registerDrogonHandlers(profiler::ProfilerManager& profiler) {
@@ -109,225 +149,116 @@ void registerDrogonHandlers(profiler::ProfilerManager& profiler) {
     // profiling keeps its session in process-global state.
     auto executor = std::make_shared<AsyncExecutor>();
 
-    // --- GET routes ---
-    auto registerGet = [&](const std::string& path, auto fn) {
+    // ---------------------------------------------------------------------
+    // Analysis endpoints: /api/pprof/{cpu,heap,growth}
+    //
+    // Each takes renderer / duration / output. The exclusivity verdict is
+    // evaluated here, on the event-loop thread before the job is queued -- a
+    // check performed inside the job runs only after the previous job finished,
+    // so it could never observe that job still running.
+    // ---------------------------------------------------------------------
+    auto registerChart = [&](const std::string& path, HandlerResponse (ProfilerHttpHandlers::*fn)(const ChartOptions&),
+                             std::optional<HandlerResponse> (*precheck)(const ProfilerHttpHandlers&)) {
         drogon::app().registerHandler(
             path,
-            [handlers, fn = std::move(fn)]([[maybe_unused]] const drogon::HttpRequestPtr& req,
-                                           std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                sendResponse(((*handlers).*fn)(), std::move(callback));
+            [handlers, executor, fn, precheck](const drogon::HttpRequestPtr& req,
+                                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                if (precheck) {
+                    if (auto rejection = precheck(*handlers)) {
+                        sendResponse(*rejection, std::move(callback));
+                        return;
+                    }
+                }
+                const ChartOptions options = chartOptionsFrom(req);
+                runAsync(executor, req, std::move(callback),
+                         [handlers, fn, options]() { return ((*handlers).*fn)(options); });
             },
             {drogon::Get});
     };
 
-    // CPU profiling is exclusive (one process-global gperftools session), so a
-    // request that arrives while another is sampling is refused on the spot,
-    // exactly like Go's net/http/pprof. The verdict is produced by the handler
-    // itself so the wording and status stay in one place.
-    auto makeCpuBusyPrecheck = [handlers](bool pprof_style) {
-        return [handlers, pprof_style]() -> std::optional<HandlerResponse> {
-            if (handlers->isCpuProfilerBusy()) {
-                return handlers->cpuProfilerBusyResponse(pprof_style);
-            }
-            return std::nullopt;
-        };
-    };
-    using CpuBusyPrecheck = decltype(makeCpuBusyPrecheck(true));
+    registerChart("/api/pprof/cpu", &ProfilerHttpHandlers::handleCpuChart, &cpuBusyRejection);
+    registerChart("/api/pprof/heap", &ProfilerHttpHandlers::handleHeapChart, &heapBusyRejection);
+    registerChart("/api/pprof/growth", &ProfilerHttpHandlers::handleGrowthChart, nullptr);
 
-    // /pprof/profile must answer the way `go tool pprof` expects; the custom
-    // /api/* endpoints use an accurate JSON status instead.
-    const CpuBusyPrecheck cpu_busy_pprof = makeCpuBusyPrecheck(true);
-    const CpuBusyPrecheck cpu_busy_json = makeCpuBusyPrecheck(false);
-
-    // Heap analysis is exclusive for the same reason: it reconfigures the one
-    // process-global heap profiler, so a concurrent call would race for it.
-    auto heap_busy = [handlers]() -> std::optional<HandlerResponse> {
-        if (handlers->isHeapAnalyzerBusy()) {
-            return handlers->heapAnalyzerBusyResponse();
-        }
-        return std::nullopt;
-    };
-
-    // Same, but offloaded to the executor: used for handlers that block for
-    // seconds (sampling) or shell out to pprof/flamegraph.pl (rendering).
-    auto registerGetAsync = [&](const std::string& path, auto fn) {
-        drogon::app().registerHandler(
-            path,
-            [handlers, executor, fn = std::move(fn)](const drogon::HttpRequestPtr& req,
-                                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                runAsync(executor, req, std::move(callback), [handlers, fn]() { return ((*handlers).*fn)(); });
-            },
-            {drogon::Get});
-    };
-
-    // --- Static pages (served directly via WebResources) ---
-    drogon::app().registerHandler("/",
-                                  []([[maybe_unused]] const drogon::HttpRequestPtr& req,
-                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                                      sendResponse(HandlerResponse::html(WebResources::getIndexPage()),
-                                                   std::move(callback));
-                                  },
-                                  {drogon::Get});
-    drogon::app().registerHandler("/show_svg.html",
-                                  []([[maybe_unused]] const drogon::HttpRequestPtr& req,
-                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                                      sendResponse(HandlerResponse::html(WebResources::getCpuSvgViewerPage()),
-                                                   std::move(callback));
-                                  },
-                                  {drogon::Get});
-    drogon::app().registerHandler("/show_heap_svg.html",
-                                  []([[maybe_unused]] const drogon::HttpRequestPtr& req,
-                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                                      sendResponse(HandlerResponse::html(WebResources::getHeapSvgViewerPage()),
-                                                   std::move(callback));
-                                  },
-                                  {drogon::Get});
-    drogon::app().registerHandler("/show_growth_svg.html",
-                                  []([[maybe_unused]] const drogon::HttpRequestPtr& req,
-                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                                      sendResponse(HandlerResponse::html(WebResources::getGrowthSvgViewerPage()),
-                                                   std::move(callback));
-                                  },
-                                  {drogon::Get});
-
-    // --- Status ---
-    registerGet("/api/status", &ProfilerHttpHandlers::handleStatus);
-
-    // --- Thread stacks ---
-    registerGet("/api/thread/stacks", &ProfilerHttpHandlers::handleThreadStacks);
-
-    // --- Standard pprof: /pprof/profile (blocking: samples for `seconds`) ---
-    drogon::app().registerHandler(
-        "/pprof/profile",
-        [handlers, executor, cpu_busy_pprof](const drogon::HttpRequestPtr& req,
-                                             std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-            int seconds = 30;
-            auto p = req->getParameter("seconds");
-            if (!p.empty()) {
-                try {
-                    seconds = std::stoi(p);
-                } catch (...) {}
-                if (seconds < 1)
-                    seconds = 1;
-                if (seconds > 300)
-                    seconds = 300;
-            }
-            runAsync(
-                executor, req, std::move(callback),
-                [handlers, seconds]() { return handlers->handlePprofProfile(seconds); }, cpu_busy_pprof);
-        },
-        {drogon::Get});
-
-    // --- Standard pprof: /pprof/heap ---
-    registerGet("/pprof/heap", &ProfilerHttpHandlers::handlePprofHeap);
-
-    // --- Standard pprof: /pprof/growth ---
-    registerGet("/pprof/growth", &ProfilerHttpHandlers::handlePprofGrowth);
-
-    // --- /pprof/symbol (POST) ---
-    drogon::app().registerHandler("/pprof/symbol",
-                                  [handlers]([[maybe_unused]] const drogon::HttpRequestPtr& req,
-                                             std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                                      sendResponse(handlers->handlePprofSymbol(std::string(req->body())),
-                                                   std::move(callback));
-                                  },
-                                  {drogon::Post});
-
-    // --- CPU analyze (blocking: samples for `duration` seconds) ---
-    drogon::app().registerHandler(
-        "/api/cpu/analyze",
-        [handlers, executor, cpu_busy_json](const drogon::HttpRequestPtr& req,
-                                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-            int duration = 10;
-            auto dp = req->getParameter("duration");
-            if (!dp.empty()) {
-                try {
-                    duration = std::stoi(dp);
-                } catch (...) {}
-            }
-            std::string output_type = req->getParameter("output_type");
-            if (output_type.empty())
-                output_type = "pprof";
-
-            runAsync(
-                executor, req, std::move(callback),
-                [handlers, duration, output_type]() { return handlers->handleCpuAnalyze(duration, output_type); },
-                cpu_busy_json);
-        },
-        {drogon::Get, drogon::Post});
-
-    // --- CPU raw SVG (blocking) ---
-    drogon::app().registerHandler(
-        "/api/cpu/svg_raw",
-        [handlers, executor, cpu_busy_json](const drogon::HttpRequestPtr& req,
-                                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-            int duration = 10;
-            auto dp = req->getParameter("duration");
-            if (!dp.empty()) {
-                try {
-                    duration = std::stoi(dp);
-                } catch (...) {}
-            }
-            runAsync(
-                executor, req, std::move(callback),
-                [handlers, duration]() { return handlers->handleCpuSvgRaw(duration); }, cpu_busy_json);
-        },
-        {drogon::Get});
-
-    // --- CPU FlameGraph raw (blocking) ---
-    drogon::app().registerHandler(
-        "/api/cpu/flamegraph_raw",
-        [handlers, executor, cpu_busy_json](const drogon::HttpRequestPtr& req,
-                                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-            int duration = 10;
-            auto dp = req->getParameter("duration");
-            if (!dp.empty()) {
-                try {
-                    duration = std::stoi(dp);
-                } catch (...) {}
-            }
-            runAsync(
-                executor, req, std::move(callback),
-                [handlers, duration]() { return handlers->handleCpuFlamegraphRaw(duration); }, cpu_busy_json);
-        },
-        {drogon::Get});
-
-    // --- Heap analyze (blocking) ---
-    drogon::app().registerHandler(
-        "/api/heap/analyze",
-        [handlers, executor, heap_busy](const drogon::HttpRequestPtr& req,
-                                        std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-            std::string output_type = req->getParameter("output_type");
-            if (output_type.empty())
-                output_type = "pprof";
-            runAsync(
-                executor, req, std::move(callback),
-                [handlers, output_type]() { return handlers->handleHeapAnalyze(output_type); }, heap_busy);
-        },
-        {drogon::Get});
-
-    // --- Heap raw / FlameGraph (blocking: shells out to pprof/flamegraph.pl) ---
-    registerGetAsync("/api/heap/svg_raw", &ProfilerHttpHandlers::handleHeapSvgRaw);
-    registerGetAsync("/api/heap/flamegraph_raw", &ProfilerHttpHandlers::handleHeapFlamegraphRaw);
-
-    // --- Growth analyze (blocking: shells out to pprof/flamegraph.pl) ---
-    drogon::app().registerHandler("/api/growth/analyze",
+    // ---------------------------------------------------------------------
+    // Heap snapshot: state-based, i.e. "what is in the heap now" rather than
+    // "what was allocated during a window". Needs TCMALLOC_SAMPLE_PARAMETER.
+    // ---------------------------------------------------------------------
+    drogon::app().registerHandler("/api/pprof/heap/snapshot",
                                   [handlers, executor](const drogon::HttpRequestPtr& req,
                                                        std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                                      std::string output_type = req->getParameter("output_type");
-                                      if (output_type.empty())
-                                          output_type = "pprof";
-                                      // No precheck: growth stacks come from GetHeapGrowthStacks() and read
-                                      // no profiler session, so this may run alongside CPU sampling.
-                                      runAsync(executor, req, std::move(callback), [handlers, output_type]() {
-                                          return handlers->handleGrowthAnalyze(output_type);
+                                      const ChartOptions options = chartOptionsFrom(req);
+                                      const bool as_profile = req->getParameter("format") != "svg";
+                                      runAsync(executor, req, std::move(callback), [handlers, options, as_profile]() {
+                                          return handlers->handleHeapSnapshot(options, as_profile);
                                       });
                                   },
                                   {drogon::Get});
 
-    // --- Growth raw / FlameGraph (blocking: shells out to pprof/flamegraph.pl) ---
-    registerGetAsync("/api/growth/svg_raw", &ProfilerHttpHandlers::handleGrowthSvgRaw);
-    registerGetAsync("/api/growth/flamegraph_raw", &ProfilerHttpHandlers::handleGrowthFlamegraphRaw);
+    // --- Status and auxiliary endpoints (fast enough to stay on the loop) ---
+    drogon::app().registerHandler(
+        "/api/status",
+        [handlers](const drogon::HttpRequestPtr&, std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+            sendResponse(handlers->handleStatus(), std::move(cb));
+        },
+        {drogon::Get});
+    drogon::app().registerHandler(
+        "/api/thread/stacks",
+        [handlers](const drogon::HttpRequestPtr&, std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+            sendResponse(handlers->handleThreadStacks(), std::move(cb));
+        },
+        {drogon::Get});
+
+    // --- Web control panel ---
+    drogon::app().registerHandler(
+        "/",
+        [](const drogon::HttpRequestPtr&, std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+            sendResponse(HandlerResponse::html(WebResources::getIndexPage()), std::move(cb));
+        },
+        {drogon::Get});
+
+    // ---------------------------------------------------------------------
+    // Standard Go pprof interface -- unchanged. These are the machine-readable
+    // endpoints `go tool pprof` consumes, as opposed to the /api/pprof visuals.
+    // ---------------------------------------------------------------------
+    drogon::app().registerHandler("/pprof/profile",
+                                  [handlers, executor](const drogon::HttpRequestPtr& req,
+                                                       std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                                      int seconds = 30;
+                                      auto p = req->getParameter("seconds");
+                                      if (!p.empty()) {
+                                          try {
+                                              seconds = std::stoi(p);
+                                          } catch (...) {}
+                                          if (seconds < 1)
+                                              seconds = 1;
+                                          if (seconds > 300)
+                                              seconds = 300;
+                                      }
+                                      runAsync(executor, req, std::move(callback),
+                                               [handlers, seconds]() { return handlers->handlePprofProfile(seconds); });
+                                  },
+                                  {drogon::Get});
+    drogon::app().registerHandler("/pprof/heap",
+                                  [handlers, executor](const drogon::HttpRequestPtr& req,
+                                                       std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                                      runAsync(executor, req, std::move(callback),
+                                               [handlers]() { return handlers->handlePprofHeap(); });
+                                  },
+                                  {drogon::Get});
+    drogon::app().registerHandler("/pprof/growth",
+                                  [handlers, executor](const drogon::HttpRequestPtr& req,
+                                                       std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                                      runAsync(executor, req, std::move(callback),
+                                               [handlers]() { return handlers->handlePprofGrowth(); });
+                                  },
+                                  {drogon::Get});
+    drogon::app().registerHandler(
+        "/pprof/symbol",
+        [handlers](const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            sendResponse(handlers->handlePprofSymbol(std::string(req->body())), std::move(callback));
+        },
+        {drogon::Post});
 }
 
 PROFILER_NAMESPACE_END

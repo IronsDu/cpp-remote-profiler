@@ -6,3 +6,4 @@
 # This is expected behavior and not a real memory leak.
 # See: https://github.com/gperftools/gperftools
 leak:MallocExtension::Initialize
+

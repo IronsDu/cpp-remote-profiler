@@ -218,7 +218,8 @@ int main() {
     profiler::ProfilerHttpHandlers handlers(profiler);
 
     // 调用任意 handler，获得框架无关的响应
-    profiler::HandlerResponse resp = handlers.handleCpuAnalyze(10, "flamegraph");
+    profiler::ChartOptions options;   // renderer / duration / inline_display
+    profiler::HandlerResponse resp = handlers.handleCpuChart(options);
 
     // resp.status, resp.content_type, resp.body
     // 用你自己的 Web 框架包装这些数据

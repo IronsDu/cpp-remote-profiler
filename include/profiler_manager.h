@@ -160,9 +160,14 @@ public:
     /// driven, so the sample rate is governed by TCMALLOC_SAMPLE_PARAMETER
     /// (read once at process startup), not by elapsed time.
     ///
+    /// @param duration Collection window in seconds (default 1, clamped 1..300).
+    ///        This is NOT a sampling rate: the rate is fixed by
+    ///        TCMALLOC_SAMPLE_PARAMETER at process start. It controls how long
+    ///        allocations are recorded, so a process that allocates sparsely
+    ///        needs a longer window to produce anything.
     /// @param output_type Output graph type: "flamegraph" (default) or "pprof"
     /// @return SVG content as string, or a {"error":...} JSON string on failure
-    std::string analyzeHeapProfile(const std::string& output_type = "flamegraph");
+    std::string analyzeHeapProfile(int duration = 1, const std::string& output_type = "flamegraph");
 
     /// @brief Get raw CPU profile data (for /pprof/profile endpoint)
     /// @param seconds Sampling duration in seconds
@@ -170,16 +175,31 @@ public:
     std::string getRawCPUProfile(int seconds);
 
     /// @brief Get raw heap sample data (for /pprof/heap endpoint)
+    ///
+    /// Pulls tcmalloc's cumulative sample of the current heap. Requires
+    /// TCMALLOC_SAMPLE_PARAMETER to have been set before the process started;
+    /// returns "" when sampling is off.
+    ///
     /// @return Heap sample in text format (compatible with pprof)
     std::string getRawHeapSample();
+
+    /// @brief Sample allocations for @p duration seconds and return the raw profile text
+    ///
+    /// Unlike getRawHeapSample() this needs no startup configuration: it runs its
+    /// own HeapProfilerStart/HeapProfilerDump/Stop window, so it works in a process
+    /// launched without TCMALLOC_SAMPLE_PARAMETER. Use this when the caller wants
+    /// to choose how long to collect (sparse allocators need longer) and then
+    /// render or analyse the text themselves.
+    ///
+    /// @param duration Collection window in seconds (clamped 1..300)
+    /// @return Profile text (pprof format), or a {"error":...} JSON string on failure
+    /// @note Exclusive, like analyzeHeapProfile(): rejects with "heap profiling
+    ///       already in use" if another analysis or a host session is active
+    std::string getRawHeapProfileSample(int duration);
 
     /// @brief Get heap growth stacks data (for /pprof/growth endpoint)
     /// @return Heap growth stacks in text format (compatible with pprof)
     std::string getRawHeapGrowthStacks();
-
-    /// @brief Get all thread stacks (for /api/thread/stacks endpoint)
-    /// @return Thread stacks in text format
-    std::string getThreadStacks();
 
     /// @brief Get thread callstack with full backtrace using signal handler
     /// @return Thread callstack information

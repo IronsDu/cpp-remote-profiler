@@ -8,6 +8,7 @@
 #include "../include/profiler_manager.h"
 #include <chrono>
 #include <dirent.h>
+#include <fstream>
 #include <future>
 #include <gperftools/heap-profiler.h>
 #include <gtest/gtest.h>
@@ -18,6 +19,20 @@
 #include <thread>
 #include <type_traits>
 #include <vector>
+
+namespace {
+
+/// Build ChartOptions concisely for tests.
+profiler::ChartOptions opts(int duration = 1, profiler::ChartRenderer renderer = profiler::ChartRenderer::FlameGraph,
+                            bool inline_display = true) {
+    profiler::ChartOptions o;
+    o.duration = duration;
+    o.renderer = renderer;
+    o.inline_display = inline_display;
+    return o;
+}
+
+} // namespace
 
 namespace {
 
@@ -60,21 +75,12 @@ TEST_F(HttpHandlersTest, StatusUsesMillisecondDurationKeys) {
 }
 
 // ---------------------------------------------------------------------------
-// output_type validation
+// renderer parsing
 // ---------------------------------------------------------------------------
-
-TEST_F(HttpHandlersTest, InvalidOutputTypeIsRejectedWith400) {
-    auto resp = handlers.handleCpuAnalyze(1, "iciclegraph");
-
-    EXPECT_EQ(resp.status, 400);
-    EXPECT_NE(resp.body.find("output_type"), std::string::npos) << "error message should name the offending parameter";
-}
-
-TEST_F(HttpHandlersTest, EmptyOutputTypeIsRejected) {
-    auto resp = handlers.handleCpuAnalyze(1, "");
-    EXPECT_EQ(resp.status, 400);
-}
-
+// (an unknown renderer is not an error: parseChartRenderer falls back to
+// FlameGraph rather than failing the request, so there is no 400 case to assert.
+// The mapping itself is covered by ChartRendererParsing.)
+//
 // ---------------------------------------------------------------------------
 // HandlerResponse helpers
 // ---------------------------------------------------------------------------
@@ -152,9 +158,9 @@ TEST(ConcurrentCpuProfilingTest, RequestsFailFastWhileASessionIsSampling) {
 
     // Every CPU entry point must refuse immediately, not wait for the sampler.
     const auto t0 = std::chrono::steady_clock::now();
-    EXPECT_EQ(handlers.handleCpuAnalyze(5, "pprof").status, 409);
-    EXPECT_EQ(handlers.handleCpuSvgRaw(5).status, 409);
-    EXPECT_EQ(handlers.handleCpuFlamegraphRaw(5).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(5)).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(5, profiler::ChartRenderer::CallGraph)).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(5)).status, 409);
     const auto elapsed = std::chrono::steady_clock::now() - t0;
     EXPECT_LT(elapsed, std::chrono::milliseconds(100))
         << "rejection must be immediate, not queued behind the running session";
@@ -275,8 +281,8 @@ TEST(HostOwnedSessionTest, HandlersReportTheHostSessionAsBusy) {
     ASSERT_EQ(resp.headers.count("X-Go-Pprof"), 1u);
 
     // The /api/* endpoints report a conflict.
-    EXPECT_EQ(handlers.handleCpuAnalyze(1, "pprof").status, 409);
-    EXPECT_EQ(handlers.handleCpuSvgRaw(1).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(1)).status, 409);
+    EXPECT_EQ(handlers.handleCpuChart(opts(1, profiler::ChartRenderer::CallGraph)).status, 409);
 
     profiler.stopCPUProfiler();
 }
@@ -288,11 +294,11 @@ TEST(HostOwnedSessionTest, HeapAnalysisRefusesToTakeOverAHostSession) {
     ASSERT_TRUE(profiler.startHeapProfiler("/tmp/test_host_owned_heap.prof"));
     ASSERT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::HEAP));
 
-    auto result = profiler.analyzeHeapProfile("pprof");
+    auto result = profiler.analyzeHeapProfile(1, "pprof");
     EXPECT_NE(result.find("heap profiling already in use"), std::string::npos) << result;
     EXPECT_TRUE(profiler.isProfilerRunning(profiler::ProfilerType::HEAP));
 
-    EXPECT_EQ(handlers.handleHeapAnalyze("pprof").status, 409);
+    EXPECT_EQ(handlers.handleHeapChart(opts(1)).status, 409);
 
     EXPECT_TRUE(profiler.stopHeapProfiler());
 }
@@ -311,7 +317,7 @@ class HeapAnalysisHolder {
 public:
     explicit HeapAnalysisHolder(profiler::ProfilerManager& profiler)
         : future_(std::async(std::launch::async,
-                             [&profiler]() -> std::string { return profiler.analyzeHeapProfile("pprof"); })) {}
+                             [&profiler]() -> std::string { return profiler.analyzeHeapProfile(1, "pprof"); })) {}
 
     ~HeapAnalysisHolder() {
         if (future_.valid()) {
@@ -352,7 +358,7 @@ TEST(ConcurrentHeapAnalysisTest, SecondAnalysisIsRejectedNotRaced) {
 
     // Must be refused immediately, and must not touch the running analysis.
     const auto t0 = std::chrono::steady_clock::now();
-    auto result = profiler.analyzeHeapProfile("pprof");
+    auto result = profiler.analyzeHeapProfile(1, "pprof");
     const auto elapsed = std::chrono::steady_clock::now() - t0;
 
     EXPECT_NE(result.find("heap profiling already in use"), std::string::npos) << result;
@@ -367,7 +373,7 @@ TEST(ConcurrentHeapAnalysisTest, HandlerReportsConflict) {
     HeapAnalysisHolder holder{profiler};
     ASSERT_TRUE(waitForHeapClaim(profiler));
 
-    auto resp = handlers.handleHeapAnalyze("pprof");
+    auto resp = handlers.handleHeapChart(opts(1));
 
     EXPECT_EQ(resp.status, 409);
     EXPECT_NE(resp.body.find("heap profiling already in use"), std::string::npos) << resp.body;
@@ -389,18 +395,77 @@ TEST(ConcurrentHeapAnalysisTest, ClaimIsReleasedAfterwards) {
 // Heap analysis API shape
 // ---------------------------------------------------------------------------
 
-TEST_F(HttpHandlersTest, HeapAnalysisHasNoDurationParameter) {
-    // Regression guard: heap profiling is allocation driven, so no duration is
-    // accepted. This must stay compilable with a single argument.
-    // (If a duration parameter were reintroduced this call would not compile.)
-    static_assert(std::is_invocable_v<decltype(&profiler::ProfilerHttpHandlers::handleHeapAnalyze),
-                                      profiler::ProfilerHttpHandlers*, const std::string&>,
-                  "handleHeapAnalyze must take only output_type");
+TEST_F(HttpHandlersTest, ChartEndpointsTakeDurationAndRenderer) {
+    // Each analysis endpoint takes a ChartOptions carrying duration, renderer and
+    // delivery mode. The duration is a *collection window*, not a sampling rate:
+    // the rate is fixed by TCMALLOC_SAMPLE_PARAMETER at process start. A longer
+    // window covers more allocations, which is what a sparsely allocating process
+    // needs. Guard the contract so it cannot regress into "duration is ignored".
+    using H = profiler::ProfilerHttpHandlers;
+
+    static_assert(std::is_invocable_v<decltype(&H::handleCpuChart), H*, const profiler::ChartOptions&>,
+                  "handleCpuChart must take ChartOptions");
+    static_assert(std::is_invocable_v<decltype(&H::handleHeapChart), H*, const profiler::ChartOptions&>,
+                  "handleHeapChart must take ChartOptions");
+    static_assert(std::is_invocable_v<decltype(&H::handleGrowthChart), H*, const profiler::ChartOptions&>,
+                  "handleGrowthChart must take ChartOptions");
+    static_assert(std::is_invocable_v<decltype(&H::handleHeapSnapshot), H*, const profiler::ChartOptions&, bool>,
+                  "handleHeapSnapshot must take (ChartOptions, as_profile)");
 }
 
-TEST_F(HttpHandlersTest, HeapAnalyzeRejectsInvalidOutputType) {
-    auto resp = handlers.handleHeapAnalyze("bogus");
-    EXPECT_EQ(resp.status, 400);
+TEST_F(HttpHandlersTest, ChartDurationIsClamped) {
+    // The HTTP layer documents duration as clamped to 1..300, and it must behave
+    // that way for every endpoint: the backends disagreed (getRawCPUProfile
+    // rejected out-of-range values, getRawHeapProfileSample clamped them), which
+    // made the same query succeed or fail depending on which profiler served it.
+    EXPECT_EQ(profiler::clampChartDuration(0), 1);
+    EXPECT_EQ(profiler::clampChartDuration(-5), 1);
+    EXPECT_EQ(profiler::clampChartDuration(1), 1);
+    EXPECT_EQ(profiler::clampChartDuration(10), 10);
+    EXPECT_EQ(profiler::clampChartDuration(300), 300);
+    EXPECT_EQ(profiler::clampChartDuration(301), 300);
+    EXPECT_EQ(profiler::clampChartDuration(9999), 300);
+}
+
+TEST_F(HttpHandlersTest, ChartRendererParsing) {
+    // "callgraph" is the pprof/graphviz diagram, "flamegraph" is FlameGraph. The
+    // old parameter was called output_type and its values named a tool rather
+    // than the resulting picture, which is what these names replace.
+    EXPECT_EQ(profiler::parseChartRenderer("callgraph"), profiler::ChartRenderer::CallGraph);
+    EXPECT_EQ(profiler::parseChartRenderer("flamegraph"), profiler::ChartRenderer::FlameGraph);
+    // Unknown or empty values fall back rather than failing the request.
+    EXPECT_EQ(profiler::parseChartRenderer(""), profiler::ChartRenderer::FlameGraph);
+    EXPECT_EQ(profiler::parseChartRenderer("pprof"), profiler::ChartRenderer::FlameGraph);
+}
+
+TEST_F(HttpHandlersTest, StateBasedRenderingReportsTheMissingSamplingVariable) {
+    // The two sources fail differently, and the message must say which one was
+    // asked for: the state-based path needs TCMALLOC_SAMPLE_PARAMETER before
+    // process start, the window-based one does not need it at all.
+    //
+    // These tests run without that variable set, so getRawHeapSample() yields
+    // nothing while the window path can still collect.
+    profiler::ProfilerManager plain;
+
+    ASSERT_TRUE(plain.getRawHeapSample().empty()) << "precondition: sampling is off in the test process";
+
+    profiler::ProfilerHttpHandlers h(plain);
+    auto state = h.handleHeapSnapshot(opts(1), /*as_profile=*/false);
+    EXPECT_EQ(state.status, 500);
+    EXPECT_NE(state.body.find("TCMALLOC_SAMPLE_PARAMETER"), std::string::npos) << state.body;
+}
+
+TEST_F(HttpHandlersTest, WindowBasedRenderingDoesNotMentionTheVariable) {
+    profiler::ProfilerManager plain;
+    profiler::ProfilerHttpHandlers h(plain);
+
+    // Duration is clamped, and the window path must not blame the environment
+    // variable it does not depend on.
+    auto resp = h.handleHeapChart(opts(0));
+    if (resp.status == 500) {
+        EXPECT_EQ(resp.body.find("TCMALLOC_SAMPLE_PARAMETER"), std::string::npos)
+            << "window-based failure must not blame a variable it does not need: " << resp.body;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +498,40 @@ TEST(ProfilerLifecycleTest, StopHeapProfilerReportsState) {
 
     EXPECT_TRUE(profiler.stopHeapProfiler());
     EXPECT_FALSE(profiler.isProfilerRunning(profiler::ProfilerType::HEAP));
+}
+
+TEST(ProfilerLifecycleTest, StopHeapProfilerWritesRealProfileContent) {
+    // The state assertions above would pass even if the profile file came out
+    // empty. stopHeapProfiler() gets its data by dumping to disk and reading that
+    // file back (GetHeapProfile()'s buffer has no portable deallocator), so the
+    // path is worth checking end to end: the derived dump name has to be found and
+    // its contents written to the caller's requested path.
+    profiler::ProfilerManager profiler;
+
+    const std::string output = "/tmp/test_stop_heap_content.prof";
+    std::remove(output.c_str());
+
+    ASSERT_TRUE(profiler.startHeapProfiler(output));
+
+    // Allocate while the profiler runs, so there is something to record.
+    {
+        std::vector<std::vector<char>> live;
+        for (int i = 0; i < 64; ++i)
+            live.emplace_back(64 * 1024, static_cast<char>(i));
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    ASSERT_TRUE(profiler.stopHeapProfiler());
+
+    std::ifstream file(output, std::ios::binary);
+    ASSERT_TRUE(file.is_open()) << "profile not written to " << output;
+    const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+    EXPECT_FALSE(content.empty()) << "profile file is empty";
+    // A gperftools heap profile starts with a header line naming the format.
+    EXPECT_NE(content.find("heap profile:"), std::string::npos) << "unexpected content: " << content.substr(0, 120);
+
+    std::remove(output.c_str());
 }
 
 TEST(ProfilerLifecycleTest, StartingHeapProfilerTwiceFails) {
@@ -494,7 +593,7 @@ TEST(ProfilerLifecycleTest, StaleHeapProfileIsNotReused) {
         }
     });
 
-    (void)profiler.analyzeHeapProfile("pprof");
+    (void)profiler.analyzeHeapProfile(1, "pprof");
     const auto afterFirst = heapFiles();
 
     auto newSince = [&](const std::set<std::string>& a, const std::set<std::string>& b) {

@@ -2,10 +2,13 @@
 /// @brief Framework-agnostic HTTP endpoint handlers implementation
 
 #include "profiler/http_handlers.h"
+#include "internal/result_parsing.h"
 #include "profiler_manager.h"
 #include <chrono>
 #include <fstream>
+#include <optional>
 #include <sstream>
+#include <unistd.h>
 
 PROFILER_NAMESPACE_BEGIN
 
@@ -15,10 +18,6 @@ PROFILER_NAMESPACE_BEGIN
 
 static HandlerResponse errorResp(int status, const std::string& message) {
     return HandlerResponse::error(status, message);
-}
-
-static bool validateOutputType(const std::string& output_type) {
-    return output_type == "flamegraph" || output_type == "pprof";
 }
 
 static int clampDuration(int duration, int lo, int hi) {
@@ -91,381 +90,221 @@ HandlerResponse ProfilerHttpHandlers::handleStatus() {
 
 // --- CPU endpoints ---
 
-HandlerResponse ProfilerHttpHandlers::handleCpuAnalyze(int duration, const std::string& output_type) {
-    duration = clampDuration(duration, 1, 300);
+namespace {
 
-    // Fail fast instead of waiting behind (or disturbing) an in-flight session.
-    if (isCpuProfilerBusy()) {
-        return cpuProfilerBusyResponse(false);
+/// Convert flamegraph.pl output into a response, or an error.
+///
+/// flamegraph.pl answers unusable input with a *valid* SVG whose only content is
+/// an "ERROR: ..." message, so a structural check for <?xml or <svg passes and a
+/// 200 carrying an error reaches the caller as if it were a graph. All flame
+/// graphs funnel through here so the check cannot be forgotten at a call site.
+HandlerResponse flameGraphResponse(const std::string& svg) {
+    if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos)
+        return errorResp(500, "Failed to generate FlameGraph");
+
+    if (auto pos = svg.find("ERROR:"); pos != std::string::npos) {
+        auto end = svg.find('<', pos);
+        std::string message = svg.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        return errorResp(500, "No stack samples to render (profile is empty). The sample window may have "
+                              "been too short or the process idle; increase the duration or sample under "
+                              "load. flamegraph.pl said: " +
+                                  message);
     }
-
-    if (!validateOutputType(output_type)) {
-        return errorResp(400, "Invalid output_type. Must be 'flamegraph' or 'pprof'");
-    }
-
-    std::string svg = profiler_.analyzeCPUProfile(duration, output_type);
-
-    if (svg.size() > 10 && svg[0] == '{' && svg[1] == '"') {
-        return errorResp(500, svg);
-    }
-
     return HandlerResponse::svg(svg);
 }
 
-HandlerResponse ProfilerHttpHandlers::handleCpuSvgRaw(int duration) {
-    duration = clampDuration(duration, 1, 300);
+} // namespace
 
-    if (isCpuProfilerBusy()) {
-        return cpuProfilerBusyResponse(false);
+int clampChartDuration(int duration) {
+    // Clamp rather than reject: the HTTP layer documents duration as a window
+    // that is clamped to this range, and the two profiler backends disagreed --
+    // getRawCPUProfile() rejected out-of-range values while
+    // getRawHeapProfileSample() clamped them, so the same query behaved
+    // differently per endpoint. Clamping here makes one rule for all of them,
+    // and keeps a stray value from being reported as a sampling failure.
+    if (duration < 1)
+        return 1;
+    if (duration > 300)
+        return 300;
+    return duration;
+}
+
+ChartRenderer parseChartRenderer(const std::string& value) {
+    // "callgraph" is the pprof script's graphviz diagram; "flamegraph" is
+    // FlameGraph. Both were previously wrapped in one "output_type" whose values
+    // named a tool rather than the resulting picture.
+    if (value == "callgraph")
+        return ChartRenderer::CallGraph;
+    return ChartRenderer::FlameGraph;
+}
+
+namespace {
+
+/// Apply the response's delivery mode and filename.
+///
+/// `inline_display` is the whole difference between "the browser shows the SVG"
+/// and "the browser downloads it": omitting Content-Disposition makes the
+/// browser render an image/svg+xml body as a document.
+HandlerResponse finishChart(HandlerResponse resp, const std::string& title, bool inline_display) {
+    if (!inline_display) {
+        resp.headers["Content-Disposition"] = "attachment; filename=" + title + ".svg";
     }
+    return resp;
+}
 
-    std::string profile_data = profiler_.getRawCPUProfile(duration);
-    if (profile_data.empty()) {
-        return errorResp(500, "Failed to generate CPU profile");
+/// Write @p text to @p path, returning false if that fails.
+bool writeTempFile(const std::string& path, const std::string& text) {
+    std::ofstream out(path);
+    if (!out.is_open())
+        return false;
+    out << text;
+    return out.good();
+}
+
+/// Whether a collapsed-stacks file contains real stack data.
+///
+/// pprof prints "Using local file ..." progress lines; counting those as data
+/// would let an empty result through, and flamegraph.pl would then reject it two
+/// layers away from the cause.
+bool hasCollapsedData(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.is_open())
+        return false;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line[0] != '#' && line.rfind("Using ", 0) != 0)
+            return true;
     }
+    return false;
+}
 
-    std::string temp_file = "/tmp/cpu_raw.prof";
-    {
-        std::ofstream out(temp_file, std::ios::binary);
-        out.write(profile_data.data(), profile_data.size());
-    }
+} // namespace
 
-    std::string exe_path = profiler_.getExecutablePath();
-    std::string cmd = "./pprof --svg " + exe_path + " " + temp_file + " 2>/dev/null";
+/// Render a gperftools profile as a FlameGraph SVG.
+///
+/// @param profile_path Path to the profile file to draw
+/// @param title Flame graph title
+/// @param diagram_name Value for the response's own naming (not shown in the graph)
+static HandlerResponse renderFlameGraph(ProfilerManager& profiler, const std::string& profile_path,
+                                        const std::string& title, const std::string& diagram_name,
+                                        bool inline_display) {
+    const std::string collapsed = "/tmp/" + diagram_name + "_collapsed.prof";
+    const std::string exe = profiler.getExecutablePath();
+
+    std::ostringstream cmd;
+    cmd << "./pprof --collapsed --alloc_space " << exe << " " << profile_path << " > " << collapsed << " 2>/dev/null";
+
+    std::string ignored;
+    if (!profiler.executeCommand(cmd.str(), ignored))
+        return errorResp(500, "Failed to execute pprof --collapsed command");
+    if (!hasCollapsedData(collapsed))
+        return errorResp(500, "No stack samples to render (profile is empty). The sample window may have "
+                              "been too short or the process idle; increase the duration or sample under "
+                              "load.");
+
     std::string svg;
-    profiler_.executeCommand(cmd, svg);
+    std::string fg = "perl ./flamegraph.pl --title=\"" + title + "\" --width=1200 " + collapsed + " 2>/dev/null";
+    profiler.executeCommand(fg, svg);
 
-    size_t pos = svg.find("<?xml");
+    return finishChart(flameGraphResponse(svg), diagram_name, inline_display);
+}
+
+/// Render a gperftools profile as a call-graph SVG via the pprof script.
+static HandlerResponse renderCallGraph(ProfilerManager& profiler, const std::string& profile_path,
+                                       const std::string& diagram_name, bool inline_display) {
+    const std::string exe = profiler.getExecutablePath();
+    std::string svg;
+    // --alloc_space: the default --inuse_space plots what is live now, which a
+    // short collection window rarely has; the window's allocations were already
+    // freed. stderr is kept so a failure explains itself.
+    profiler.executeCommand("./pprof --svg --alloc_space " + exe + " " + profile_path + " 2>&1", svg);
+
+    auto pos = svg.find("<?xml");
     if (pos == std::string::npos)
         pos = svg.find("<svg");
     if (pos != std::string::npos && pos > 0)
         svg = svg.substr(pos);
 
     if (svg.empty() || svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate SVG: insufficient CPU samples collected.");
+        if (svg.find("No nodes to print") != std::string::npos)
+            return errorResp(500, "The profile has no records to draw. Increase the duration or sample a "
+                                  "process that is actively allocating.");
+        return errorResp(500, "pprof could not render this profile into an SVG. Output: " + svg);
     }
-
-    auto resp = HandlerResponse::svg(svg);
-    resp.headers["Content-Disposition"] = "attachment; filename=cpu_profile.svg";
-    return resp;
+    return finishChart(HandlerResponse::svg(svg), diagram_name, inline_display);
 }
 
-HandlerResponse ProfilerHttpHandlers::handleCpuFlamegraphRaw(int duration) {
-    duration = clampDuration(duration, 1, 300);
+/// Render @p profile_text, which has been written to @p tmp_path, with the chosen renderer.
+static HandlerResponse renderChart(ProfilerManager& profiler, const std::string& tmp_path,
+                                   const std::string& profile_text, const ChartOptions& options,
+                                   const std::string& diagram_name, const std::string& flamegraph_title) {
+    if (!writeTempFile(tmp_path, profile_text))
+        return errorResp(500, "Failed to write the profile to " + tmp_path);
 
-    if (isCpuProfilerBusy()) {
+    if (options.renderer == ChartRenderer::CallGraph)
+        return renderCallGraph(profiler, tmp_path, diagram_name, options.inline_display);
+    return renderFlameGraph(profiler, tmp_path, flamegraph_title, diagram_name, options.inline_display);
+}
+
+/// Turn a profiler-core return value into an error response, or nothing if it is fine.
+static std::optional<HandlerResponse> coreError(const std::string& value) {
+    if (internal::isJsonError(value))
+        return errorResp(500, internal::jsonErrorMessage(value));
+    return std::nullopt;
+}
+
+HandlerResponse ProfilerHttpHandlers::handleCpuChart(const ChartOptions& options) {
+    if (isCpuProfilerBusy())
         return cpuProfilerBusyResponse(false);
-    }
 
-    std::string profile_data = profiler_.getRawCPUProfile(duration);
-    if (profile_data.empty()) {
-        return errorResp(500, "Failed to generate CPU profile");
-    }
+    std::string profile = profiler_.getRawCPUProfile(clampChartDuration(options.duration));
+    if (auto err = coreError(profile))
+        return *err;
+    if (profile.empty())
+        return errorResp(500, "Failed to collect a CPU profile in the requested window.");
 
-    std::string temp_file = "/tmp/cpu_raw.prof";
-    {
-        std::ofstream out(temp_file, std::ios::binary);
-        out.write(profile_data.data(), profile_data.size());
-    }
-
-    std::string exe_path = profiler_.getExecutablePath();
-    std::string collapsed_file = "/tmp/cpu_collapsed.prof";
-
-    std::ostringstream cmd;
-    cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file << " 2>&1";
-    std::string out;
-    if (!profiler_.executeCommand(cmd.str(), out)) {
-        return errorResp(500, "Failed to execute pprof --collapsed command");
-    }
-
-    // Verify collapsed data
-    std::ifstream in(collapsed_file);
-    if (!in.is_open())
-        return errorResp(500, "Failed to create collapsed file");
-    std::string line;
-    bool has_data = false;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line[0] != '#') {
-            has_data = true;
-            break;
-        }
-    }
-    in.close();
-    if (!has_data)
-        return errorResp(500, "pprof --collapsed produced no data.");
-
-    std::string fg_cmd =
-        "perl ./flamegraph.pl --title=\"CPU Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
-    std::string svg;
-    profiler_.executeCommand(fg_cmd, svg);
-
-    if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate FlameGraph: insufficient CPU samples.");
-    }
-
-    auto resp = HandlerResponse::svg(svg);
-    resp.headers["Content-Disposition"] = "attachment; filename=cpu_flamegraph_" + std::to_string(duration) + "s.svg";
-    return resp;
+    return renderChart(profiler_, "/tmp/cpu_chart_" + std::to_string(::getpid()) + ".prof", profile, options,
+                       "cpu_profile", "CPU Flame Graph");
 }
 
-// --- Heap endpoints ---
-
-HandlerResponse ProfilerHttpHandlers::handleHeapAnalyze(const std::string& output_type) {
-    // Heap analysis reconfigures the process-global heap profiler, so refuse
-    // immediately rather than racing another analysis for it, or preempting a
-    // session the caller opened with startHeapProfiler().
-    if (profiler_.isHeapAnalysisInProgress() || profiler_.isProfilerRunning(profiler::ProfilerType::HEAP)) {
+HandlerResponse ProfilerHttpHandlers::handleHeapChart(const ChartOptions& options) {
+    if (isHeapAnalyzerBusy())
         return heapAnalyzerBusyResponse();
-    }
 
-    if (!validateOutputType(output_type)) {
-        return errorResp(400, "Invalid output_type. Must be 'flamegraph' or 'pprof'");
-    }
+    std::string sample = profiler_.getRawHeapProfileSample(clampChartDuration(options.duration));
+    if (auto err = coreError(sample))
+        return *err;
+    if (sample.empty())
+        return errorResp(500, "Failed to collect a heap sample in the requested window.");
 
-    // No duration argument: heap profiling is allocation driven, not time driven.
-    std::string svg = profiler_.analyzeHeapProfile(output_type);
-
-    if (svg.size() > 10 && svg[0] == '{' && svg[1] == '"') {
-        return errorResp(500, "Failed to generate heap flame graph");
-    }
-
-    return HandlerResponse::svg(svg);
+    return renderChart(profiler_, "/tmp/heap_chart_" + std::to_string(::getpid()) + ".prof", sample, options,
+                       "heap_profile", "Heap Flame Graph");
 }
 
-HandlerResponse ProfilerHttpHandlers::handleHeapSvgRaw() {
-    std::string heap_sample = profiler_.getRawHeapSample();
-    if (heap_sample.empty()) {
-        return errorResp(500, "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set.");
+HandlerResponse ProfilerHttpHandlers::handleHeapSnapshot(const ChartOptions& options, bool as_profile) {
+    std::string sample = profiler_.getRawHeapSample();
+    if (sample.empty())
+        return errorResp(500, "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set "
+                              "before the process was started.");
+
+    if (as_profile) {
+        // The raw profile: what `go tool pprof` consumes.
+        auto resp = HandlerResponse::text(sample);
+        return finishChart(resp, "heap", options.inline_display);
     }
 
-    std::string temp_file = "/tmp/heap_raw.prof";
-    {
-        std::ofstream out(temp_file);
-        out << heap_sample;
-    }
-
-    std::string exe_path = profiler_.getExecutablePath();
-    std::string cmd = "./pprof --svg " + exe_path + " " + temp_file + " 2>/dev/null";
-    std::string svg;
-    profiler_.executeCommand(cmd, svg);
-
-    size_t pos = svg.find("<?xml");
-    if (pos == std::string::npos)
-        pos = svg.find("<svg");
-    if (pos != std::string::npos && pos > 0)
-        svg = svg.substr(pos);
-
-    if (svg.empty() || svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate SVG");
-    }
-
-    auto resp = HandlerResponse::svg(svg);
-    resp.headers["Content-Disposition"] = "attachment; filename=heap_profile.svg";
-    return resp;
+    return renderChart(profiler_, "/tmp/heap_snapshot_" + std::to_string(::getpid()) + ".prof", sample, options,
+                       "heap_snapshot", "Heap Snapshot");
 }
 
-HandlerResponse ProfilerHttpHandlers::handleHeapFlamegraphRaw() {
-    std::string heap_sample = profiler_.getRawHeapSample();
-    if (heap_sample.empty()) {
-        return errorResp(500, "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set.");
-    }
-
-    std::string temp_file = "/tmp/heap_raw.prof";
-    {
-        std::ofstream out(temp_file);
-        out << heap_sample;
-    }
-
-    std::string exe_path = profiler_.getExecutablePath();
-    std::string collapsed_file = "/tmp/heap_collapsed.prof";
-
-    std::ostringstream cmd;
-    cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file << " 2>&1";
-    std::string out;
-    if (!profiler_.executeCommand(cmd.str(), out)) {
-        return errorResp(500, "Failed to execute pprof --collapsed command");
-    }
-
-    std::ifstream in(collapsed_file);
-    if (!in.is_open())
-        return errorResp(500, "Failed to create collapsed file");
-    std::string line;
-    bool has_data = false;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line[0] != '#') {
-            has_data = true;
-            break;
-        }
-    }
-    in.close();
-    if (!has_data)
-        return errorResp(500, "pprof --collapsed produced no data");
-
-    std::string fg_cmd =
-        "perl ./flamegraph.pl --title=\"Heap Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
-    std::string svg;
-    profiler_.executeCommand(fg_cmd, svg);
-
-    if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate FlameGraph");
-    }
-
-    auto resp = HandlerResponse::svg(svg);
-    std::string ts = std::to_string(
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    resp.headers["Content-Disposition"] = "attachment; filename=heap_flamegraph_" + ts + ".svg";
-    return resp;
-}
-
-// --- Growth endpoints ---
-
-HandlerResponse ProfilerHttpHandlers::handleGrowthAnalyze(const std::string& output_type) {
-    if (!validateOutputType(output_type)) {
-        return errorResp(400, "Invalid output_type. Must be 'flamegraph' or 'pprof'");
-    }
-
+HandlerResponse ProfilerHttpHandlers::handleGrowthChart(const ChartOptions& options) {
     std::string growth = profiler_.getRawHeapGrowthStacks();
-    if (growth.empty()) {
+    if (growth.empty())
         return errorResp(500, "Failed to get heap growth stacks. No heap growth data available.");
-    }
 
-    std::string temp_file = "/tmp/growth_sample.prof";
-    {
-        std::ofstream out(temp_file);
-        out << growth;
-    }
-
-    std::string exe_path = profiler_.getExecutablePath();
-    std::string svg;
-
-    if (output_type == "flamegraph") {
-        std::string collapsed_file = "/tmp/growth_collapsed.prof";
-        std::ostringstream cmd;
-        cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file << " 2>/dev/null";
-
-        std::string out;
-        if (!profiler_.executeCommand(cmd.str(), out)) {
-            return errorResp(500, "Failed to generate collapsed format");
-        }
-
-        std::ostringstream fg;
-        fg << "perl ./flamegraph.pl --title=\"Heap Growth Flame Graph\" --width=1200 " << collapsed_file
-           << " 2>/dev/null";
-        if (!profiler_.executeCommand(fg.str(), svg)) {
-            return errorResp(500, "Failed to execute flamegraph.pl command");
-        }
-
-        if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos) {
-            return errorResp(500, "flamegraph.pl did not generate valid SVG");
-        }
-    } else {
-        std::ostringstream cmd;
-        cmd << "./pprof --svg " << exe_path << " " << temp_file << " 2>&1";
-        if (!profiler_.executeCommand(cmd.str(), svg)) {
-            return errorResp(500, "Failed to execute pprof command");
-        }
-
-        size_t svg_start = svg.find("<svg");
-        if (svg_start != std::string::npos) {
-            size_t tag_end = svg.find(">", svg_start);
-            if (tag_end != std::string::npos) {
-                std::string tag = svg.substr(svg_start, tag_end - svg_start);
-                if (tag.find("viewBox") == std::string::npos) {
-                    svg.insert(tag_end, " viewBox=\"0 -1000 2000 1000\"");
-                }
-            }
-        }
-    }
-
-    return HandlerResponse::svg(svg);
+    return renderChart(profiler_, "/tmp/growth_chart_" + std::to_string(::getpid()) + ".prof", growth, options,
+                       "growth_profile", "Heap Growth Flame Graph");
 }
-
-HandlerResponse ProfilerHttpHandlers::handleGrowthSvgRaw() {
-    std::string growth = profiler_.getRawHeapGrowthStacks();
-    if (growth.empty()) {
-        return errorResp(500, "Failed to get heap growth stacks. No heap growth data available.");
-    }
-
-    std::string temp_file = "/tmp/growth_raw.prof";
-    {
-        std::ofstream out(temp_file);
-        out << growth;
-    }
-
-    std::string exe_path = profiler_.getExecutablePath();
-    std::string cmd = "./pprof --svg " + exe_path + " " + temp_file + " 2>/dev/null";
-    std::string svg;
-    profiler_.executeCommand(cmd, svg);
-
-    size_t pos = svg.find("<?xml");
-    if (pos == std::string::npos)
-        pos = svg.find("<svg");
-    if (pos != std::string::npos && pos > 0)
-        svg = svg.substr(pos);
-
-    if (svg.empty() || svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate SVG");
-    }
-
-    auto resp = HandlerResponse::svg(svg);
-    resp.headers["Content-Disposition"] = "attachment; filename=growth_profile.svg";
-    return resp;
-}
-
-HandlerResponse ProfilerHttpHandlers::handleGrowthFlamegraphRaw() {
-    std::string growth = profiler_.getRawHeapGrowthStacks();
-    if (growth.empty()) {
-        return errorResp(500, "Failed to get heap growth stacks. No heap growth data available.");
-    }
-
-    std::string temp_file = "/tmp/growth_raw.prof";
-    {
-        std::ofstream out(temp_file);
-        out << growth;
-    }
-
-    std::string exe_path = profiler_.getExecutablePath();
-    std::string collapsed_file = "/tmp/growth_collapsed.prof";
-
-    std::ostringstream cmd;
-    cmd << "./pprof --collapsed " << exe_path << " " << temp_file << " > " << collapsed_file << " 2>&1";
-    std::string out;
-    if (!profiler_.executeCommand(cmd.str(), out)) {
-        return errorResp(500, "Failed to execute pprof --collapsed command");
-    }
-
-    std::ifstream in(collapsed_file);
-    if (!in.is_open())
-        return errorResp(500, "Failed to create collapsed file");
-    std::string line;
-    bool has_data = false;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line[0] != '#') {
-            has_data = true;
-            break;
-        }
-    }
-    in.close();
-    if (!has_data)
-        return errorResp(500, "pprof --collapsed produced no data");
-
-    std::string fg_cmd =
-        "perl ./flamegraph.pl --title=\"Heap Growth Flame Graph\" --width=1200 " + collapsed_file + " 2>/dev/null";
-    std::string svg;
-    profiler_.executeCommand(fg_cmd, svg);
-
-    if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos) {
-        return errorResp(500, "Failed to generate FlameGraph");
-    }
-
-    auto resp = HandlerResponse::svg(svg);
-    std::string ts = std::to_string(
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    resp.headers["Content-Disposition"] = "attachment; filename=growth_flamegraph_" + ts + ".svg";
-    return resp;
-}
-
-// --- Standard pprof ---
 
 HandlerResponse ProfilerHttpHandlers::handlePprofProfile(int seconds) {
     seconds = clampDuration(seconds, 1, 300);
@@ -491,10 +330,28 @@ HandlerResponse ProfilerHttpHandlers::handlePprofProfile(int seconds) {
     return resp;
 }
 
+namespace {
+
+/// Error response for the /pprof/* family, following Go's serveError(): plain
+/// text plus the X-Go-Pprof marker, so `go tool pprof` shows the message instead
+/// of trying to parse the body as profile data. Using the JSON helper here would
+/// both mislabel the content type and hide the message from the tool.
+HandlerResponse pprofErrorResponse(const std::string& message) {
+    HandlerResponse resp;
+    resp.status = 500;
+    resp.content_type = "text/plain; charset=utf-8";
+    resp.body = message + "\n";
+    resp.headers["X-Go-Pprof"] = "1";
+    return resp;
+}
+
+} // namespace
+
 HandlerResponse ProfilerHttpHandlers::handlePprofHeap() {
     std::string data = profiler_.getRawHeapSample();
     if (data.empty()) {
-        return errorResp(500, "Failed to get heap sample. Make sure TCMALLOC_SAMPLE_PARAMETER is set.");
+        return pprofErrorResponse("Could not read heap sample: heap sampling is off or produced no "
+                                  "data. Set TCMALLOC_SAMPLE_PARAMETER before starting the process.");
     }
 
     HandlerResponse resp;
@@ -508,7 +365,7 @@ HandlerResponse ProfilerHttpHandlers::handlePprofHeap() {
 HandlerResponse ProfilerHttpHandlers::handlePprofGrowth() {
     std::string data = profiler_.getRawHeapGrowthStacks();
     if (data.empty()) {
-        return errorResp(500, "Failed to get heap growth stacks. No heap growth data available.");
+        return pprofErrorResponse("Could not read heap growth stacks: no heap growth data available.");
     }
 
     HandlerResponse resp;

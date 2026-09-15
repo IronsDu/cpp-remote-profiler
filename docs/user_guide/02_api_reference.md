@@ -42,7 +42,9 @@ profiler::ProfilerManager profiler;
 
 **说明**: 析构时停止正在运行的 **CPU** profiler，并恢复构造函数之外由本对象安装的信号处理器。
 
-> ⚠️ **已知缺陷**: 析构函数对 heap profiler 只调用了查询函数 `IsHeapProfilerRunning()`，**并未调用 `HeapProfilerStop()`**（`src/profiler_manager.cpp:94-96`）。因此 heap profiler 不会随对象销毁而停止，需要显式调用 `stopHeapProfiler()`。修复计划见 [ROADMAP](../../ROADMAP.md)。
+**heap profiler 也会被停止**：析构函数调用 `HeapProfilerStop()`（`ProfilerManager::~ProfilerManager`），因为 heap profiler 存活在**进程级**的 tcmalloc 状态里——不停止的话，对象销毁后它仍会记录并 dump。
+
+> 该问题曾存在（析构里只调用了查询函数 `IsHeapProfilerRunning()`，其返回值被丢弃），现已修正并有回归测试 `ProfilerLifecycleTest.HeapProfilerStopsOnDestruction` 覆盖。
 
 ---
 
@@ -63,20 +65,30 @@ explicit ProfilerHttpHandlers(ProfilerManager& profiler);
 | 方法 | 签名 | 说明 |
 |------|------|------|
 | `handleStatus` | `HandlerResponse handleStatus()` | 返回所有 profiler 状态 (JSON) |
-| `handleCpuAnalyze` | `HandlerResponse handleCpuAnalyze(int duration, const std::string& output_type)` | CPU 分析，返回 SVG |
-| `handleCpuSvgRaw` | `HandlerResponse handleCpuSvgRaw(int duration)` | CPU 原始 SVG (pprof 生成) |
-| `handleCpuFlamegraphRaw` | `HandlerResponse handleCpuFlamegraphRaw(int duration)` | CPU FlameGraph SVG |
-| `handleHeapAnalyze` | `HandlerResponse handleHeapAnalyze(const std::string& output_type)` | Heap 分析，返回 SVG |
-| `handleHeapSvgRaw` | `HandlerResponse handleHeapSvgRaw()` | Heap 原始 SVG |
-| `handleHeapFlamegraphRaw` | `HandlerResponse handleHeapFlamegraphRaw()` | Heap FlameGraph SVG |
-| `handleGrowthAnalyze` | `HandlerResponse handleGrowthAnalyze(const std::string& output_type)` | Growth 分析，返回 SVG |
-| `handleGrowthSvgRaw` | `HandlerResponse handleGrowthSvgRaw()` | Growth 原始 SVG |
-| `handleGrowthFlamegraphRaw` | `HandlerResponse handleGrowthFlamegraphRaw()` | Growth FlameGraph SVG |
+| `handleCpuChart` | `HandlerResponse handleCpuChart(const ChartOptions&)` | CPU 采样并出图 |
+| `handleHeapChart` | `HandlerResponse handleHeapChart(const ChartOptions&)` | Heap 窗口式采集并出图 |
+| `handleGrowthChart` | `HandlerResponse handleGrowthChart(const ChartOptions&)` | Growth 采集并出图 |
 | `handlePprofProfile` | `HandlerResponse handlePprofProfile(int seconds)` | 标准 pprof CPU profile (二进制) |
 | `handlePprofHeap` | `HandlerResponse handlePprofHeap()` | 标准 pprof heap profile |
 | `handlePprofGrowth` | `HandlerResponse handlePprofGrowth()` | 标准 pprof growth profile |
 | `handlePprofSymbol` | `HandlerResponse handlePprofSymbol(const std::string& body)` | 符号化接口 (POST) |
 | `handleThreadStacks` | `HandlerResponse handleThreadStacks()` | 线程调用栈 |
+
+### ChartOptions
+
+`handleCpuChart` / `handleHeapChart` / `handleGrowthChart` 共用同一个选项结构：
+
+```cpp
+struct ChartOptions {
+    ChartRenderer renderer = ChartRenderer::FlameGraph;  // FlameGraph 或 CallGraph
+    int duration = 10;        // 采集窗口（秒），内部钳制到 1..300
+    bool inline_display = true;  // true 不发 Content-Disposition；false 强制下载
+};
+```
+
+HTTP 层的 `renderer` 取值 `flamegraph` / `callgraph` 由此处的 `ChartRenderer` 决定
+（`callgraph` 即 pprof 脚本经 graphviz 画出的调用图）。`handleHeapSnapshot(options, as_profile)`
+另有一个 `as_profile` 开关：true 返回原始 profile 文本，false 按 `options.renderer` 出图。
 
 ### 使用示例
 
@@ -88,7 +100,8 @@ profiler::ProfilerManager profiler;
 profiler::ProfilerHttpHandlers handlers(profiler);
 
 // 调用任意 handler
-profiler::HandlerResponse resp = handlers.handleCpuAnalyze(10, "flamegraph");
+profiler::ChartOptions options;   // renderer / duration / inline_display
+profiler::HandlerResponse resp = handlers.handleCpuChart(options);
 
 // resp.status, resp.content_type, resp.body, resp.headers
 // 用你自己的 Web 框架包装这些数据
@@ -146,7 +159,9 @@ struct ProfilerState {
 };
 ```
 
-> ⚠️ `start_time` 与 `duration` 的单位都是**毫秒**（`src/profiler_manager.cpp:189-191`、`214`），HTTP 层 `/api/status` 返回的 JSON 键名也相应为 `duration_ms`。`include/profiler_manager.h:40` 的注释写作 "seconds"，属过时注释。
+> ⚠️ `start_time` 与 `duration` 的单位都是**毫秒**（见 `ProfilerState` 的字段注释），HTTP 层 `/api/status` 返回的 JSON 键名也相应为 `duration_ms`。
+>
+> 注意与**采集窗口**区分：`analyzeCPUProfile(duration)`、`ChartOptions::duration` 里的 `duration` 是**秒**，而 `ProfilerState::duration` 是**毫秒**。两者同名不同单位。
 
 ---
 
@@ -210,7 +225,7 @@ void setLogSink(std::shared_ptr<LogSink> sink);
 
 **说明**:
 - 设置后，profiler 的所有日志将输出到自定义 sink
-- 默认 sink 按级别分流：`Trace`/`Debug`/`Info` 写 **stdout**，`Warning`/`Error`/`Fatal` 写 **stderr**（`src/internal/default_log_sink.cpp:70-74`）
+- 默认 sink 按级别分流：`Trace`/`Debug`/`Info` 写 **stdout**，`Warning`/`Error`/`Fatal` 写 **stderr**（`LogSink` 默认实现中的级别判断）
 - 设置 `nullptr` 可恢复默认行为
 
 **示例**:
@@ -300,7 +315,10 @@ std::string analyzeCPUProfile(int duration, const std::string& output_type = "fl
 
 **参数**:
 - `duration`: 采样时长（秒）
-- `output_type`: 输出类型（"flamegraph" 或 "pprof"）
+- `output_type`: 渲染方式（`"flamegraph"` 或 `"pprof"`）
+
+> 这是 **C++ 层**的形参。HTTP 层的等价参数叫 `renderer`，取值 `flamegraph` / `callgraph`
+> （见 README 的端点说明）——`callgraph` 对应这里的 `"pprof"`。
 
 **返回值**: SVG 字符串
 
@@ -325,7 +343,7 @@ std::string getRawCPUProfile(int seconds);
 
 宿主用 `startCPUProfiler()` 打开的会话**归调用方所有，不会被本函数停止或接管**。调用前可用
 `isProfilerRunning(ProfilerType::CPU)` 判断；HTTP 层则通过 `isCpuProfilerBusy()` 区分并返回
-`500`（`/pprof/profile`，Go 风格）或 `409`（`/api/cpu/*`）。
+`500`（`/pprof/profile`，Go 风格）或 `409`（`/api/pprof/cpu`）。
 
 ---
 
@@ -358,17 +376,22 @@ bool stopHeapProfiler();
 采集 Heap 并生成图表 SVG。
 
 ```cpp
-std::string analyzeHeapProfile(const std::string& output_type = "flamegraph");
+std::string analyzeHeapProfile(int duration = 1, const std::string& output_type = "flamegraph");
 ```
 
 **参数**:
-- `output_type`: 输出类型（`"flamegraph"` 或 `"pprof"`）
+- `duration`: 采集窗口（秒），默认 **1**，内部钳制到 1..300
+- `output_type`: 渲染方式（`"flamegraph"` 或 `"pprof"`）
 
 **返回值**: SVG 字符串；失败时返回 `{"error":"..."}` JSON 字符串
 
-**说明**: **没有 duration 参数**。gperftools 的 heap profiling 是按分配驱动的：`HeapProfilerStart()`
-开始记录，`HeapProfilerDump()` 写出快照，与经过的时间无关。实现内部只开启一个固定的采样窗口（1 秒），
-然后 dump。
+**说明**: `duration` 是**采集窗口**，不是采样率。gperftools 的 heap profiling 按分配驱动：
+`HeapProfilerStart()` 开始记录，`HeapProfilerDump()` 写出快照。窗口决定**覆盖多久的分配**，
+采样率则由 `TCMALLOC_SAMPLE_PARAMETER` 在进程启动前固定，运行时不可调。
+
+> ⚠️ **C++ 层默认 1 秒，HTTP 层默认 10 秒**。HTTP 层用更长默认值是实测结果：短窗口经常
+> 采不到足够的分配而渲染失败。直接调用此函数时，分配稀疏的进程请显式传入更大的
+> `duration`。
 
 **记录的是"窗口内发生的分配"，不是"当前堆里的内存"** —— 这是最容易误解的一点：
 
@@ -418,13 +441,36 @@ std::string getRawHeapGrowthStacks();
 
 ### getThreadCallStacks
 
-获取完整线程调用堆栈。
+获取所有线程的调用堆栈，`/api/thread/stacks` 即调用它。
 
 ```cpp
 std::string getThreadCallStacks();
 ```
 
-**说明**: 逐个地址调用 `symbolizeAddress()` 做符号化，该函数**优先使用 Abseil**（`absl::Symbolize`），失败后再回退到 `resolveSymbolWithBackward()`（`src/profiler_manager.cpp:1112-1121`、`1311-1314`）。
+**输出格式**：
+
+```
+Thread Call Stacks (via Signal Handler)
+=========================================
+
+Total threads captured: 2
+
+Thread 1234 (DrogonIoLoop):
+  Frames: 13
+    #0 profiler::v0_1_0::ProfilerManager::signalHandler()
+    #1 __restore_rt
+    ...
+    #5 epoll_wait            ← 该线程阻塞在这里
+```
+
+- **线程名**取自 `/proc/<tid>/comm`（内核截断到 15 字符，与 `ps`/`top` 显示一致）。只有 tid
+  时输出 `Thread 1234:`，读日志时几乎无法分辨是哪个线程，因此带上名字。
+- **阻塞点**是跳过信号捕获机制帧后的第一个真实帧（栈顶前几帧恒为
+  `signalHandler`/`__restore_rt`/`__syscall_cancel_arch`，它们属于捕获手段而非线程状态）。
+- 正在执行本请求的线程**不会**出现在结果里：信号只能采集其他线程，执行中的线程无法被抓取。
+  这也是可接受的——正在运行的线程本来就没有"卡住"。
+
+**说明**: 逐个地址调用 `symbolizeAddress()` 做符号化，该函数**优先使用 Abseil**（`absl::Symbolize`），失败后再回退到 `resolveSymbolWithBackward()`。
 
 ---
 
@@ -438,7 +484,7 @@ std::string getThreadCallStacks();
 std::string resolveSymbolWithBackward(void* address);
 ```
 
-**说明**: 实际的符号化链及顺序为（`src/symbolize.cpp:30`、`42`、`66`）：
+**说明**: 实际的符号化链及顺序为（`src/symbolize.cpp` 的 `symbolize()` 内，按顺序尝试）：
 
 1. `absl::Symbolize` — 最可靠，命中即返回函数名（源文件记为 `??`、行号为 0）
 2. `dladdr` + `abi::__cxa_demangle` — 回退，可拿到所在模块名
@@ -485,7 +531,7 @@ std::string getExecutablePath();
 static void setStackCaptureSignal(int signal);
 ```
 
-**说明**: 默认使用 `SIGUSR1`。推荐在第一次捕获线程栈之前调用；若处理器已安装后再调用，实现会先恢复旧处理器并打印一条 `[WARN]` 日志，然后切换（`src/profiler_manager.cpp:112-128`）。
+**说明**: 默认使用 `SIGUSR1`。推荐在第一次捕获线程栈之前调用；若处理器已安装后再调用，实现会先恢复旧处理器并打印一条 `[WARN]` 日志，然后切换（`ProfilerManager::setStackCaptureSignal()`）。
 
 ```cpp
 profiler::ProfilerManager::setStackCaptureSignal(SIGUSR2);
@@ -551,7 +597,7 @@ int main() {
 它会同时考虑"已有请求在采样"和"宿主占用了会话"两种情况。
 
 Heap 侧同理：`analyzeHeapProfile()` 与 `startHeapProfiler()` 互斥，谁先占谁赢。
-`/api/growth/analyze` 不占用任何会话，不受限制。
+`/api/pprof/growth` 不占用任何会话，不受限制。
 
 ---
 
@@ -559,7 +605,7 @@ Heap 侧同理：`analyzeHeapProfile()` 与 `startHeapProfiler()` 互斥，谁�
 
 - 大多数控制类方法（`start*` / `stop*`）返回 `bool` 表示成功/失败
 - 原始数据获取方法（`getRawCPUProfile`、`getRawHeapSample`、`getRawHeapGrowthStacks`、`getThreadCallStacks`）在失败时返回**空字符串**
-- ⚠️ 但 `analyzeCPUProfile()` / `analyzeHeapProfile()` 在失败时返回的是形如 `{"error":"..."}` 的 **JSON 字符串**，而非空串（`src/profiler_manager.cpp:427`、`469`、`475`、`491`、`520`）。HTTP 层正是靠 `{"` 前缀识别它并转成 500（`src/http_handlers.cpp:69-71`）——自行调用这两个 API 时需要做同样的判断
+- ⚠️ 但 `analyzeCPUProfile()` / `analyzeHeapProfile()` 在失败时返回的是形如 `{"error":"..."}` 的 **JSON 字符串**，而非空串（`analyzeCPUProfile()` / `analyzeHeapProfile()` 的各个失败分支）。HTTP 层正是靠 `{"` 前缀识别它并转成 500（`profiler::internal::isJsonError()`，见 `src/internal/result_parsing.h`）——自行调用这两个 API 时需要做同样的判断
 - `HandlerResponse::error()` 返回包含错误信息的 JSON 响应
 
 ---
