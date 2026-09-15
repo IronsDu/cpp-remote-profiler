@@ -18,6 +18,7 @@
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <fcntl.h>
+#include <filesystem>
 #include <fstream>
 #include <gperftools/heap-profiler.h>
 #include <gperftools/malloc_extension.h>
@@ -37,6 +38,30 @@
 #include <vector>
 
 PROFILER_NAMESPACE_BEGIN
+
+namespace {
+
+/// Read an entire file into a string. Returns false if it cannot be opened.
+///
+/// Used for profile artifacts written by gperftools: reading them back into our
+/// own std::string keeps ownership on our side of the boundary, which
+/// GetHeapProfile()'s return value does not allow (see stopHeapProfiler()).
+bool readWholeFile(const std::string& path, std::string* out) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open())
+        return false;
+
+    file.seekg(0, std::ios::end);
+    const std::streamoff size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    if (size > 0) {
+        out->resize(static_cast<size_t>(size));
+        file.read(&(*out)[0], size);
+    }
+    return true;
+}
+
+} // namespace
 
 // Static member initialization
 // Process-global, like the gperftools sampling session it guards.
@@ -264,28 +289,48 @@ bool ProfilerManager::stopHeapProfiler() {
     }
 
     if (IsHeapProfilerRunning()) {
-        // GetHeapProfile() hands back an owned string whose header says to free().
-        // Deliberately NOT freed here: there is no portable deallocator for it.
-        //   - Under a *static* tcmalloc the library allocates the buffer with its
-        //     own malloc, which the process's malloc interposer (ASan here) never
-        //     saw, so free() aborts with "attempting free on address which was not
-        //     malloc()-ed". CI hit exactly that.
-        //   - gperftools 2.18 also routes the intermediate chunks through an
-        //     internal arena; tc_free() only exists from 2.16.90; and
-        //     LowLevelAlloc::Free lives in a private header.
-        // The buffer is roughly 11KB per stop, which is worth not crashing over:
-        // copy it out and let it go. lsan.supp carries the matching suppression.
-        const char* profile = GetHeapProfile();
+        const std::string output_path = profiler_states_[ProfilerType::HEAP].output_path;
+
+        // Write the snapshot to disk and read it back, rather than taking it from
+        // GetHeapProfile(). That function hands back a buffer the caller is told to
+        // free(), but no deallocator is correct across the supported gperftools
+        // range: under a statically linked tcmalloc the buffer belongs to the
+        // library's own allocator, which the process's malloc interposer never saw,
+        // so free() aborts (this is what broke CI); tc_free() only exists from
+        // 2.16.90; and 2.18 routes intermediate chunks through an internal arena
+        // whose Free sits in a private header. Dumping to a file keeps the memory
+        // on our side, so there is nothing to free and no leak to suppress.
+        //
+        // HeapProfilerDump() appends ".<sequence>.heap" to the profiler's prefix,
+        // which is the path startHeapProfiler() was given -- so the dump lands next
+        // to output_path under a derived name, not at output_path itself.
+        const std::filesystem::path output_as_path(output_path);
+        const std::string dump_dir = output_as_path.has_parent_path() ? output_as_path.parent_path().string() : ".";
+        const std::string dump_prefix = output_as_path.filename().string();
+
+        PROFILER_DEBUG("Calling HeapProfilerDump()...");
+        HeapProfilerDump("stop");
+
+        // gperftools writes the dump from a signal-adjacent context; give the
+        // filesystem a moment to make it visible, as the analysis path does.
+        usleep(100000);
+
         std::string heap_profile;
-        if (profile != nullptr) {
-            heap_profile.assign(profile);
+        const std::string dump_file = findLatestHeapProfile(dump_dir, dump_prefix);
+        if (dump_file.empty()) {
+            PROFILER_WARNING("HeapProfilerDump() produced no .heap file matching '{}' in {}", dump_prefix, dump_dir);
+        } else {
+            PROFILER_INFO("Using heap dump: {}", dump_file);
+            if (!readWholeFile(dump_file, &heap_profile))
+                PROFILER_ERROR("Failed to read heap dump: {}", dump_file);
         }
-        std::string output_path = profiler_states_[ProfilerType::HEAP].output_path;
 
         std::ofstream file(output_path);
         if (file.is_open()) {
             file << heap_profile;
             file.close();
+        } else {
+            PROFILER_WARNING("Failed to write heap profile to {}", output_path);
         }
 
         HeapProfilerStop();
@@ -1013,12 +1058,13 @@ std::string ProfilerManager::getRawHeapProfileSample(int duration) {
         }
     }
 
-    // Unique prefix: GetHeapProfile() reports from the profiler's own state, and
-    // a distinct prefix keeps this window's records separate from any other run.
+    // Unique prefix: keeps this window's records separate from any other run, and
+    // it is also where HeapProfilerDump() below writes (it appends ".<seq>.heap").
     auto now = std::chrono::system_clock::now();
     auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    std::string prefix = profile_dir_ + "/heap_raw_" + std::to_string(timestamp) + "_" +
-                         std::to_string(heap_prefix_sequence_.fetch_add(1));
+    std::string prefix_basename =
+        "heap_raw_" + std::to_string(timestamp) + "_" + std::to_string(heap_prefix_sequence_.fetch_add(1));
+    std::string prefix = profile_dir_ + "/" + prefix_basename;
 
     PROFILER_INFO("Collecting heap samples for {} second(s) (raw)...", duration);
     HeapProfilerStart(prefix.c_str());
@@ -1026,14 +1072,23 @@ std::string ProfilerManager::getRawHeapProfileSample(int duration) {
 
     std::string sample;
     if (IsHeapProfilerRunning()) {
-        // Not freed on purpose -- see the note in stopHeapProfiler() for why the
-        // buffer has no portable deallocator (static tcmalloc + free() aborts
-        // under ASan, tc_free() does not exist before 2.16.90).
-        const char* profile = GetHeapProfile();
-        if (profile != nullptr) {
-            sample.assign(profile);
-        }
+        // Dump to disk and read it back instead of calling GetHeapProfile(): the
+        // buffer that function returns has no deallocator that is correct across
+        // the supported gperftools range (see stopHeapProfiler()). Going through a
+        // file keeps the memory on our side, so nothing needs freeing.
+        PROFILER_DEBUG("Calling HeapProfilerDump()...");
+        HeapProfilerDump("raw");
         HeapProfilerStop();
+
+        const std::string dump_file = findLatestHeapProfile(profile_dir_, prefix_basename);
+        if (dump_file.empty()) {
+            PROFILER_WARNING("HeapProfilerDump() produced no .heap file matching '{}' in {}", prefix_basename,
+                             profile_dir_);
+        } else {
+            PROFILER_INFO("Using heap dump: {}", dump_file);
+            if (!readWholeFile(dump_file, &sample))
+                PROFILER_ERROR("Failed to read heap dump: {}", dump_file);
+        }
     }
 
     ClaimGuard::release();

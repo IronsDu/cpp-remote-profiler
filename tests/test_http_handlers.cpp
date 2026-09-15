@@ -8,6 +8,7 @@
 #include "../include/profiler_manager.h"
 #include <chrono>
 #include <dirent.h>
+#include <fstream>
 #include <future>
 #include <gperftools/heap-profiler.h>
 #include <gtest/gtest.h>
@@ -497,6 +498,40 @@ TEST(ProfilerLifecycleTest, StopHeapProfilerReportsState) {
 
     EXPECT_TRUE(profiler.stopHeapProfiler());
     EXPECT_FALSE(profiler.isProfilerRunning(profiler::ProfilerType::HEAP));
+}
+
+TEST(ProfilerLifecycleTest, StopHeapProfilerWritesRealProfileContent) {
+    // The state assertions above would pass even if the profile file came out
+    // empty. stopHeapProfiler() gets its data by dumping to disk and reading that
+    // file back (GetHeapProfile()'s buffer has no portable deallocator), so the
+    // path is worth checking end to end: the derived dump name has to be found and
+    // its contents written to the caller's requested path.
+    profiler::ProfilerManager profiler;
+
+    const std::string output = "/tmp/test_stop_heap_content.prof";
+    std::remove(output.c_str());
+
+    ASSERT_TRUE(profiler.startHeapProfiler(output));
+
+    // Allocate while the profiler runs, so there is something to record.
+    {
+        std::vector<std::vector<char>> live;
+        for (int i = 0; i < 64; ++i)
+            live.emplace_back(64 * 1024, static_cast<char>(i));
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    ASSERT_TRUE(profiler.stopHeapProfiler());
+
+    std::ifstream file(output, std::ios::binary);
+    ASSERT_TRUE(file.is_open()) << "profile not written to " << output;
+    const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+    EXPECT_FALSE(content.empty()) << "profile file is empty";
+    // A gperftools heap profile starts with a header line naming the format.
+    EXPECT_NE(content.find("heap profile:"), std::string::npos) << "unexpected content: " << content.substr(0, 120);
+
+    std::remove(output.c_str());
 }
 
 TEST(ProfilerLifecycleTest, StartingHeapProfilerTwiceFails) {

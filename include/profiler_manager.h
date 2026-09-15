@@ -186,7 +186,7 @@ public:
     /// @brief Sample allocations for @p duration seconds and return the raw profile text
     ///
     /// Unlike getRawHeapSample() this needs no startup configuration: it runs its
-    /// own HeapProfilerStart/GetHeapProfile/Stop window, so it works in a process
+    /// own HeapProfilerStart/HeapProfilerDump/Stop window, so it works in a process
     /// launched without TCMALLOC_SAMPLE_PARAMETER. Use this when the caller wants
     /// to choose how long to collect (sparse allocators need longer) and then
     /// render or analyse the text themselves.

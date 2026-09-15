@@ -98,11 +98,19 @@
 
 ### 待修
 
-- **`GetHeapProfile()` 的返回缓冲区没有可移植的释放方式**：头文件说调用方应 `free()`，
-  上游测试也这么做，但静态链接 tcmalloc 时该缓冲区来自库自身的分配器，进程的 malloc
-  拦截器（ASan）不认识它，`free()` 会 abort；`tc_free()` 仅 gperftools ≥ 2.16.90 存在；
-  2.18 还把中间 chunk 走内部 arena，其 `Free` 在私有头文件里。当前选择是**不释放**
-  （每次约 11KB，已在 `lsan.supp` 登记）。若将来 gperftools 提供公开释放函数，应改回释放。
+- **不要用 `GetHeapProfile()` 取窗口式 profile**（已通过绕开解决，此处记录原因）：
+  它返回的缓冲区头文件说调用方应 `free()`、上游测试也这么做，但没有可移植的释放方式——
+  静态链接 tcmalloc 时缓冲区来自库自身分配器，进程的 malloc 拦截器（ASan）不认识它，
+  `free()` 会 abort；`tc_free()` 仅 gperftools ≥ 2.16.90 存在；2.18 的中间 chunk 还走内部
+  arena，其 `Free` 在私有头文件里。
+  现在两条窗口式路径（`stopHeapProfiler()`、`getRawHeapProfileSample()`）都改为
+  **`HeapProfilerDump()` 落盘 + 读回**，内存归我们自己，无泄漏也无需抑制规则。
+  若将来 gperftools 提供公开释放函数，可再评估直接取缓冲区。
+- **`GetHeapSample(string*)` 不能替代窗口式取数**（实测记录，避免误改）：它是 **pull 统计抽样**，
+  与 `HeapProfilerStart/Stop` 的窗口记录是两套机制。实测同一时刻：窗口 dump 报
+  `202: 13121057`（1312 万字节，即实际分配量），而 `TCMALLOC_SAMPLE_PARAMETER=524288` 下
+  `GetHeapSample` 只报 `17: 1114112`（111 万），无该变量时干脆返回 `%warn`。若替换会**静默少报约 12 倍**。
+  状态式快照 `/api/pprof/heap/snapshot` 用它是对的，窗口式不能用。
 
 - **生成的 SVG 无法缩放**：FlameGraph 的 `zoom()` 找不到它要操作的 `#viewport`（其产物只有
   `#frames`），pprof 的 SVGPan 库则从未被初始化（产物缺少 `onload` 挂钩）。两条路径的交互脚本
@@ -118,7 +126,7 @@
   实测同一份 profile 未解析帧为 0、且能标出 `(inline)`；而 `go tool pprof` 强在对比与交互
   （`-diff_base`、`-peek`、`-traces`）。README 目前只说了"两种渲染方式"，没说各自适合什么场景。
 - **`pprof --svg` 的失败信息不透出**：内置 pprof 脚本用 `dot`(graphviz) 渲染，采样点过少时 `dot` 失败，代码只回一句 `pprof did not generate valid SVG. Output: `（且 `svg_output` 为空），无法定位原因。应把 `dot` 的 stderr 一并返回。**这是异步改造期间实测复现的既有缺陷**，与请求调度无关。
-- **`stopHeapProfiler()` 的 `output_path` 语义**：它把 `GetHeapProfile()` 的返回值写进 `output_path` 文件，而 `.heap` 是 gperftools 自己按 prefix 写的，两套产物并存容易混淆。
+- ~~**`stopHeapProfiler()` 的 `output_path` 语义**~~（**已解决**）：两者不再并存——`HeapProfilerDump()` 写出的 `.heap` 只是**中间产物**，其内容被读出后写入 `output_path`，调用方拿到的仍是它请求的路径。中间文件保留在磁盘上（可作排查用），语义不再含混。
 - **窗口式 heap 端点缺少"采样率"调节**：`duration` 控制的是**采集多久**（覆盖度），采样率仍由
   `TCMALLOC_SAMPLE_PARAMETER` 在启动时固定。若调用方希望在运行期调整**精度**，目前没有途径
   （`HEAP_PROFILE_ALLOCATION_INTERVAL` 只在 `HeapProfilerStart` 前设环境变量才生效）。

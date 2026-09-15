@@ -419,7 +419,7 @@ tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用�
 `GetHeapGrowthStacks()`，也不需要该变量。
 
 > ⚠️ 不设该变量时：**窗口式**端点（`/api/pprof/heap`）仍然正常返回 SVG，因为它自己运行
-> `HeapProfilerStart/GetHeapProfile/Stop` 窗口；而**状态式**的 `/pprof/heap` 与
+> `HeapProfilerStart/HeapProfilerDump/Stop` 窗口；而**状态式**的 `/pprof/heap` 与
 > `/api/pprof/heap/snapshot?format=profile` 返回 500。
 
 ### Heap 的两个端点语义相反
@@ -429,11 +429,22 @@ tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用�
 | | `/pprof/heap`、`/api/pprof/heap/snapshot` | `/api/pprof/heap` |
 |---|---|---|
 | 语义 | **状态式**：当前堆里的累计采样 | **窗口式**：采集窗口内**发生的分配** |
-| 底层 | `GetHeapSample()` 拉取 | `HeapProfilerStart()` → `GetHeapProfile()` → `Stop()` |
+| 底层 | `GetHeapSample()` 拉取（pull） | `HeapProfilerStart()` → `HeapProfilerDump()` → 读文件 |
 | 是否建 profiler 会话 | 否 | 是（独占，并发返回 409） |
 | 输出 | 原始 profile 文本，**客户端**用 `go tool pprof` 渲染 | 服务端渲染好的 SVG |
 | `TCMALLOC_SAMPLE_PARAMETER` | **必需** | 不需要 |
 | 时长参数 | 无 | `?duration=N`，默认 10 秒 |
+
+> ⚠️ **两条路的取数接口不能互换。** 状态式用的 `GetHeapSample(std::string*)` 写进调用方的
+> 字符串，无分配无释放，看起来更省事——但它是 **pull 统计抽样**，与窗口式的 push 记录是两套机制。
+> 实测同一时刻：窗口 dump 报 `202: 13121057`（1312 万字节，即该窗口实际分配量），而
+> `TCMALLOC_SAMPLE_PARAMETER=524288` 下 `GetHeapSample` 只报 `17: 1114112`（111 万），
+> 未设该变量时直接返回 `%warn`。用它替代窗口式取数会**静默少报约 12 倍**。
+>
+> 同理，窗口式也不使用 `GetHeapProfile()`：它返回的缓冲区没有可移植的释放方式
+> （静态链接 tcmalloc 时 `free()` 会被 ASan 判为 bad-free），因此改为 dump 到文件再读回，
+> 内存归调用方所有。详见 ROADMAP。
+
 
 关键差别在于**"存量"与"流量"**：
 
