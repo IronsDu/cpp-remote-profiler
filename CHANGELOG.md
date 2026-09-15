@@ -6,8 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
 ### Added
+
+
+- `/api/thread/stacks` (and `getThreadCallStacks()`) print each thread's **name** next to its tid, read from `/proc/<tid>/comm`. A bare tid is not identifiable when reading the output afterwards; the name is what tells you that thread 1234 is `DrogonIoLoop` and 1235 is a worker parked on a futex.
 - CMake options documentation and reproducible `CMakePresets.json` presets (`debug`, `release`, `relwithdebinfo`, `coverage`, clang variants)
 - `find_package` integration test under `cmake/examples/test_find_package/`
 - Doxygen API documentation support (`-DBUILD_DOCS=ON`)
@@ -20,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `profiler/async_executor.h` — bounded single-worker executor for long-running jobs
 
 ### Changed
+
+
 - The Heap Snapshot section is one **output** dropdown (raw profile text / flame graph / call graph) with a single 打开 and 下载 pair, instead of separate buttons per product. Three options, one endpoint: `?format=profile`, `?format=svg&renderer=flamegraph`, `?format=svg&renderer=callgraph`.
 - Each chart section owns its renderer selector. The snapshot section previously read the Heap Profiler section's dropdown, so which picture you got from the snapshot depended on a control in a different block.
 - Every section offers 打开 (`output=inline`) alongside 下载 (`output=attachment`). The inline mode was reachable only by hand-assembling a URL before, since the buttons hard-coded attachment -- a feature nothing in the UI exercised.
@@ -98,6 +102,8 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
 - Installation layout made consistent across `lib`/`lib64` hosts so `find_package()` works (GNUInstallDirs is now included before the install rules)
 
 ### Fixed
+
+
 - The test suite is safe to run in parallel. The profiler's intermediate artifacts
   (`pprof_cpu_temp.prof`, `cpu_analyze.prof`, `cpu_collapsed.prof`,
   `heap_collapsed.prof`, and the per-endpoint render inputs) had fixed names in a
@@ -128,7 +134,6 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
 - clang-tidy job could not locate dependency headers
 - Suppressed a known tcmalloc leak so ASan builds fail only on real errors
 
-### Fixed
 - A session opened by the host through `startCPUProfiler()` / `startHeapProfiler()`
   is no longer preempted. `getRawCPUProfile()` and `analyzeCPUProfile()` used to
   stop whatever session was running and start their own; they now refuse and
@@ -140,7 +145,6 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
   while stopping an existing session; the stop and the state update now happen
   under the lock, as does the corresponding teardown in `getRawCPUProfile()`.
 
-### Fixed
 - `/pprof/heap` reported success when heap sampling was off. `GetHeapSample()` does
   not return an empty string in that case -- it returns pprof's `%warn` advisory
   followed by a valid-looking but empty profile (`@ heap_v2/0`) -- so the
@@ -163,7 +167,16 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
   now detected and returned as a 500 explaining that the sample window was too
   short or the process idle.
 
+### Removed
+
+
+- **Breaking:** `ProfilerManager::getThreadStacks()` is gone. It was 122 lines that nothing called: `/api/thread/stacks` has always used `getThreadCallStacks()`, which answers the same question ("where is each thread stuck") with a full call stack instead of a `/proc` field. Its one unique contribution, the thread name, is now part of the endpoint output.
+- `logger.h` (unused after the logging rework)
+- The synthetic allocation thread inside `analyzeHeapProfile()`
+
 ### Documentation
+
+
 - README, the API reference and the troubleshooting guide now spell out that the
   two heap views are **opposite in kind**, not two renderings of one dataset:
   `/pprof/heap` is state-based (cumulative snapshot of the current heap, needs
@@ -182,11 +195,9 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
   two labelled cards, the second driving `GET /pprof/heap` with view and
   download actions.
 
-### Removed
-- `logger.h` (unused after the logging rework)
-- The synthetic allocation thread inside `analyzeHeapProfile()`
-
 ### Notes
+
+
 - The repository currently has **no git tags**; `v0.1.0` below refers to commit `a503106`. Tagging is tracked in [ROADMAP.md](ROADMAP.md).
 
 ## [0.1.0] - 2026-02-05

@@ -1056,128 +1056,6 @@ std::string ProfilerManager::getRawHeapGrowthStacks() {
     return heap_growth_stacks;
 }
 
-std::string ProfilerManager::getThreadStacks() {
-    std::ostringstream result;
-
-    // Open /proc/self/task directory to list all threads
-    DIR* task_dir = opendir("/proc/self/task");
-    if (!task_dir) {
-        PROFILER_ERROR("Failed to open /proc/self/task");
-        return "";
-    }
-
-    result << "Thread Stacks Snapshot\n";
-    result << "======================\n\n";
-
-    // Iterate through all thread directories
-    struct dirent* entry;
-    int thread_count = 0;
-
-    while ((entry = readdir(task_dir)) != nullptr) {
-        // Skip "." and ".." entries
-        if (entry->d_name[0] == '.') {
-            continue;
-        }
-
-        // Get thread ID
-        pid_t tid = atoi(entry->d_name);
-        if (tid == 0) {
-            continue;
-        }
-
-        thread_count++;
-
-        result << "Thread " << tid << ":\n";
-
-        // Read thread stat to get state and name
-        std::string stat_file = std::string("/proc/self/task/") + entry->d_name + "/stat";
-        std::ifstream stat_stream(stat_file);
-
-        if (stat_stream.is_open()) {
-            std::string line;
-            if (std::getline(stat_stream, line)) {
-                // Parse stat file (format: pid (comm) state ...)
-                size_t open_paren = line.find('(');
-                size_t close_paren = line.find(')', open_paren);
-
-                if (open_paren != std::string::npos && close_paren != std::string::npos) {
-                    std::string name = line.substr(open_paren + 1, close_paren - open_paren - 1);
-
-                    // Get state character (after close_paren + 2)
-                    if (close_paren + 2 < line.length()) {
-                        char state = line[close_paren + 2];
-
-                        // Convert state to readable format
-                        const char* state_str = "Unknown";
-                        switch (state) {
-                        case 'R':
-                            state_str = "Running";
-                            break;
-                        case 'S':
-                            state_str = "Sleeping";
-                            break;
-                        case 'D':
-                            state_str = "Disk sleep";
-                            break;
-                        case 'Z':
-                            state_str = "Zombie";
-                            break;
-                        case 'T':
-                            state_str = "Stopped";
-                            break;
-                        case 't':
-                            state_str = "Tracing stop";
-                            break;
-                        case 'X':
-                            state_str = "Dead";
-                            break;
-                        case 'x':
-                            state_str = "Dead";
-                            break;
-                        case 'K':
-                            state_str = "Wakekill";
-                            break;
-                        case 'W':
-                            state_str = "Waking";
-                            break;
-                        case 'P':
-                            state_str = "Parked";
-                            break;
-                        }
-
-                        result << "  Name: " << name << "\n";
-                        result << "  State: " << state_str << " (" << state << ")\n";
-                    }
-                }
-            }
-            stat_stream.close();
-        }
-
-        // Try to read wchan (what thread is waiting on)
-        std::string wchan_file = std::string("/proc/self/task/") + entry->d_name + "/wchan";
-        std::ifstream wchan_stream(wchan_file);
-
-        if (wchan_stream.is_open()) {
-            std::string wchan;
-            if (std::getline(wchan_stream, wchan) && !wchan.empty()) {
-                result << "  Waiting in: " << wchan << "\n";
-            }
-            wchan_stream.close();
-        }
-
-        result << "\n";
-    }
-
-    closedir(task_dir);
-
-    result << "Total threads: " << thread_count << "\n";
-
-    std::string output = result.str();
-    PROFILER_INFO("Thread stacks collected, size: {} bytes", output.size());
-
-    return output;
-}
-
 // Signal handler for capturing stack traces (signal-safe)
 void ProfilerManager::signalHandler(int signum, siginfo_t* info, void* context) {
     // Check if this is our configured signal
@@ -1419,6 +1297,25 @@ std::vector<ThreadStackTrace> ProfilerManager::captureAllThreadStacks() {
     return result;
 }
 
+namespace {
+
+/// Read a thread's name from /proc/<tid>/comm (what ps and top display).
+///
+/// Returns an empty string when the thread has exited or the file cannot be
+/// read, in which case the caller prints a bare tid rather than failing.
+std::string readThreadName(pid_t tid) {
+    std::ifstream comm("/proc/self/task/" + std::to_string(tid) + "/comm");
+    std::string name;
+    if (comm.is_open())
+        std::getline(comm, name);
+    // The kernel truncates to 15 characters and may leave a trailing newline.
+    while (!name.empty() && (name.back() == '\n' || name.back() == '\r' || name.back() == ' '))
+        name.pop_back();
+    return name;
+}
+
+} // namespace
+
 std::string ProfilerManager::getThreadCallStacks() {
     std::ostringstream result;
 
@@ -1432,7 +1329,14 @@ std::string ProfilerManager::getThreadCallStacks() {
 
     // Process each thread's stack
     for (const auto& trace : stacks) {
-        result << "Thread " << trace.tid << ":\n";
+        // Include the thread's name. A bare tid means nothing when reading the
+        // output afterwards, whereas "DrogonIoLoop" or "worker-3" identifies the
+        // thread at a glance. Same source ps and top use.
+        result << "Thread " << trace.tid;
+        const std::string name = readThreadName(trace.tid);
+        if (!name.empty())
+            result << " (" << name << ")";
+        result << ":\n";
         result << "  Frames: " << trace.depth << "\n";
 
         // Symbolize and print each frame using abseil

@@ -201,10 +201,6 @@ public:
     /// @return Heap growth stacks in text format (compatible with pprof)
     std::string getRawHeapGrowthStacks();
 
-    /// @brief Get all thread stacks (for /api/thread/stacks endpoint)
-    /// @return Thread stacks in text format
-    std::string getThreadStacks();
-
     /// @brief Get thread callstack with full backtrace using signal handler
     /// @return Thread callstack information
     std::string getThreadCallStacks();

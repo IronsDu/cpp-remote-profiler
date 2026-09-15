@@ -437,13 +437,36 @@ std::string getRawHeapGrowthStacks();
 
 ### getThreadCallStacks
 
-获取完整线程调用堆栈。
+获取所有线程的调用堆栈，`/api/thread/stacks` 即调用它。
 
 ```cpp
 std::string getThreadCallStacks();
 ```
 
-**说明**: 逐个地址调用 `symbolizeAddress()` 做符号化，该函数**优先使用 Abseil**（`absl::Symbolize`），失败后再回退到 `resolveSymbolWithBackward()`（`src/profiler_manager.cpp:1112-1121`、`1311-1314`）。
+**输出格式**：
+
+```
+Thread Call Stacks (via Signal Handler)
+=========================================
+
+Total threads captured: 2
+
+Thread 1234 (DrogonIoLoop):
+  Frames: 13
+    #0 profiler::v0_1_0::ProfilerManager::signalHandler()
+    #1 __restore_rt
+    ...
+    #5 epoll_wait            ← 该线程阻塞在这里
+```
+
+- **线程名**取自 `/proc/<tid>/comm`（内核截断到 15 字符，与 `ps`/`top` 显示一致）。只有 tid
+  时输出 `Thread 1234:`，读日志时几乎无法分辨是哪个线程，因此带上名字。
+- **阻塞点**是跳过信号捕获机制帧后的第一个真实帧（栈顶前几帧恒为
+  `signalHandler`/`__restore_rt`/`__syscall_cancel_arch`，它们属于捕获手段而非线程状态）。
+- 正在执行本请求的线程**不会**出现在结果里：信号只能采集其他线程，执行中的线程无法被抓取。
+  这也是可接受的——正在运行的线程本来就没有"卡住"。
+
+**说明**: 逐个地址调用 `symbolizeAddress()` 做符号化，该函数**优先使用 Abseil**（`absl::Symbolize`），失败后再回退到 `resolveSymbolWithBackward()`。
 
 ---
 

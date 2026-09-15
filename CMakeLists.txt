@@ -276,6 +276,17 @@ if(REMOTE_PROFILER_BUILD_TESTS)
     )
     add_test(NAME ResultParsingTest COMMAND test_result_parsing)
 
+    # Thread stack capture (core only -- works without Drogon)
+    add_executable(test_thread_stacks tests/test_thread_stacks.cpp)
+    target_link_libraries(test_thread_stacks
+        PRIVATE
+        profiler_core
+        GTest::gtest
+        GTest::gtest_main
+        pthread
+    )
+    add_test(NAME ThreadStacksTest COMMAND test_thread_stacks)
+
     message(STATUS "Tests will be built")
 else()
     message(STATUS "Tests disabled")

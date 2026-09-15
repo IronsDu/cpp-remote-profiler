@@ -324,7 +324,7 @@ profiler.setLogLevel(profiler::LogLevel::Debug);
 | `/api/pprof/heap/snapshot` | GET | **状态式**：当前堆的累计快照（存量，非窗口） |
 | **状态与辅助** | | |
 | `/api/status` | GET | 各 profiler 的运行状态与输出路径（JSON） |
-| `/api/thread/stacks` | GET | 所有线程的调用栈 |
+| `/api/thread/stacks` | GET | 所有线程的调用栈（含线程名，可看出各线程阻塞在哪个函数） |
 | `/` | GET | Web 控制面板 |
 | **标准 pprof 接口（机器可读，`go tool pprof` 用）** | | |
 | `/pprof/profile` | GET | CPU profile 原始文件；`?seconds=N`，默认 **30**，范围 1–300 |
