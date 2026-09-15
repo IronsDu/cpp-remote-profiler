@@ -285,6 +285,32 @@ cd build
 ctest -R <test_name> --output-on-failure
 ```
 
+### 提交前的附加检查
+
+`ctest` 通过**不足以**覆盖两类问题，仓库里有两个脚本专门补这个缺口：
+
+```bash
+# 1) Sanitizer：本地复刻 CI 的 ASan/UBSan/TSan 配置
+scripts/check-sanitizers.sh asan        # 默认只跑 ASan
+scripts/check-sanitizers.sh all         # ASan + UBSan + TSan
+
+# 2) Web UI：用无头 Chrome 驱动真实控制面板，断言每个动作都发出正确的请求
+#    并真正落盘（需要先启动 profiler_example，以及 puppeteer-core）
+scripts/verify-web-ui.mjs http://localhost:8080
+```
+
+为什么需要它们：
+
+- **Sanitizer**：`ctest` 默认构建不会报内存泄漏与未定义行为。曾经有一个
+  `stopHeapProfiler()` 的 LeakSanitizer 报告只被 CI 发现，因为本地从没跑过
+  `-fsanitize=address`。
+- **Web UI**：`curl` **无法执行页面 JavaScript**，因此看不到"按钮点击报
+  ReferenceError""按钮卡在 disabled""下载其实没开始"这类问题。前端改动必须用
+  真实浏览器验证后才算完成。
+
+> 改前端（`src/web_resources.cpp` 里的 HTML/JS 字符串）时尤其注意：那段 JS 是
+> C++ 字符串字面量，**编译器不会检查它**——函数名写错、参数漏传都能编译通过。
+
 ## 需要帮助？
 
 如果你有任何问题，可以：

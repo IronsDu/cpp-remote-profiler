@@ -98,6 +98,7 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
 - Installation layout made consistent across `lib`/`lib64` hosts so `find_package()` works (GNUInstallDirs is now included before the install rules)
 
 ### Fixed
+- An out-of-range `duration` now clamps to 1..300 for every analysis endpoint. The two backends disagreed: `getRawCPUProfile()` rejected out-of-range values (surfacing as "Failed to collect a CPU profile in the requested window") while `getRawHeapProfileSample()` clamped them, so the same query succeeded or failed depending on which profiler served it. The clamping happens once at the HTTP boundary. Measured after: `duration=-99` and `duration=0` both run a 1s window, `duration=9999` runs 300s rather than hanging for 9999.
 - `stopHeapProfiler()` freed nothing for the profile it generates:
   `GetHeapProfile()` returns a malloc'd string the caller must `free()`, and
   letting it convert directly into a `std::string` discarded the pointer, leaking

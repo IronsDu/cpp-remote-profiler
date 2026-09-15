@@ -68,6 +68,12 @@ struct ChartOptions {
 /// @brief Parse the `renderer` query value; unknown values fall back to FlameGraph
 ChartRenderer parseChartRenderer(const std::string& value);
 
+/// @brief Clamp a collection window to the supported 1..300 second range
+///
+/// Applied once at the HTTP boundary so every endpoint treats an out-of-range
+/// duration the same way, regardless of which profiler backend serves it.
+int clampChartDuration(int duration);
+
 /// @brief Framework-agnostic profiler HTTP endpoint handlers
 ///
 /// Usage example with any framework:

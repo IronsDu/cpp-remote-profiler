@@ -412,6 +412,20 @@ TEST_F(HttpHandlersTest, ChartEndpointsTakeDurationAndRenderer) {
                   "handleHeapSnapshot must take (ChartOptions, as_profile)");
 }
 
+TEST_F(HttpHandlersTest, ChartDurationIsClamped) {
+    // The HTTP layer documents duration as clamped to 1..300, and it must behave
+    // that way for every endpoint: the backends disagreed (getRawCPUProfile
+    // rejected out-of-range values, getRawHeapProfileSample clamped them), which
+    // made the same query succeed or fail depending on which profiler served it.
+    EXPECT_EQ(profiler::clampChartDuration(0), 1);
+    EXPECT_EQ(profiler::clampChartDuration(-5), 1);
+    EXPECT_EQ(profiler::clampChartDuration(1), 1);
+    EXPECT_EQ(profiler::clampChartDuration(10), 10);
+    EXPECT_EQ(profiler::clampChartDuration(300), 300);
+    EXPECT_EQ(profiler::clampChartDuration(301), 300);
+    EXPECT_EQ(profiler::clampChartDuration(9999), 300);
+}
+
 TEST_F(HttpHandlersTest, ChartRendererParsing) {
     // "callgraph" is the pprof/graphviz diagram, "flamegraph" is FlameGraph. The
     // old parameter was called output_type and its values named a tool rather

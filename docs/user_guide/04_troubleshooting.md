@@ -741,7 +741,7 @@ go tool pprof -http=:8081 ./your_app heap.prof
 两者语义相反、不可互相替代；详见 [README 的说明](../../README.md#heap-的两个端点语义相反)。
 
 ### Q: 为什么长时间采样期间，其它接口还能正常返回？
-**A**: 因为 Drogon 适配层不把 profiling 放在事件循环线程上执行。所有会产生图表的接口（`/pprof/profile`、`/api/*/analyze`、`/api/*/svg_raw`、`/api/*/flamegraph_raw`）都被投递到一个后台工作线程，完成后用 `queueInLoop()` 把响应送回事件循环。因此一个 300 秒的采样不会拖住 `/api/status` 或首页。
+**A**: 因为 Drogon 适配层不把 profiling 放在事件循环线程上执行。所有会产生图表的接口（`/pprof/profile`、`/api/pprof/{cpu,heap,growth}`、`/api/pprof/heap/snapshot`）都被投递到一个后台工作线程，完成后用 `queueInLoop()` 把响应送回事件循环。因此一个 300 秒的采样不会拖住 `/api/status` 或首页。
 
 ### Q: 并发请求 CPU 采样时返回 409 / 500 "cpu profiling already in use"
 **A**: 这是**有意的拒绝**，不是故障。CPU 采样是独占的（gperftools 的采样会话是进程级全局状态），所以已有采样进行时，第二个请求会立即失败而**不会排队等待**——避免用户以为"已经在采样了"，实际却要排在别人后面等几十秒到几分钟。

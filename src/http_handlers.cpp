@@ -114,6 +114,20 @@ HandlerResponse flameGraphResponse(const std::string& svg) {
 
 } // namespace
 
+int clampChartDuration(int duration) {
+    // Clamp rather than reject: the HTTP layer documents duration as a window
+    // that is clamped to this range, and the two profiler backends disagreed --
+    // getRawCPUProfile() rejected out-of-range values while
+    // getRawHeapProfileSample() clamped them, so the same query behaved
+    // differently per endpoint. Clamping here makes one rule for all of them,
+    // and keeps a stray value from being reported as a sampling failure.
+    if (duration < 1)
+        return 1;
+    if (duration > 300)
+        return 300;
+    return duration;
+}
+
 ChartRenderer parseChartRenderer(const std::string& value) {
     // "callgraph" is the pprof script's graphviz diagram; "flamegraph" is
     // FlameGraph. Both were previously wrapped in one "output_type" whose values
@@ -242,7 +256,7 @@ HandlerResponse ProfilerHttpHandlers::handleCpuChart(const ChartOptions& options
     if (isCpuProfilerBusy())
         return cpuProfilerBusyResponse(false);
 
-    std::string profile = profiler_.getRawCPUProfile(options.duration);
+    std::string profile = profiler_.getRawCPUProfile(clampChartDuration(options.duration));
     if (auto err = coreError(profile))
         return *err;
     if (profile.empty())
@@ -255,7 +269,7 @@ HandlerResponse ProfilerHttpHandlers::handleHeapChart(const ChartOptions& option
     if (isHeapAnalyzerBusy())
         return heapAnalyzerBusyResponse();
 
-    std::string sample = profiler_.getRawHeapProfileSample(options.duration);
+    std::string sample = profiler_.getRawHeapProfileSample(clampChartDuration(options.duration));
     if (auto err = coreError(sample))
         return *err;
     if (sample.empty())

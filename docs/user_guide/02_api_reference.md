@@ -64,19 +64,29 @@ explicit ProfilerHttpHandlers(ProfilerManager& profiler);
 |------|------|------|
 | `handleStatus` | `HandlerResponse handleStatus()` | 返回所有 profiler 状态 (JSON) |
 | `handleCpuChart` | `HandlerResponse handleCpuChart(const ChartOptions&)` | CPU 采样并出图 |
-| `handleCpuSvgRaw` | `HandlerResponse handleCpuSvgRaw(int duration)` | CPU 原始 SVG (pprof 生成) |
-| `handleCpuFlamegraphRaw` | `HandlerResponse handleCpuFlamegraphRaw(int duration)` | CPU FlameGraph SVG |
 | `handleHeapChart` | `HandlerResponse handleHeapChart(const ChartOptions&)` | Heap 窗口式采集并出图 |
-| `handleHeapSvgRaw` | `HandlerResponse handleHeapSvgRaw()` | Heap 原始 SVG |
-| `handleHeapFlamegraphRaw` | `HandlerResponse handleHeapFlamegraphRaw()` | Heap FlameGraph SVG |
 | `handleGrowthChart` | `HandlerResponse handleGrowthChart(const ChartOptions&)` | Growth 采集并出图 |
-| `handleGrowthSvgRaw` | `HandlerResponse handleGrowthSvgRaw()` | Growth 原始 SVG |
-| `handleGrowthFlamegraphRaw` | `HandlerResponse handleGrowthFlamegraphRaw()` | Growth FlameGraph SVG |
 | `handlePprofProfile` | `HandlerResponse handlePprofProfile(int seconds)` | 标准 pprof CPU profile (二进制) |
 | `handlePprofHeap` | `HandlerResponse handlePprofHeap()` | 标准 pprof heap profile |
 | `handlePprofGrowth` | `HandlerResponse handlePprofGrowth()` | 标准 pprof growth profile |
 | `handlePprofSymbol` | `HandlerResponse handlePprofSymbol(const std::string& body)` | 符号化接口 (POST) |
 | `handleThreadStacks` | `HandlerResponse handleThreadStacks()` | 线程调用栈 |
+
+### ChartOptions
+
+`handleCpuChart` / `handleHeapChart` / `handleGrowthChart` 共用同一个选项结构：
+
+```cpp
+struct ChartOptions {
+    ChartRenderer renderer = ChartRenderer::FlameGraph;  // FlameGraph 或 CallGraph
+    int duration = 10;        // 采集窗口（秒），内部钳制到 1..300
+    bool inline_display = true;  // true 不发 Content-Disposition；false 强制下载
+};
+```
+
+HTTP 层的 `renderer` 取值 `flamegraph` / `callgraph` 由此处的 `ChartRenderer` 决定
+（`callgraph` 即 pprof 脚本经 graphviz 画出的调用图）。`handleHeapSnapshot(options, as_profile)`
+另有一个 `as_profile` 开关：true 返回原始 profile 文本，false 按 `options.renderer` 出图。
 
 ### 使用示例
 
@@ -88,7 +98,8 @@ profiler::ProfilerManager profiler;
 profiler::ProfilerHttpHandlers handlers(profiler);
 
 // 调用任意 handler
-profiler::HandlerResponse resp = handlers.handleCpuAnalyze(10, "flamegraph");
+profiler::ChartOptions options;   // renderer / duration / inline_display
+profiler::HandlerResponse resp = handlers.handleCpuChart(options);
 
 // resp.status, resp.content_type, resp.body, resp.headers
 // 用你自己的 Web 框架包装这些数据

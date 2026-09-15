@@ -42,11 +42,20 @@
  * The canonical, always-current endpoint list lives in the project README under
  * "API 端点" (README.md). Summary:
  *
- * - Standard pprof: @c /pprof/profile, @c /pprof/heap, @c /pprof/growth, @c /pprof/symbol
- * - One-click analysis (SVG): @c /api/{cpu,heap,growth}/analyze
- * - Raw SVG download: @c /api/{cpu,heap,growth}/svg_raw and @c .../flamegraph_raw
+ * - Standard pprof (machine-readable): @c /pprof/profile, @c /pprof/heap,
+ *   @c /pprof/growth, @c /pprof/symbol
+ * - Analysis charts: @c /api/pprof/{cpu,heap,growth} with @c renderer=flamegraph
+ *   (stacked frames) or @c renderer=callgraph (graphviz node/edge graph), plus
+ *   @c duration and @c output=inline|attachment
+ * - Heap snapshot (state-based, "what is in the heap now"):
+ *   @c /api/pprof/heap/snapshot with @c format=profile|svg
  * - Thread stacks: @c /api/thread/stacks
- * - Panel and viewers: @c /, @c /show_svg.html, @c /show_heap_svg.html, @c /show_growth_svg.html
+ * - Control panel: @c /
+ *
+ * There are no separate viewer pages; charts are delivered as SVG by the
+ * analysis endpoints themselves. Note that the generated SVGs cannot be zoomed
+ * in the browser (the embedded pan/zoom scripts depend on elements that the
+ * output does not contain), so scaling requires a desktop tool.
  *
  * @section runtime_dependencies Runtime Dependencies
  *

@@ -135,7 +135,7 @@ cd build && ./profiler_example
 
 由此带来三点要求：
 
-1. **工作目录必须可写**。以只读目录（如 `/`）为 CWD 启动会导致脚本写入失败，所有 `/api/*/analyze`、`/api/*/svg_raw`、`/api/*/flamegraph_raw` 接口返回 500。
+1. **工作目录必须可写**。以只读目录（如 `/`）为 CWD 启动会导致脚本写入失败，所有 `/api/pprof/*` 图表接口返回 500。
 2. **必须安装 perl**：`sudo apt-get install -y perl`。
 3. **不要删除这两个文件**，每个进程实例都会重新生成。
 
@@ -279,7 +279,8 @@ int main() {
 profiler::ProfilerManager profiler;
 profiler::ProfilerHttpHandlers handlers(profiler);
 
-auto resp = handlers.handleCpuAnalyze(10, "flamegraph");
+profiler::ChartOptions options;          // renderer / duration / inline_display
+auto resp = handlers.handleCpuChart(options);
 // resp.status / resp.content_type / resp.body / resp.headers → 用你的框架包一层
 ```
 
@@ -415,7 +416,7 @@ tcmalloc 在**进程初始化时**读取该变量，因此必须在启动前用�
 | 是否建 profiler 会话 | 否 | 是（独占，并发返回 409） |
 | 输出 | 原始 profile 文本，**客户端**用 `go tool pprof` 渲染 | 服务端渲染好的 SVG |
 | `TCMALLOC_SAMPLE_PARAMETER` | **必需** | 不需要 |
-| 时长参数 | 无 | `?duration=N`，默认 1 秒 |
+| 时长参数 | 无 | `?duration=N`，默认 10 秒 |
 
 关键差别在于**"存量"与"流量"**：
 
