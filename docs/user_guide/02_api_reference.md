@@ -42,7 +42,9 @@ profiler::ProfilerManager profiler;
 
 **说明**: 析构时停止正在运行的 **CPU** profiler，并恢复构造函数之外由本对象安装的信号处理器。
 
-> ⚠️ **已知缺陷**: 析构函数对 heap profiler 只调用了查询函数 `IsHeapProfilerRunning()`，**并未调用 `HeapProfilerStop()`**（`src/profiler_manager.cpp:94-96`）。因此 heap profiler 不会随对象销毁而停止，需要显式调用 `stopHeapProfiler()`。修复计划见 [ROADMAP](../../ROADMAP.md)。
+**heap profiler 也会被停止**：析构函数调用 `HeapProfilerStop()`（`ProfilerManager::~ProfilerManager`），因为 heap profiler 存活在**进程级**的 tcmalloc 状态里——不停止的话，对象销毁后它仍会记录并 dump。
+
+> 该问题曾存在（析构里只调用了查询函数 `IsHeapProfilerRunning()`，其返回值被丢弃），现已修正并有回归测试 `ProfilerLifecycleTest.HeapProfilerStopsOnDestruction` 覆盖。
 
 ---
 
@@ -157,7 +159,9 @@ struct ProfilerState {
 };
 ```
 
-> ⚠️ `start_time` 与 `duration` 的单位都是**毫秒**（`src/profiler_manager.cpp:189-191`、`214`），HTTP 层 `/api/status` 返回的 JSON 键名也相应为 `duration_ms`。`include/profiler_manager.h:40` 的注释写作 "seconds"，属过时注释。
+> ⚠️ `start_time` 与 `duration` 的单位都是**毫秒**（见 `ProfilerState` 的字段注释），HTTP 层 `/api/status` 返回的 JSON 键名也相应为 `duration_ms`。
+>
+> 注意与**采集窗口**区分：`analyzeCPUProfile(duration)`、`ChartOptions::duration` 里的 `duration` 是**秒**，而 `ProfilerState::duration` 是**毫秒**。两者同名不同单位。
 
 ---
 
@@ -221,7 +225,7 @@ void setLogSink(std::shared_ptr<LogSink> sink);
 
 **说明**:
 - 设置后，profiler 的所有日志将输出到自定义 sink
-- 默认 sink 按级别分流：`Trace`/`Debug`/`Info` 写 **stdout**，`Warning`/`Error`/`Fatal` 写 **stderr**（`src/internal/default_log_sink.cpp:70-74`）
+- 默认 sink 按级别分流：`Trace`/`Debug`/`Info` 写 **stdout**，`Warning`/`Error`/`Fatal` 写 **stderr**（`LogSink` 默认实现中的级别判断）
 - 设置 `nullptr` 可恢复默认行为
 
 **示例**:
@@ -480,7 +484,7 @@ Thread 1234 (DrogonIoLoop):
 std::string resolveSymbolWithBackward(void* address);
 ```
 
-**说明**: 实际的符号化链及顺序为（`src/symbolize.cpp:30`、`42`、`66`）：
+**说明**: 实际的符号化链及顺序为（`src/symbolize.cpp` 的 `symbolize()` 内，按顺序尝试）：
 
 1. `absl::Symbolize` — 最可靠，命中即返回函数名（源文件记为 `??`、行号为 0）
 2. `dladdr` + `abi::__cxa_demangle` — 回退，可拿到所在模块名
@@ -527,7 +531,7 @@ std::string getExecutablePath();
 static void setStackCaptureSignal(int signal);
 ```
 
-**说明**: 默认使用 `SIGUSR1`。推荐在第一次捕获线程栈之前调用；若处理器已安装后再调用，实现会先恢复旧处理器并打印一条 `[WARN]` 日志，然后切换（`src/profiler_manager.cpp:112-128`）。
+**说明**: 默认使用 `SIGUSR1`。推荐在第一次捕获线程栈之前调用；若处理器已安装后再调用，实现会先恢复旧处理器并打印一条 `[WARN]` 日志，然后切换（`ProfilerManager::setStackCaptureSignal()`）。
 
 ```cpp
 profiler::ProfilerManager::setStackCaptureSignal(SIGUSR2);
@@ -601,7 +605,7 @@ Heap 侧同理：`analyzeHeapProfile()` 与 `startHeapProfiler()` 互斥，谁�
 
 - 大多数控制类方法（`start*` / `stop*`）返回 `bool` 表示成功/失败
 - 原始数据获取方法（`getRawCPUProfile`、`getRawHeapSample`、`getRawHeapGrowthStacks`、`getThreadCallStacks`）在失败时返回**空字符串**
-- ⚠️ 但 `analyzeCPUProfile()` / `analyzeHeapProfile()` 在失败时返回的是形如 `{"error":"..."}` 的 **JSON 字符串**，而非空串（`src/profiler_manager.cpp:427`、`469`、`475`、`491`、`520`）。HTTP 层正是靠 `{"` 前缀识别它并转成 500（`src/http_handlers.cpp:69-71`）——自行调用这两个 API 时需要做同样的判断
+- ⚠️ 但 `analyzeCPUProfile()` / `analyzeHeapProfile()` 在失败时返回的是形如 `{"error":"..."}` 的 **JSON 字符串**，而非空串（`analyzeCPUProfile()` / `analyzeHeapProfile()` 的各个失败分支）。HTTP 层正是靠 `{"` 前缀识别它并转成 500（`profiler::internal::isJsonError()`，见 `src/internal/result_parsing.h`）——自行调用这两个 API 时需要做同样的判断
 - `HandlerResponse::error()` 返回包含错误信息的 JSON 响应
 
 ---

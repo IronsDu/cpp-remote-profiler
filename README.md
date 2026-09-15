@@ -522,7 +522,10 @@ cpp-remote-profiler/
 ├── docs/
 │   ├── mainpage.dox  Doxyfile.in
 │   └── user_guide/             # 用户文档（安装、API、集成、排错）
-├── scripts/check-format.sh     # clang-format 检查（CI 使用 18）
+├── scripts/
+│   ├── check-format.sh         # clang-format 检查（CI 使用 18）
+│   ├── check-sanitizers.sh     # 本地复刻 CI 的 ASan/UBSan/TSan（CTEST_JOBS=n 可并行）
+│   └── verify-web-ui.mjs       # 无头 Chrome 驱动真实面板，验证按钮→请求→落盘
 └── .github/workflows/          # CI：构建、测试、ASan/UBSan、clang-tidy、格式检查
 ```
 
@@ -536,6 +539,22 @@ ctest --test-dir build/debug --output-on-failure
 ./scripts/check-format.sh          # 检查格式
 ./scripts/check-format.sh --fix    # 自动修复
 ```
+
+`ctest` 通过不足以覆盖两类问题，另外两个脚本专门补这个缺口：
+
+```bash
+# Sanitizer：本地复刻 CI 的 ASan/UBSan/TSan 配置
+scripts/check-sanitizers.sh asan
+CTEST_JOBS=6 scripts/check-sanitizers.sh asan   # 同时验证并行下的稳定性
+
+# Web UI：无头 Chrome 驱动真实控制面板，断言每个动作发出正确请求并真正落盘
+npm install puppeteer-core                       # 一次性
+scripts/verify-web-ui.mjs http://localhost:8080
+```
+
+> ⚠️ **`curl` 不能替代浏览器验证**：它无法执行页面 JavaScript，因此看不到「按钮点击报
+> `ReferenceError`」「按钮卡在 disabled」「下载其实没开始」这类问题。前端改动必须用真实
+> 浏览器验证。另外面板的 JS 存在于 C++ 字符串字面量中，**编译器不检查它**。
 
 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)；版本历史见 [CHANGELOG.md](CHANGELOG.md)；后续计划见 [ROADMAP.md](ROADMAP.md)。
 

@@ -707,7 +707,7 @@ int main() {
 ## 常见问题 FAQ
 
 ### Q: 支持 macOS / Windows 吗？
-**A**: 不支持。实现依赖 Linux 专有接口：`/proc/self/exe` 与 `/proc/self/task`（`src/profiler_manager.cpp:288-297`、`932-939`）、`sigaction`/`ucontext` 信号栈捕获。WSL2 可用。
+**A**: 不支持。实现依赖 Linux 专有接口：`/proc/self/exe` 与 `/proc/self/task`（前者用于 `getExecutablePath()`，后者用于 `captureAllThreadStacks()`）、`sigaction`/`ucontext` 信号栈捕获。WSL2 可用。
 
 ### Q: 可以在生产环境使用吗？
 **A**: 当前版本是 v0.x.x（开发阶段），不建议用于生产环境。等待 v1.0.0 稳定版。
