@@ -289,7 +289,15 @@ jobs:
           clang \
           git \
           pkg-config \
-          libgoogle-perftools-dev
+          libgoogle-perftools-dev \
+          actionlint
+
+    # First, before anything expensive: a workflow file GitHub cannot parse never
+    # runs at all, so its jobs report nothing and the problem hides. ci.yml lost
+    # its entire pipeline to one unparseable input value this way, and `with:` keys
+    # must be scalars -- a YAML flow sequence there fails the whole file.
+    - name: Lint workflow files
+      run: actionlint -color
 
     - name: Export GitHub Actions cache environment variables
       uses: actions/github-script@v7

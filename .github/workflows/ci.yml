@@ -46,8 +46,11 @@ jobs:
         runVcpkgInstall: true
         doNotCache: false
         vcpkgJsonGlob: vcpkg.json
-        vcpkgJsonIgnores: ['**/vcpkg/**']
-        runVcpkgFormatString: ['install', '--recurse', '--clean-after-build', '--x-install-root', '$[env.VCPKG_INSTALLED_DIR]', '--triplet', 'x64-linux']
+        # vcpkgJsonIgnores and runVcpkgFormatString are deliberately not set: both
+        # would restate the action's own defaults, and the format string is what
+        # broke this workflow file. The action's default already passes
+        # --x-install-root $[env.VCPKG_INSTALLED_DIR], so the install root is
+        # unchanged by dropping it.
 
     - name: Debug vcpkg environment
       run: |
@@ -136,8 +139,11 @@ jobs:
         runVcpkgInstall: true
         doNotCache: false
         vcpkgJsonGlob: vcpkg.json
-        vcpkgJsonIgnores: ['**/vcpkg/**']
-        runVcpkgFormatString: ['install', '--recurse', '--clean-after-build', '--x-install-root', '$[env.VCPKG_INSTALLED_DIR]', '--triplet', 'x64-linux']
+        # vcpkgJsonIgnores and runVcpkgFormatString are deliberately not set: both
+        # would restate the action's own defaults, and the format string is what
+        # broke this workflow file. The action's default already passes
+        # --x-install-root $[env.VCPKG_INSTALLED_DIR], so the install root is
+        # unchanged by dropping it.
 
     - name: Configure CMake with Coverage
       run: cmake --preset=coverage
@@ -207,8 +213,11 @@ jobs:
         runVcpkgInstall: true
         doNotCache: false
         vcpkgJsonGlob: vcpkg.json
-        vcpkgJsonIgnores: ['**/vcpkg/**']
-        runVcpkgFormatString: ['install', '--recurse', '--clean-after-build', '--x-install-root', '$[env.VCPKG_INSTALLED_DIR]', '--triplet', 'x64-linux']
+        # vcpkgJsonIgnores and runVcpkgFormatString are deliberately not set: both
+        # would restate the action's own defaults, and the format string is what
+        # broke this workflow file. The action's default already passes
+        # --x-install-root $[env.VCPKG_INSTALLED_DIR], so the install root is
+        # unchanged by dropping it.
 
     - name: Debug vcpkg environment
       run: |
