@@ -25,6 +25,12 @@ BUILD_ROOT="${SANITIZER_BUILD_ROOT:-$PROJECT_ROOT/build/sanitizers}"
 JOBS="$(nproc)"
 
 log() { printf '\n=== %s ===\n' "$*"; }
+
+# Extra ctest flags. Empty by default because CI runs ctest serially; set
+# CTEST_JOBS=<n> to also exercise the parallel case, which is where the tests
+# used to clobber each other's profile files.
+ctest_parallel=()
+[[ -n "${CTEST_JOBS:-}" ]] && ctest_parallel=(-j "$CTEST_JOBS")
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 [[ -f "$VCPKG_TOOLCHAIN" ]] || die "vcpkg toolchain not found at $VCPKG_TOOLCHAIN"
@@ -55,7 +61,7 @@ run_asan() {
     # detect_leaks + halt_on_error: a leak must fail the run, as it does in CI.
     ( cd "$dir" && ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
         LSAN_OPTIONS="suppressions=$PROJECT_ROOT/lsan.supp" \
-        ctest --output-on-failure )
+        ctest --output-on-failure "${ctest_parallel[@]}" )
 }
 
 run_ubsan() {
@@ -73,7 +79,7 @@ run_ubsan() {
     cmake --build "$dir" -j"$JOBS"
     # halt_on_error so a single UB report fails the run rather than scrolling by.
     ( cd "$dir" && UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-        ctest --output-on-failure )
+        ctest --output-on-failure "${ctest_parallel[@]}" )
 }
 
 run_tsan() {
@@ -89,7 +95,7 @@ run_tsan() {
         -DCMAKE_MODULE_LINKER_FLAGS="-fsanitize=thread" \
         "${extra_configure_args[@]}"
     cmake --build "$dir" -j"$JOBS"
-    ( cd "$dir" && TSAN_OPTIONS=halt_on_error=1 ctest --output-on-failure )
+    ( cd "$dir" && TSAN_OPTIONS=halt_on_error=1 ctest --output-on-failure "${ctest_parallel[@]}" )
 }
 
 targets=("$@")

@@ -98,6 +98,18 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
 - Installation layout made consistent across `lib`/`lib64` hosts so `find_package()` works (GNUInstallDirs is now included before the install rules)
 
 ### Fixed
+- The test suite is safe to run in parallel. The profiler's intermediate artifacts
+  (`pprof_cpu_temp.prof`, `cpu_analyze.prof`, `cpu_collapsed.prof`,
+  `heap_collapsed.prof`, and the per-endpoint render inputs) had fixed names in a
+  shared directory, so two test binaries running at once truncated each other's
+  files. `ctest -j4` reproduced the CI failure locally: FullFlowTest read back a
+  0-byte CPU profile because a concurrently running binary had recreated the
+  shared file. The names now carry the process id.
+- `FullFlowTest.GetRawCPUProfile` (and the gperftools profile test) generate real
+  CPU work across the sampling window instead of sleeping through it. gperftools
+  samples executing threads, so a window spent idle yields an empty profile by
+  design -- the test treated that legitimate result as a failure whenever the
+  machine had nothing to sample. It now fails only for a real fault.
 - An out-of-range `duration` now clamps to 1..300 for every analysis endpoint. The two backends disagreed: `getRawCPUProfile()` rejected out-of-range values (surfacing as "Failed to collect a CPU profile in the requested window") while `getRawHeapProfileSample()` clamped them, so the same query succeeded or failed depending on which profiler served it. The clamping happens once at the HTTP boundary. Measured after: `duration=-99` and `duration=0` both run a 1s window, `duration=9999` runs 300s rather than hanging for 9999.
 - `stopHeapProfiler()` freed nothing for the profile it generates:
   `GetHeapProfile()` returns a malloc'd string the caller must `free()`, and

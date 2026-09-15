@@ -86,6 +86,16 @@
 - 新增 `scripts/verify-web-ui.mjs`（CDP 驱动真实浏览器回归，23 项检查）与
   `scripts/check-sanitizers.sh`（本地复刻 CI 的 ASan/UBSan/TSan 配置）。
 
+### 已完成（CI 稳定性）
+
+- 测试可在并行下运行（`ctest -j`）。此前 `pprof_cpu_temp.prof`、`cpu_collapsed.prof` 等
+  中间产物用**固定文件名**放在共享目录，两个测试进程会互相截断文件——CI 的
+  `FullFlowTest` 读到 0 字节 profile 即源于此。现按 PID 命名。
+- `FullFlowTest.GetRawCPUProfile` 在采样窗口内**真的跑 CPU 负载**，而不是 sleep。
+  gperftools 只采样正在执行的线程，窗口内空闲时返回空 profile 是**设计如此**，
+  原断言把这种合法结果当成失败。
+- `scripts/check-sanitizers.sh` 支持 `CTEST_JOBS=<n>` 以复现并行场景。
+
 ### 待修
 
 - **生成的 SVG 无法缩放**：FlameGraph 的 `zoom()` 找不到它要操作的 `#viewport`（其产物只有

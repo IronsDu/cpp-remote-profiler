@@ -446,7 +446,7 @@ bool ProfilerManager::isHeapAnalysisInProgress() const {
 }
 
 std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& output_type) {
-    std::string profile_path = profile_dir_ + "/cpu_analyze.prof";
+    std::string profile_path = profile_dir_ + "/cpu_analyze_" + std::to_string(::getpid()) + ".prof";
 
     // Step 1: Claim the CPU profiling session.
     //
@@ -519,7 +519,7 @@ std::string ProfilerManager::analyzeCPUProfile(int duration, const std::string& 
         PROFILER_INFO("Generating FlameGraph output...");
 
         // Step 5a: Generate collapsed format using pprof --collapsed
-        std::string collapsed_file = "/tmp/cpu_collapsed.prof";
+        std::string collapsed_file = "/tmp/cpu_collapsed_" + std::to_string(::getpid()) + ".prof";
         std::ostringstream collapsed_cmd;
         collapsed_cmd << "./pprof --collapsed " << exe_path << " " << profile_path << " > " << collapsed_file
                       << " 2>&1";
@@ -741,7 +741,7 @@ std::string ProfilerManager::analyzeHeapProfile(int duration, const std::string&
         PROFILER_INFO("Generating Heap FlameGraph...");
 
         // Step 9a: Generate collapsed format using pprof --collapsed
-        std::string collapsed_file = "/tmp/heap_collapsed.prof";
+        std::string collapsed_file = "/tmp/heap_collapsed_" + std::to_string(::getpid()) + ".prof";
         std::ostringstream collapsed_cmd;
         collapsed_cmd << "./pprof --collapsed " << exe_path << " " << latest_heap_file << " > " << collapsed_file
                       << " 2>&1";
@@ -891,7 +891,7 @@ std::string ProfilerManager::getRawCPUProfile(int seconds) {
     FlagGuard guard{cpu_profiling_in_progress_};
 
     // Generate temporary profile file path
-    std::string profile_path = profile_dir_ + "/pprof_cpu_temp.prof";
+    std::string profile_path = profile_dir_ + "/pprof_cpu_temp_" + std::to_string(::getpid()) + ".prof";
 
     // Start CPU profiler. A session opened through startCPUProfiler() belongs to
     // the caller, so refuse rather than stopping it; the caller of this function

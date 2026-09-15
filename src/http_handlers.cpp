@@ -8,6 +8,7 @@
 #include <fstream>
 #include <optional>
 #include <sstream>
+#include <unistd.h>
 
 PROFILER_NAMESPACE_BEGIN
 
@@ -262,7 +263,8 @@ HandlerResponse ProfilerHttpHandlers::handleCpuChart(const ChartOptions& options
     if (profile.empty())
         return errorResp(500, "Failed to collect a CPU profile in the requested window.");
 
-    return renderChart(profiler_, "/tmp/cpu_chart.prof", profile, options, "cpu_profile", "CPU Flame Graph");
+    return renderChart(profiler_, "/tmp/cpu_chart_" + std::to_string(::getpid()) + ".prof", profile, options,
+                       "cpu_profile", "CPU Flame Graph");
 }
 
 HandlerResponse ProfilerHttpHandlers::handleHeapChart(const ChartOptions& options) {
@@ -275,7 +277,8 @@ HandlerResponse ProfilerHttpHandlers::handleHeapChart(const ChartOptions& option
     if (sample.empty())
         return errorResp(500, "Failed to collect a heap sample in the requested window.");
 
-    return renderChart(profiler_, "/tmp/heap_chart.prof", sample, options, "heap_profile", "Heap Flame Graph");
+    return renderChart(profiler_, "/tmp/heap_chart_" + std::to_string(::getpid()) + ".prof", sample, options,
+                       "heap_profile", "Heap Flame Graph");
 }
 
 HandlerResponse ProfilerHttpHandlers::handleHeapSnapshot(const ChartOptions& options, bool as_profile) {
@@ -290,7 +293,8 @@ HandlerResponse ProfilerHttpHandlers::handleHeapSnapshot(const ChartOptions& opt
         return finishChart(resp, "heap", options.inline_display);
     }
 
-    return renderChart(profiler_, "/tmp/heap_snapshot.prof", sample, options, "heap_snapshot", "Heap Snapshot");
+    return renderChart(profiler_, "/tmp/heap_snapshot_" + std::to_string(::getpid()) + ".prof", sample, options,
+                       "heap_snapshot", "Heap Snapshot");
 }
 
 HandlerResponse ProfilerHttpHandlers::handleGrowthChart(const ChartOptions& options) {
@@ -298,8 +302,8 @@ HandlerResponse ProfilerHttpHandlers::handleGrowthChart(const ChartOptions& opti
     if (growth.empty())
         return errorResp(500, "Failed to get heap growth stacks. No heap growth data available.");
 
-    return renderChart(profiler_, "/tmp/growth_chart.prof", growth, options, "growth_profile",
-                       "Heap Growth Flame Graph");
+    return renderChart(profiler_, "/tmp/growth_chart_" + std::to_string(::getpid()) + ".prof", growth, options,
+                       "growth_profile", "Heap Growth Flame Graph");
 }
 
 HandlerResponse ProfilerHttpHandlers::handlePprofProfile(int seconds) {
