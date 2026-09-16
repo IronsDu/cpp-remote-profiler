@@ -147,12 +147,16 @@
 
 ## 二、测试覆盖
 
-- **为 `http_handlers` 补单元测试** ✅ 已新增 `tests/test_http_handlers.cpp`（15 个用例，不依赖 Drogon）：`HandlerResponse` 工厂方法、`output_type` 校验、`/api/status` 契约、profiler 生命周期与 heap 快照唯一性
-- **`dispatch()`** ✅ 已处理：声明存在于 `include/profiler/http_handlers.h` 但从未定义，已**从公共头文件移除**（不提供按路径自动分发，路由由使用者框架注册）
-- **补充 Web 资源嵌入测试**：验证内嵌 HTML 页面可正常返回
+当前 8 个测试目标、79 个 `TEST` 用例，`ctest` 全部通过。
+
+- **为 `http_handlers` 补单元测试** ✅ `tests/test_http_handlers.cpp`（**28 个用例**，不依赖 Drogon）：`HandlerResponse` 工厂方法、`renderer` 解析与 `duration` 钳制、`/api/status` 契约、profiler 生命周期、heap 快照唯一性、宿主会话不被抢占、并发拒绝语义
+- **`dispatch()`** ✅ 已处理：声明存在但从未定义，已**从公共头文件移除**（不提供按路径自动分发，路由由使用者框架注册）
+- **按模块拆分测试文件** ✅ 已拆为 8 个文件（cpu / full_flow / http_handlers / logger / async_executor / result_parsing / renderer_parsing / thread_stacks）
+- **启用 `ctest` 并行执行** ✅ 已实测 `ctest -j6` 通过。原先并行会失败：中间产物（`pprof_cpu_temp.prof`、`cpu_collapsed.prof` 等）用**固定文件名**放在共享目录，两个测试进程会互相截断文件——现按 PID 命名，因此不需要 `RESOURCE_LOCK`，靠进程隔离即可
+- **引入 Fuzz Testing** ✅ 已新增 3 个 libFuzzer 目标（`fuzz_renderer_output` / `fuzz_result_parsing` / `fuzz_http_params`）+ 手工种子语料 + `ctest -L fuzz` 语料回归与短时 fuzz，并接入 CI（`-DREMOTE_PROFILER_BUILD_FUZZERS=ON`，需 clang）
+- **补充 Web 资源嵌入测试**：验证内嵌 HTML 页面可正常返回（`WebResources::getIndexPage()` 目前**无任何测试**）
 - 其余 handler 的端到端覆盖（需要 `./pprof` 与 `./flamegraph.pl`，依赖 CWD 可写）
-- 按模块拆分测试文件；引入 GTest 测试标签；启用 `ctest` 并行执行
-- 引入 **Fuzz Testing** 覆盖 profile 解析路径
+- 引入 GTest 测试标签（当前仅 fuzz 目标带 `LABELS "fuzz"`，单元测试未分类）
 
 ---
 
@@ -160,10 +164,24 @@
 
 - **创建 git tag**：仓库当前**没有任何 tag**，但 `CHANGELOG.md` 与用户文档中的 `v0.1.0` 均指向它；应在 v0.1.0 对应提交上打 tag
 - **自动化发布流程**：GitHub Releases + 打包（tar.gz / 各发行版包）
-- **重新评估 Conan / vcpkg 分发**：
-  - `conanfile.py` 使用的是 Conan 2 API，但 `self.cpp_info.libs` 仍写着已不存在的 `profiler_lib`，且 requirements 缺少 openssl/zlib/gtest/absl
-  - `ports/cpp-remote-profiler/` 未在 `vcpkg-configuration.json` 中注册（无 `overlay-ports`），实际无法通过 vcpkg 安装
-  - 两条路径都未被文档正式支持，建议要么修好并在 README 中说明，要么删除
+- **重新评估 Conan / vcpkg 分发**（两条路径目前都不可用，且**文档未提及**）
+  - `conanfile.py` 静态检查出 6 处问题，**本机无 conan 故未实测**：
+    - `validate()` 调用 `check_min_cppstd()` 但**没有 import** → 一执行就 `NameError`
+    - `self.cpp_info.libs = ["profiler_lib"]` —— 该库名**不存在**，实际是 `profiler_core` 与
+      `profiler_web`（见 `CMakeLists.txt` 的 `add_library`）
+    - `package()` 从 `build/lib` 拷贝产物，但 CMake 装到 `build/<preset>/`，且本平台
+      `CMAKE_INSTALL_LIBDIR=lib64` → 拷不到文件
+    - `requirements()` **重复声明** `backward-cpp/1.6`；缺 `openssl`/`zlib`/`protobuf`/`gtest`
+      （drogon 会传递前三个，`gtest` 仅在构建测试时需要，而 `generate()` 已关掉测试，
+      所以缺的实际只有隐式依赖，但显式声明更稳）
+    - `REMOTE_PROFILER_ENABLE_SYMBOLIZE` 宏**在代码中不存在**（只有
+      `REMOTE_PROFILER_ENABLE_WEB`）
+    - `author` / `url` / `homepage` 仍是 `Your Name` / `your-org` 占位符
+  - `ports/cpp-remote-profiler/` 存在（`portfile.cmake` + `vcpkg.json`），但
+    `vcpkg-configuration.json` **只有 `overlay-triplets`、没有 `overlay-ports`**，
+    因此 vcpkg 找不到它
+  - 结论：**要么修好并在 README 中说明用法（需先装 conan/vcpkg 实测），要么删除**。
+    当前状态是"存在但不可用"，比缺失更容易误导。
 - 生成 **SBOM**（SPDX / CycloneDX）
 - 考虑 **CPM.cmake** 支持
 
