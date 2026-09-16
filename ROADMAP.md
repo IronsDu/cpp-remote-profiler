@@ -172,14 +172,16 @@
     - `package()` 从 `build/lib` 拷贝产物，但 CMake 装到 `build/<preset>/`，且本平台
       `CMAKE_INSTALL_LIBDIR=lib64` → 拷不到文件
     - `requirements()` **重复声明** `backward-cpp/1.6`；缺 `openssl`/`zlib`/`protobuf`/`gtest`
-      （drogon 会传递前三个，`gtest` 仅在构建测试时需要，而 `generate()` 已关掉测试，
-      所以缺的实际只有隐式依赖，但显式声明更稳）
-    - `REMOTE_PROFILER_ENABLE_SYMBOLIZE` 宏**在代码中不存在**（只有
-      `REMOTE_PROFILER_ENABLE_WEB`）
+      （drogon 会传递前三个，`gtest` 仅在构建测试时需要而 `generate()` 已关掉测试）
+    - `REMOTE_PROFILER_ENABLE_SYMBOLIZE` 宏**在代码中不存在**（只有 `REMOTE_PROFILER_ENABLE_WEB`）
     - `author` / `url` / `homepage` 仍是 `Your Name` / `your-org` 占位符
   - `ports/cpp-remote-profiler/` 存在（`portfile.cmake` + `vcpkg.json`），但
-    `vcpkg-configuration.json` **只有 `overlay-triplets`、没有 `overlay-ports`**，
-    因此 vcpkg 找不到它
+    `vcpkg-configuration.json` **只有 `overlay-triplets`、没有 `overlay-ports`**，因此 vcpkg 找不到它
+  - `ports/cpp-remote-profiler/portfile.cmake` 的 `SHA512 0` 是**占位校验和**，
+    vcpkg 下载后会校验失败 → 该端口即使注册了也无法安装
+  - **占位符 URL 散落 4 处**，最要紧的是 `vcpkg.json`（主路径清单）：`conanfile.py` 的
+    author/url/homepage、`ports/cpp-remote-profiler/vcpkg.json` 的 homepage、**`vcpkg.json`
+    的 homepage** —— 均为 `your-org` / `Your Name`
   - 结论：**要么修好并在 README 中说明用法（需先装 conan/vcpkg 实测），要么删除**。
     当前状态是"存在但不可用"，比缺失更容易误导。
 - 生成 **SBOM**（SPDX / CycloneDX）
