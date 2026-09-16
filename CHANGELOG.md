@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- libFuzzer targets for the parsers, behind `-DREMOTE_PROFILER_BUILD_FUZZERS=ON`
+  (clang only, off by default): `fuzz_renderer_output`, `fuzz_result_parsing`,
+  `fuzz_http_params`, with a committed seed corpus each. `ctest -L fuzz` replays the
+  corpora and then runs a bounded smoke pass; a new CI job builds and runs them, and
+  uploads crash reproducers on failure.
+- The parsing these targets cover moved into `internal/renderer_output_parsing.h` and
+  is now exercised by unit tests as well. Three copies of the same logic were
+  involved: the flamegraph "ERROR:" extraction existed twice (HTTP layer and core),
+  and the pprof symbolz body splitting was inline in the handler. Each had drifted
+  slightly, so a fix to one would not have reached the others.
+- `internal::parseSymbolRequest()` strips a trailing `\r`, so CRLF bodies from a
+  client now resolve their addresses instead of passing a stray `\r` to stoull().
 
 
 - `/api/thread/stacks` (and `getThreadCallStacks()`) print each thread's **name** next to its tid, read from `/proc/<tid>/comm`. A bare tid is not identifiable when reading the output afterwards; the name is what tells you that thread 1234 is `DrogonIoLoop` and 1235 is a worker parked on a futex.
@@ -102,6 +114,7 @@ Verified in a real browser (headless Chrome driven over CDP) rather than by insp
 - Installation layout made consistent across `lib`/`lib64` hosts so `find_package()` works (GNUInstallDirs is now included before the install rules)
 
 ### Fixed
+- `ci.yml` was rejected by GitHub with "A sequence was not expected" and had been since the pipeline was introduced, so build-gcc, coverage and build-clang never ran -- silently, because a workflow that does not parse produces no jobs to fail. The cause was two run-vcpkg inputs written as YAML flow sequences (`vcpkgJsonIgnores`, `runVcpkgFormatString`); `with:` values must be scalars. Both were restating the action's own defaults, so neither is set now -- the install root still comes from the action's default, not from our copy of the string.
 - `stopHeapProfiler()` and `getRawHeapProfileSample()` no longer call `GetHeapProfile()`. They write the window's snapshot with `HeapProfilerDump()` and read that file back, so the profile memory belongs to us: nothing needs freeing, and the `leak:GetHeapProfile` suppression is gone. This replaces the previous workaround of retaining the buffer, which existed only because `GetHeapProfile()`'s return value has no portable deallocator (see ROADMAP). Note the dump lands beside the requested output path under a derived name -- gperftools appends `.<sequence>.heap` to the prefix -- so `stopHeapProfiler()` still writes the caller's path, from the dump's contents.
 - Reverted the `free()` added to `stopHeapProfiler()` and `getRawHeapProfileSample()`: it aborted ASan's job with "attempting free on address which was not malloc()-ed". `GetHeapProfile()`'s header says the caller should free the buffer, and upstream's own test does exactly that, but the buffer has no portable deallocator in practice -- with a statically linked tcmalloc it comes from the library's own allocator, which the process's malloc interposer never saw (so `free()` aborts), `tc_free()` only exists from gperftools 2.16.90, and gperftools 2.18 additionally routes its intermediate chunks through an internal arena whose `Free` lives in a private header. The buffer is roughly 11KB per stop, so it is copied out and released to the OS instead; `lsan.supp` carries a matching suppression. The earlier "fix" traded a benign leak for a crash.
 - The ASan job now also covers a statically linked tcmalloc build, which is what vcpkg produces and what the crash above required; the shared-library configuration used locally cannot reproduce it.

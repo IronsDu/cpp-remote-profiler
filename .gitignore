@@ -61,5 +61,19 @@ flamegraph.pl
 
 # Out-of-source build trees and vendored sources
 build-tsan/
+
+# A build tree was once configured in the repository root under this name; it is
+# 1.1GB of CMake output and must never be committed.
+myfuck/
 vcpkg_installed/
 gperftools-src/
+
+# libFuzzer writes newly discovered inputs into the corpus directory next to the
+# hand-written seeds, named by content hash. Those are run artifacts, not fixtures:
+# keep the descriptive seeds in version control and ignore the rest. A newly found
+# crashing input belongs in the corpus under a descriptive name.
+tests/fuzz/corpus/*/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]
+tests/fuzz/crash-*
+tests/fuzz/leak-*
+tests/fuzz/timeout-*
+tests/fuzz/oom-*

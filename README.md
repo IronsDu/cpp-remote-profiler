@@ -192,6 +192,7 @@ cd build && ./profiler_example
 | `REMOTE_PROFILER_ENABLE_WEB` | `ON` | 编译 Web 层（需 Drogon），`OFF` 则完全不依赖 Drogon |
 | `ENABLE_COVERAGE` | `OFF` | 生成覆盖率报告 |
 | `BUILD_DOCS` | `OFF` | 生成 Doxygen API 文档（输出到 `build/docs/html/`） |
+| `REMOTE_PROFILER_BUILD_FUZZERS` | `OFF` | 构建 libFuzzer 模糊测试目标（需 clang，见 CONTRIBUTING） |
 
 常见场景：
 
@@ -515,7 +516,9 @@ cpp-remote-profiler/
 │   ├── symbolize.cpp           # 符号化引擎（absl → dladdr → backward-cpp）
 │   ├── web_resources.cpp       # 内置 Web 资源
 │   └── internal/               # 内部实现：日志、符号化、内嵌 pprof / flamegraph.pl
-├── example/  tests/            # 示例与 GoogleTest 测试
+├── example/                    # 示例程序（含命名线程，便于验证线程栈）
+├── tests/                      # GoogleTest 单元测试
+│   └── fuzz/                   # libFuzzer 目标与种子语料（REMOTE_PROFILER_BUILD_FUZZERS=ON）
 ├── cmake/
 │   ├── cpp-remote-profiler-config.cmake.in
 │   └── examples/               # find_package / FetchContent 集成验证

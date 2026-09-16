@@ -2,6 +2,7 @@
 /// @brief Framework-agnostic HTTP endpoint handlers implementation
 
 #include "profiler/http_handlers.h"
+#include "internal/renderer_output_parsing.h"
 #include "internal/result_parsing.h"
 #include "profiler_manager.h"
 #include <chrono>
@@ -99,16 +100,13 @@ namespace {
 /// 200 carrying an error reaches the caller as if it were a graph. All flame
 /// graphs funnel through here so the check cannot be forgotten at a call site.
 HandlerResponse flameGraphResponse(const std::string& svg) {
-    if (svg.find("<?xml") == std::string::npos && svg.find("<svg") == std::string::npos)
-        return errorResp(500, "Failed to generate FlameGraph");
-
-    if (auto pos = svg.find("ERROR:"); pos != std::string::npos) {
-        auto end = svg.find('<', pos);
-        std::string message = svg.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
-        return errorResp(500, "No stack samples to render (profile is empty). The sample window may have "
-                              "been too short or the process idle; increase the duration or sample under "
-                              "load. flamegraph.pl said: " +
-                                  message);
+    // Parse in one shared place: this logic used to exist twice, and only the copy
+    // in profiler_manager.cpp had the substr() underflow that internal::
+    // extractFlameGraphError() now guards against.
+    if (auto failure = internal::interpretFlameGraphOutput(svg)) {
+        if (!internal::looksLikeSvg(svg))
+            return errorResp(500, "Failed to generate FlameGraph");
+        return errorResp(500, failure->explanation());
     }
     return HandlerResponse::svg(svg);
 }
@@ -381,27 +379,9 @@ HandlerResponse ProfilerHttpHandlers::handlePprofSymbol(const std::string& body)
     // and expects tab-separated response: "0xaddr\tsymbol_name\n"
     // Also support newline-separated addresses for backward compatibility.
 
-    std::vector<std::string> addresses;
-
-    // Split by '+' first (Go pprof format)
-    // If no '+' found, fall back to newline splitting
-    if (body.find('+') != std::string::npos) {
-        std::istringstream iss(body);
-        std::string addr;
-        while (std::getline(iss, addr, '+')) {
-            if (!addr.empty()) {
-                addresses.push_back(addr);
-            }
-        }
-    } else {
-        std::istringstream iss(body);
-        std::string addr;
-        while (std::getline(iss, addr)) {
-            if (!addr.empty() && addr[0] != '#') {
-                addresses.push_back(addr);
-            }
-        }
-    }
+    // Splitting lives in internal::parseSymbolRequest() so it is unit tested and
+    // fuzzed rather than only exercised through a live request.
+    std::vector<std::string> addresses = internal::parseSymbolRequest(body);
 
     std::ostringstream result;
     for (const auto& address : addresses) {

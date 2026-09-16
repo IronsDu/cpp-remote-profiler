@@ -5,6 +5,7 @@
 #include "internal/embed_pprof.h"
 #include "internal/log_macros.h"
 #include "internal/log_manager.h"
+#include "internal/renderer_output_parsing.h"
 #include "internal/result_parsing.h"
 #include "internal/symbolize.h"
 #include <algorithm>
@@ -403,23 +404,18 @@ std::string ProfilerManager::generateFlameGraph(const std::string& collapsed_fil
         return R"({"error": "Failed to execute flamegraph.pl command"})";
     }
 
-    // Validate output
-    if (svg_output.find("<?xml") == std::string::npos && svg_output.find("<svg") == std::string::npos) {
-        PROFILER_ERROR("flamegraph.pl did not generate valid SVG");
-        return R"({"error": "flamegraph.pl did not generate valid SVG"})";
-    }
-
     // flamegraph.pl answers empty or unusable input with a *valid* SVG whose only
-    // content is an error message, so the structural check above passes and a
-    // 200 carrying "ERROR: ..." would reach the caller. Treat that as a failure
-    // and say why, since the usual cause is a profile with no samples.
-    if (svg_output.find("ERROR:") != std::string::npos) {
-        auto error_pos = svg_output.find("ERROR:");
-        auto error_end = svg_output.find('<', error_pos);
-        std::string message = svg_output.substr(error_pos, error_end - error_pos);
-        PROFILER_ERROR("flamegraph.pl reported: {}", message);
-        return R"({"error": "No stack samples to render (profile is empty). The sampled window may have been too short or the process was idle; try a longer duration or sample under load. flamegraph.pl said: )" +
-               message + R"("})";
+    // content is an error message, so a structural check alone passes and a 200
+    // carrying "ERROR: ..." would reach the caller as if it were a graph. The
+    // parsing is shared with the HTTP layer's renderer check -- this copy used to
+    // compute substr(pos, end - pos) with end == npos, which underflows and throws.
+    if (auto failure = internal::interpretFlameGraphOutput(svg_output)) {
+        if (!internal::looksLikeSvg(svg_output)) {
+            PROFILER_ERROR("flamegraph.pl did not generate valid SVG");
+            return R"({"error": "flamegraph.pl did not generate valid SVG"})";
+        }
+        PROFILER_ERROR("flamegraph.pl reported: {}", failure->message);
+        return R"({"error": ")" + failure->explanation() + R"("})";
     }
 
     return svg_output;

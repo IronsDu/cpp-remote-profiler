@@ -271,6 +271,119 @@ jobs:
       env:
         TSAN_OPTIONS: halt_on_error=0
 
+  # Fuzzing (libFuzzer). Separate from the test jobs because it needs clang's
+  # fuzzer runtime and runs on a time budget rather than to completion.
+  fuzz:
+    name: Fuzzing (libFuzzer)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          clang \
+          git \
+          pkg-config \
+          libgoogle-perftools-dev
+
+    - name: Export GitHub Actions cache environment variables
+      uses: actions/github-script@v7
+      with:
+        script: |
+          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+    - name: Cache vcpkg packages
+      id: cache-vcpkg
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg
+          ~/.cache/vcpkg/archives
+          vcpkg_installed
+        key: ${{ runner.os }}-vcpkg-fuzz-${{ hashFiles('vcpkg.json') }}
+
+    - name: Install vcpkg
+      run: |
+        if [ ! -f "vcpkg/vcpkg" ]; then
+          echo "vcpkg not found or incomplete, cloning..."
+          rm -rf vcpkg
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+        else
+          echo "Using cached vcpkg"
+        fi
+
+    - name: Install vcpkg dependencies
+      env:
+        VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      run: |
+        ./vcpkg/vcpkg install --triplet=x64-linux-release
+
+    - name: Configure with fuzz targets
+      run: |
+        mkdir build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=x64-linux-release \
+          -DREMOTE_PROFILER_BUILD_FUZZERS=ON \
+          -DREMOTE_PROFILER_ENABLE_WEB=OFF \
+          -DREMOTE_PROFILER_BUILD_TESTS=OFF \
+          -DREMOTE_PROFILER_BUILD_EXAMPLES=OFF
+
+    - name: Build fuzz targets
+      run: |
+        cd build
+        make -j$(nproc)
+
+    # The per-target tests replay the committed corpus (one run each), so this
+    # fails if a corpus entry stops behaving. The smoke test then fuzzes past the
+    # corpus for a bounded time.
+    #
+    # Both need the same environment the ASan job uses. tcmalloc's own
+    # MallocExtension::Initialize() allocation is reported by LSan as a leak unless
+    # lsan.supp is applied -- the first run of these steps failed on that 45-byte
+    # allocation, not on anything the targets did.
+    - name: Replay corpora
+      working-directory: build
+      run: |
+        ctest -L fuzz --output-on-failure -E FuzzSmoke
+      env:
+        ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        LSAN_OPTIONS: suppressions=../lsan.supp
+
+    - name: Fuzz smoke test
+      working-directory: build
+      run: |
+        ctest -L fuzz --output-on-failure -R FuzzSmoke
+      env:
+        ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        LSAN_OPTIONS: suppressions=../lsan.supp
+
+    # A crash leaves a reproducer behind; upload it so the failure is actionable
+    # without re-running the job.
+    - name: Upload crash reproducers
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-crashes
+        path: |
+          build/crash-*
+          build/leak-*
+          build/timeout-*
+          build/oom-*
+        if-no-files-found: ignore
+
   # Static Analysis with clang-tidy
   static-analysis:
     name: Static Analysis
