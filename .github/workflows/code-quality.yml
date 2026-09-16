@@ -349,10 +349,18 @@ jobs:
     # The per-target tests replay the committed corpus (one run each), so this
     # fails if a corpus entry stops behaving. The smoke test then fuzzes past the
     # corpus for a bounded time.
+    #
+    # Both need the same environment the ASan job uses. tcmalloc's own
+    # MallocExtension::Initialize() allocation is reported by LSan as a leak unless
+    # lsan.supp is applied -- the first run of these steps failed on that 45-byte
+    # allocation, not on anything the targets did.
     - name: Replay corpora
       working-directory: build
       run: |
         ctest -L fuzz --output-on-failure -E FuzzSmoke
+      env:
+        ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        LSAN_OPTIONS: suppressions=../lsan.supp
 
     - name: Fuzz smoke test
       working-directory: build
@@ -360,6 +368,7 @@ jobs:
         ctest -L fuzz --output-on-failure -R FuzzSmoke
       env:
         ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        LSAN_OPTIONS: suppressions=../lsan.supp
 
     # A crash leaves a reproducer behind; upload it so the failure is actionable
     # without re-running the job.
