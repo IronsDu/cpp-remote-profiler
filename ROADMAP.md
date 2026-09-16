@@ -172,6 +172,20 @@
 ## 四、CI/CD 增强
 
 - **修复并重新启用 Thread Sanitizer**（`.github/workflows/code-quality.yml` 中该 job 被 `if: false` 禁用）
+- **workflow 语法校验（actionlint）——本轮试过又移除了，记录理由待重新评估**
+  - 背景：`ci.yml` 自流水线引入起就无法被 GitHub 解析（`with:` 的值必须是标量，而
+    `vcpkgJsonIgnores` / `runVcpkgFormatString` 被写成了 YAML flow sequence），导致
+    `build-gcc` / `coverage` / `build-clang` **三个 job 从未运行**。失败方式是**静默**的：
+    解析不了的 workflow 不产生任何 job，因此没有 job 失败、没有红色标记。
+  - 本地用 actionlint 逐字复现了 GitHub 的报错（`expected scalar node for string value but
+    found sequence node`），根因已修复。
+  - 当时把 actionlint 接入了 CI，随后又移除：根因修好后，未来写错会表现为"没有 job 跑"
+    （可见），而接入需要从 GitHub release 下载二进制——**Ubuntu 仓库没有 actionlint 包**
+    （Debian/Arch 有），这一步本身就成了失败源。
+  - 若要重新引入，建议用现成 action（如 `raven-actions/actionlint`）而非自己下载，并把它
+    放在**独立的轻量 job**里——否则它会被同一 job 中 fuzz 构建的失败所掩盖。
+  - 另注：即使接入，也需处理 TSan job 的 `if: false`（actionlint 会报
+    `constant expression "false"`，而这是**有意禁用**——见本文件与 `CONTRIBUTING.md`）。
 - **ccache / sccache** 加速 CI 编译
 - **依赖更新自动化**（Dependabot 或 Renovate）
 - **安全扫描**（CodeQL 或 Snyk）
