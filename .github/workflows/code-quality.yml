@@ -289,13 +289,25 @@ jobs:
           clang \
           git \
           pkg-config \
-          libgoogle-perftools-dev \
-          actionlint
+          libgoogle-perftools-dev
 
-    # First, before anything expensive: a workflow file GitHub cannot parse never
-    # runs at all, so its jobs report nothing and the problem hides. ci.yml lost
-    # its entire pipeline to one unparseable input value this way, and `with:` keys
-    # must be scalars -- a YAML flow sequence there fails the whole file.
+    # Before anything expensive: a workflow file GitHub cannot parse never runs at
+    # all, so its jobs report nothing and the problem hides. ci.yml lost its entire
+    # pipeline to one unparseable input value this way, and `with:` keys must be
+    # scalars -- a YAML flow sequence there fails the whole file.
+    #
+    # actionlint is not in Ubuntu's archive (Debian and Arch package it, Ubuntu does
+    # not), so the release binary is fetched instead. No pin: the download URL for a
+    # fixed tag would rot, `latest` cannot.
+    - name: Install actionlint
+      run: |
+        set -euo pipefail
+        gh release download --repo rhysd/actionlint \
+          --pattern '*_linux_amd64.tar.gz' --output /tmp/actionlint.tar.gz latest
+        tar xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+        install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
+        actionlint --version
+
     - name: Lint workflow files
       run: actionlint -color
 

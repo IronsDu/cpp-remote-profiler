@@ -1,0 +1,15 @@
+# actionlint configuration.
+#
+# One check is suppressed deliberately; everything else actionlint reports is a
+# real finding and should be fixed rather than added here.
+
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # The Thread Sanitizer job is switched off with `if: false` on the job.
+      # actionlint flags that as a constant condition, which is exactly what it
+      # is -- the disablement is intentional and tracked: CONTRIBUTING.md notes it
+      # under the sanitizer jobs and ROADMAP.md carries "fix and re-enable TSan".
+      # Suppressed here so lint stays meaningful for everything else, and so
+      # re-enabling the job is what removes the need for this entry.
+      - 'constant expression "false" in condition'
