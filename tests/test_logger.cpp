@@ -166,10 +166,14 @@ TEST_F(LoggerTest, ThreadSafety) {
 
     std::vector<std::thread> threads;
     for (int t = 0; t < num_threads; ++t) {
-        threads.emplace_back([this, t, messages_per_thread]() {
-            for (int i = 0; i < messages_per_thread; ++i) {
-                mock_sink_->log(LogLevel::Info, "thread_test.cpp", t * messages_per_thread + i, "threadFunc",
-                                ("Thread " + std::to_string(t) + " message " + std::to_string(i)).c_str());
+        // The capture is const-foldable, so it is not captured; and the loop
+        // variable is "msg" rather than "i" because an "i" parameter would shadow
+        // the captured messages_per_thread, leaving it unused inside the lambda
+        // (clang rejects that under -Wunused-lambda-capture with -Werror).
+        threads.emplace_back([this, t]() {
+            for (int msg = 0; msg < messages_per_thread; ++msg) {
+                mock_sink_->log(LogLevel::Info, "thread_test.cpp", t * messages_per_thread + msg, "threadFunc",
+                                ("Thread " + std::to_string(t) + " message " + std::to_string(msg)).c_str());
             }
         });
     }

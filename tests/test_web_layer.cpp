@@ -187,8 +187,12 @@ TEST_F(WebLayerTest, ServesAAnalysisRequestThroughTheAsyncExecutor) {
     // Either a rendered graph or a reported failure, but the reply itself proves the
     // cross-thread hand-off completed.
     EXPECT_TRUE(resp.status == 200 || resp.status == 500) << "status: " << resp.status;
-    if (resp.status == 200)
+    // Braces are required here, not stylistic: the EXPECT_TRUE above expands to an
+    // if/else, so an unbraced if would dangle and GCC rejects it under
+    // -Wall -Wextra -Werror (the warnings-check job).
+    if (resp.status == 200) {
         EXPECT_NE(resp.body.find("<svg"), std::string::npos);
+    }
 }
 
 TEST_F(WebLayerTest, DeliversPprofSymbolRequests) {

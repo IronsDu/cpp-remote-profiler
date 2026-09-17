@@ -16,14 +16,20 @@ namespace {
 /// profile must therefore generate real CPU work for the whole window instead of
 /// sleeping through it -- otherwise they fail whenever the machine happens to be
 /// idle, which is exactly how this test failed under parallel ctest.
-void burnCPUFor(int ms) {
+uint64_t burnCPUFor(int ms) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
-    volatile uint64_t sink = 0;
+    uint64_t sink = 0;
     while (std::chrono::steady_clock::now() < deadline) {
         for (int i = 0; i < 20000; ++i) {
             sink += static_cast<uint64_t>(i) * 2654435761u;
         }
     }
+    // Returning it rather than marking it unused: callers assert it is non-zero, so
+    // the accumulation is observable and the compiler cannot elide it. A `volatile`
+    // local would silence the optimizer but still trip -Wunused-but-set-variable
+    // (GCC sees through volatile for that warning, and the warnings-check job builds
+    // with -Wall -Wextra -Werror).
+    return sink;
 }
 
 } // namespace
@@ -38,7 +44,7 @@ TEST(FullFlowTest, GperftoolsGeneratesValidProfile) {
 
     // 运行足够的工作负载
     std::cout << "Running workload...\n";
-    volatile long long result = 0;
+    long long result = 0;
     for (int i = 0; i < 10000; ++i) {
         result += i * i;
         // 一些函数调用
@@ -47,7 +53,11 @@ TEST(FullFlowTest, GperftoolsGeneratesValidProfile) {
     }
 
     // Keep sampling real work rather than idling: see burnCPUFor().
-    burnCPUFor(500);
+    const uint64_t burned = burnCPUFor(500);
+    // Used, not merely set: without an observation the loop can be elided, and both
+    // this and `result` trip -Wunused-but-set-variable under -Werror.
+    EXPECT_GT(burned, 0u);
+    EXPECT_GT(result, 0);
 
     // 停止 profiler
     ProfilerStop();
@@ -189,7 +199,7 @@ TEST(FullFlowTest, GetRawCPUProfile) {
     // from executing threads, so a 1s window with nothing to sample returns an
     // empty profile by design. The workload used to be absent here, which made
     // the non-empty assertion below depend on machine load.
-    std::thread burner{[]() { burnCPUFor(1200); }};
+    std::thread burner{[]() { EXPECT_GT(burnCPUFor(1200), 0u); }};
 
     // 获取原始 profile 数据（采样 1 秒）
     std::string profile_data = profiler.getRawCPUProfile(1);
