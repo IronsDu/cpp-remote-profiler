@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `tests/test_web_layer.cpp` covers the Drogon adapter and the embedded pages end to
+  end: it starts the real server, drives it over raw-socket HTTP and shuts it down.
+  Until now every test target was core-only, so `drogon_adapter.cpp` and
+  `web_resources.cpp` were compiled under ASan but executed by nothing that ctest
+  ran -- the sanitizer build only looked like it covered the web layer. The server is
+  started once per suite because `drogon::app()` is a bind-once singleton: a
+  per-test SetUp/TearDown segfaults in `ListenerManager::addListener` on the second
+  test. Port 0 plus `getListeners()` keeps parallel runs from colliding.
+- The sanitizer steps set `ASAN_OPTIONS=...:exitcode=86`, so a leak is distinguishable
+  from a failed assertion in the log. LSan exits 1 by default, which is the same code
+  a test returns when an assertion fails.
 - libFuzzer targets for the parsers, behind `-DREMOTE_PROFILER_BUILD_FUZZERS=ON`
   (clang only, off by default): `fuzz_renderer_output`, `fuzz_result_parsing`,
   `fuzz_http_params`, with a committed seed corpus each. `ctest -L fuzz` replays the

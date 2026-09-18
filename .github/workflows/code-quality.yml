@@ -107,7 +107,12 @@ jobs:
       run: |
         ctest --output-on-failure --verbose
       env:
-        ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        # exitcode=86 distinguishes a leak from a failing assertion: LSan's default
+        # is 1, the same code a test returns when it fails, so the two are otherwise
+        # indistinguishable in the log. halt_on_error=1 matters just as much as
+        # detect_leaks=1 -- with detect_leaks alone the leak is reported but the
+        # process still exits 0, which CI reads as a pass.
+        ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:exitcode=86
         LSAN_OPTIONS: suppressions=../lsan.supp
 
   # Undefined Behavior Sanitizer
@@ -359,7 +364,7 @@ jobs:
       run: |
         ctest -L fuzz --output-on-failure -E FuzzSmoke
       env:
-        ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:exitcode=86
         LSAN_OPTIONS: suppressions=../lsan.supp
 
     - name: Fuzz smoke test
@@ -367,7 +372,7 @@ jobs:
       run: |
         ctest -L fuzz --output-on-failure -R FuzzSmoke
       env:
-        ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:exitcode=86
         LSAN_OPTIONS: suppressions=../lsan.supp
 
     # A crash leaves a reproducer behind; upload it so the failure is actionable

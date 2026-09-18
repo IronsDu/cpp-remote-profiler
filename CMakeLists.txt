@@ -308,6 +308,21 @@ if(REMOTE_PROFILER_BUILD_TESTS)
     )
     add_test(NAME ThreadStacksTest COMMAND test_thread_stacks)
 
+    # End-to-end web layer (Drogon adapter + embedded resources). Only built when
+    # the web layer is enabled, since it is the only test that links it.
+    if(REMOTE_PROFILER_ENABLE_WEB)
+        add_executable(test_web_layer tests/test_web_layer.cpp)
+        target_link_libraries(test_web_layer
+            PRIVATE
+            profiler_web
+            Drogon::Drogon
+            GTest::gtest
+            GTest::gtest_main
+            pthread
+        )
+        add_test(NAME WebLayerTest COMMAND test_web_layer)
+    endif()
+
     message(STATUS "Tests will be built")
 else()
     message(STATUS "Tests disabled")

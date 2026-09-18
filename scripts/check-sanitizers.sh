@@ -58,8 +58,11 @@ run_asan() {
         -DCMAKE_MODULE_LINKER_FLAGS="-fsanitize=address" \
         "${extra_configure_args[@]}"
     cmake --build "$dir" -j"$JOBS"
-    # detect_leaks + halt_on_error: a leak must fail the run, as it does in CI.
-    ( cd "$dir" && ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+    # detect_leaks reports a leak; halt_on_error is what makes the process fail
+    # because of it (with detect_leaks alone the report is printed and the exit code
+    # stays 0). exitcode=86 then separates a leak from a failing assertion, since
+    # LSan's default 1 is the same code a test uses when an assertion fails.
+    ( cd "$dir" && ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:exitcode=86 \
         LSAN_OPTIONS="suppressions=$PROJECT_ROOT/lsan.supp" \
         ctest --output-on-failure "${ctest_parallel[@]}" )
 }

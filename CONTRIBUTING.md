@@ -314,6 +314,17 @@ build/fuzz/fuzz_renderer_output -max_total_time=300 tests/fuzz/corpus/fuzz_rende
 - **Sanitizer**：`ctest` 默认构建不会报内存泄漏与未定义行为。曾经有一个
   `stopHeapProfiler()` 的 LeakSanitizer 报告只被 CI 发现，因为本地从没跑过
   `-fsanitize=address`。
+
+  ⚠️ 想靠**退出码**判断有没有泄漏，两个参数都要给，只给第一个不够：
+
+  | 设置 | 泄漏报告 | 退出码 |
+  |------|----------|--------|
+  | `detect_leaks=1`（`halt_on_error` 默认 0） | ✅ 打印 | **0** ← 泄漏了但 CI 视为通过 |
+  | `detect_leaks=1:halt_on_error=1` | ✅ 打印 | 非零 ✅ |
+  | 再加 `exitcode=86` | ✅ 打印 | **86** ← 与断言失败（1）可区分 |
+
+  另外两条限制：进程被 `_exit()`/信号杀死时 LSan 没机会运行；被抑制规则覆盖的泄漏
+  （如 `lsan.supp` 里的 tcmalloc 初始化）不会让退出码非零。
 - **Web UI**：`curl` **无法执行页面 JavaScript**，因此看不到"按钮点击报
   ReferenceError""按钮卡在 disabled""下载其实没开始"这类问题。前端改动必须用
   真实浏览器验证后才算完成。
